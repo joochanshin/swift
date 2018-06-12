@@ -708,6 +708,19 @@ ERROR(gradient_expr_incompatible_contextual_type,none,
       "cannot convert gradient expression to incompatible contextual type %0",
       (Type))
 
+// '#adjoint(...)' expression for automatic differentiation
+ERROR(adjoint_expr_original_not_func_decl,none,
+      "#adjoint expression can only be applied to function declarations, but %0"
+      "is not a function declaration", (DeclName))
+ERROR(adjoint_expr_original_func_decl_unresolved,none,
+      "original function declaration could not be resolved", ())
+ERROR(adjoint_expr_original_no_valid_differentiable_attr,none,
+      "the original function %0 does not declare a valid @differentiable "
+      "attribute", (DeclName))
+ERROR(adjoint_expr_ambiguous_function_identifier,none,
+      "ambiguous or overloaded identifier %0 cannot be used in #adjoint "
+      "expression", (DeclName))
+
 ERROR(use_local_before_declaration,none,
       "use of local variable %0 before its declaration", (DeclName))
 ERROR(unsupported_existential_type,none,
@@ -2435,6 +2448,9 @@ ERROR(differentiable_attr_ambiguous_function_identifier,none,
       "attribute", (DeclName))
 ERROR(differentiable_attr_forward_mode_unsupported,none,
       "forward-mode automatic differentiation is not supported yet", ())
+ERROR(differentiable_attr_adjoint_invalid_access,none,
+      "adjoint %0 of public or @_versioned function %1 is required to either "
+      "be public or @_versioned", (DeclName, DeclName))
 
 ERROR(compiler_evaluable_bad_context,none,
       "@compilerEvaluable functions not allowed here", ())

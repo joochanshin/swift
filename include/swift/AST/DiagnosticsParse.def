@@ -1439,13 +1439,7 @@ ERROR(attr_implements_expected_member_name,PointsToFirstBadToken,
 // SWIFT_ENABLE_TENSORFLOW
 // differentiable
 ERROR(attr_differentiable_expected_function_name,PointsToFirstBadToken,
-      "expected a qualified function to differentiate", ())
-
-ERROR(attr_differentiable_missing_lsquare,PointsToFirstBadToken,
-      "missing '[' for parameter index list", ())
-
-ERROR(attr_differentiable_missing_rsquare,PointsToFirstBadToken,
-      "missing ']' for parameter index list", ())
+      "expected a qualified %0 function", (StringRef))
 
 ERROR(attr_differentiable_expected_parameter_list,PointsToFirstBadToken,
       "expected a list of parameters to differentiate with respect to, e.g. (.0, w, b)", ())
@@ -1496,6 +1490,10 @@ ERROR(sil_gradient_invalid_seed_type,PointsToFirstBadToken,
 
 ERROR(sil_gradient_expected_source_index,PointsToFirstBadToken,
       "expected the index of the result to specify the differentiation source", ())
+
+// #adjoint
+ERROR(adjoint_expr_expected_original_function_name,PointsToFirstBadToken,
+      "expected a function with the @differentiable attribute", ())
 
 // SWIFT_ENABLE_TENSORFLOW
 ERROR(pound_assert_expected,PointsToFirstBadToken,

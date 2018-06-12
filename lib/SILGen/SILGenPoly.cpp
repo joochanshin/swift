@@ -1343,6 +1343,16 @@ namespace {
       case ParameterConvention::Direct_Unowned:
         translateIntoOwned(inputOrigType, inputSubstType, outputOrigType,
                            outputSubstType, input);
+          // llvm::errs() << "here we are\n";
+          // inputOrigType.dump();
+          // inputSubstType.dump();
+          // outputOrigType.dump();
+          // outputSubstType.dump();
+          // input.dump();
+          // result.dump();
+
+          // Outputs.back().getType().dump();
+          // SGF.getSILType(result).dump();
         assert(Outputs.back().getType() == SGF.getSILType(result));
         return;
       case ParameterConvention::Direct_Guaranteed:

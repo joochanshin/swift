@@ -3781,7 +3781,7 @@ ParserResult<Expr> Parser::parseExprGradientBody(ExprKind kind) {
 
 /// SWIFT_ENABLE_TENSORFLOW
 /// parseExprAdjoint
-///   expr-adjoint: '#adjoint' '(' expr ')'
+///   expr-adjoint: '#adjoint' '(' unqualified-name ')'
 ParserResult<Expr> Parser::parseExprAdjoint() {
   SourceLoc poundLoc = consumeToken(tok::pound_adjoint);
   SourceLoc lParenLoc, rParenLoc;
@@ -3796,16 +3796,32 @@ ParserResult<Expr> Parser::parseExprAdjoint() {
   if (parseToken(tok::l_paren, lParenLoc, diag::expr_expected_lparen,
                  "#adjoint"))
     return errorAndSkipToEnd();
-  auto exprResult = parseExpr(diag::expr_expected_function_to_differentiate);
+  // Parse name of original function.
+  // llvm::errs() << "current: " << Tok.getText() << "\n";
+  // llvm::errs() << "peek: " << peekToken().getText() << "\n";
+  // auto expr = parseExprIdentifier();
+  // expr->dump();
+
+  // DeclNameLoc originalLoc;
+  // DeclName originalName =
+  //   parseUnqualifiedDeclName(/*afterDot=*/false, originalLoc,
+  //                            diag::adjoint_expr_expected_original_function_name,
+  //                            /*allowOperators=*/true,
+  //                            /*allowZeroArgCompoundNames=*/true);
+  // if (!originalName)
+  //   return errorAndSkipToEnd();
+  auto exprResult = parseExpr(diag::adjoint_expr_expected_original_function_name);
   if (exprResult.isParseError())
     return errorAndSkipToEnd();
   if (parseToken(tok::r_paren, rParenLoc, diag::expr_expected_rparen,
                  "#adjoint"))
     return errorAndSkipToEnd();
-
   return makeParserResult<Expr>(
-    AdjointExpr::create(Context, poundLoc, lParenLoc, exprResult.get(),
-                        rParenLoc));
+    AdjointExpr::create(Context, poundLoc, lParenLoc, exprResult.get(), rParenLoc));
+
+  // return makeParserResult<Expr>(
+  //   AdjointExpr::create(Context, poundLoc, lParenLoc, originalName, originalLoc,
+  //                       rParenLoc));
 }
 
 /// SWIFT_ENABLE_TENSORFLOW
@@ -3835,7 +3851,7 @@ ParserResult<Expr> Parser::parseExprPoundAssert() {
     return errorAndSkipToEnd();
   }
 
-  StringRef message = "assertion failed";
+  Optional<StringRef> message;
   if (consumeIf(tok::comma)) {
     if (Tok.isNot(tok::string_literal)) {
       diagnose(Tok.getLoc(), diag::pound_assert_expected_string_literal);

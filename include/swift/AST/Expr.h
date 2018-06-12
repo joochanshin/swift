@@ -3928,40 +3928,75 @@ private:
                           originalExpr, params, rParenLoc) {}
 };
 
-/// The `#adjoint(...)` expression for the manual retrival of basic adjoints of
-/// functions that are marked `@differentiable(reverse, ...)`.
+/// The `#adjoint(...)` expression returns the declared adjoint of
+/// function with the `@differentiable(reverse, ...)` attribute.
 class AdjointExpr : public Expr {
 private:
   SourceLoc Loc, LParenLoc;
-  Expr *OriginalExpr;
+  // The original function name.
+  Expr *Original;
+  // The resolved adjoint function declaration.
+  ConcreteDeclRef AdjointFunction = nullptr;
   SourceLoc RParenLoc;
 
-  explicit AdjointExpr(SourceLoc loc, SourceLoc lParenLoc, Expr *originalExpr,
+  explicit AdjointExpr(SourceLoc loc, SourceLoc lParenLoc, Expr *original,
                        SourceLoc rParenLoc)
-    : Expr(ExprKind::Adjoint, /*implicit*/ false), Loc(loc),
-      LParenLoc(lParenLoc), OriginalExpr(originalExpr), RParenLoc(rParenLoc) {}
+  : Expr(ExprKind::Adjoint, /*implicit*/ false), Loc(loc),
+  LParenLoc(lParenLoc), Original(original), RParenLoc(rParenLoc) {}
 
 public:
+  Expr *baseExpr = nullptr;
   static AdjointExpr *create(ASTContext &ctx, SourceLoc loc,
-                             SourceLoc lParenLoc, Expr *originalExpr,
+                             SourceLoc lParenLoc, Expr *original,
                              SourceLoc rParenLoc);
 
-  Expr *getOriginalExpr() const {
-    return OriginalExpr;
-  }
+  // DeclName getOriginalName() const { return OriginalName; }
+  // DeclNameLoc getOriginalLoc() const { return OriginalLoc; }
+  Expr *getOriginal() { return Original; }
+  ConcreteDeclRef getAdjointFunction() { return AdjointFunction; }
+  void setAdjointFunction(ConcreteDeclRef decl) { AdjointFunction = decl; }
 
-  void setOriginalExpr(Expr *newOriginal) {
-    OriginalExpr = newOriginal;
-  }
-
-  SourceRange getSourceRange() const {
-    return SourceRange(Loc, RParenLoc);
-  }
+  SourceRange getSourceRange() const { return SourceRange(Loc, RParenLoc); }
 
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::Adjoint;
   }
 };
+
+// /// The `#adjoint(...)` expression returns the declared adjoint of
+// /// function with the `@differentiable(reverse, ...)` attribute.
+// class AdjointExpr : public Expr {
+// private:
+//   SourceLoc Loc, LParenLoc;
+//   // The original function name.
+//   DeclName OriginalName;
+//   DeclNameLoc OriginalLoc;
+//   // The resolved adjoint function declaration.
+//   ConcreteDeclRef AdjointFunction = nullptr;
+//   SourceLoc RParenLoc;
+//
+//   explicit AdjointExpr(SourceLoc loc, SourceLoc lParenLoc, DeclName origName,
+//                        DeclNameLoc origLoc, SourceLoc rParenLoc)
+//     : Expr(ExprKind::Adjoint, /*implicit*/ false), Loc(loc),
+//       LParenLoc(lParenLoc), OriginalName(origName), OriginalLoc(origLoc),
+//       RParenLoc(rParenLoc) {}
+//
+// public:
+//   static AdjointExpr *create(ASTContext &ctx, SourceLoc loc,
+//                              SourceLoc lParenLoc, DeclName origName,
+//                              DeclNameLoc origLoc, SourceLoc rParenLoc);
+//
+//   DeclName getOriginalName() const { return OriginalName; }
+//   DeclNameLoc getOriginalLoc() const { return OriginalLoc; }
+//   ConcreteDeclRef getAdjointFunction() { return AdjointFunction; }
+//   void setAdjointFunction(ConcreteDeclRef decl) { AdjointFunction = decl; }
+//
+//   SourceRange getSourceRange() const { return SourceRange(Loc, RParenLoc); }
+//
+//   static bool classof(const Expr *E) {
+//     return E->getKind() == ExprKind::Adjoint;
+//   }
+// };
 
 /// An expression referring to an opaque object of a fixed type.
 /// /// Opaque value expressions occur when a particular value within the AST
@@ -5246,11 +5281,11 @@ class PoundAssertExpr : public Expr {
   SourceLoc StartLoc;
   SourceLoc EndLoc;
   Expr *Condition;
-  StringRef Message;
+  Optional<StringRef> Message;
 
  public:
   PoundAssertExpr(SourceLoc startLoc, SourceLoc endLoc, Expr *condition,
-                  StringRef message)
+                  Optional<StringRef> message)
       : Expr(ExprKind::PoundAssert, /*Implicit=*/false),
         StartLoc(startLoc),
         EndLoc(endLoc),
@@ -5261,7 +5296,7 @@ class PoundAssertExpr : public Expr {
   SourceLoc getEndLoc() const { return EndLoc; }
 
   Expr *getCondition() const { return Condition; }
-  StringRef getMessage() const { return Message; }
+  Optional<StringRef> getMessage() const { return Message; }
 
   void setCondition(Expr *condition) { Condition = condition; }
 

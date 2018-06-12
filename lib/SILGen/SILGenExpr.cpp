@@ -2605,6 +2605,7 @@ RValue RValueEmitter::visitDynamicMemberRefExpr(DynamicMemberRefExpr *E,
 
 RValue RValueEmitter::
 visitDotSyntaxBaseIgnoredExpr(DotSyntaxBaseIgnoredExpr *E, SGFContext C) {
+  // E->dump();
   visit(E->getLHS());
   return visit(E->getRHS());
 }
@@ -3020,7 +3021,33 @@ visitValueAndGradientExpr(ValueAndGradientExpr *E, SGFContext C) {
 
 RValue RValueEmitter::
 visitAdjointExpr(AdjointExpr *E, SGFContext C) {
-  llvm_unreachable("handle #adjoint");
+  ConcreteDeclRef adjointFunc = E->getAdjointFunction();
+  FuncDecl *adjointDecl = cast<FuncDecl>(adjointFunc.getDecl());
+  SILLocation loc(adjointDecl);
+  SILDeclRef adjointDeclRef(adjointDecl);
+
+  // If adjoint has multiple parameter lists, mark as curried.
+  if (adjointDecl->getNumParameterLists() == 2) {
+    adjointDeclRef = adjointDeclRef.asCurried();
+  }
+  auto adjointInfo = SGF.getConstantInfo(adjointDeclRef);
+
+  // Convert function ref to thick function type.
+  if (!adjointDecl->isStatic()) {
+    auto resultTy = E->getType()->getCanonicalType();
+    ManagedValue result = SGF.emitClosureValue(loc, adjointDeclRef, resultTy,
+                                               adjointFunc.getSubstitutions());
+    return RValue(SGF, loc, resultTy, result);
+  }
+  // Otherwise, partially apply metatype to static adjoint method.
+  SILValue ref = SGF.emitGlobalFunctionRef(loc, adjointDeclRef, adjointInfo);
+  auto subs = adjointFunc.getSubstitutions();
+  auto baseMeta = adjointInfo.SILFnType->substGenericArgs(SGF.SGM.M, subs)
+    ->getSelfParameter().getType();
+  auto metatype = SGF.B.createMetatype(loc, SGF.getLoweredType(baseMeta));
+  auto partialApply = SGF.B.createApply(loc, ref, subs, { metatype }, false);
+  ManagedValue adjointValue = SGF.emitManagedRValueWithCleanup(partialApply);
+  return RValue(SGF, E, adjointValue);
 }
 
 RValue RValueEmitter::
@@ -5853,25 +5880,8 @@ RValue RValueEmitter::visitUnevaluatedInstanceExpr(UnevaluatedInstanceExpr *E,
 
 // SWIFT_ENABLE_TENSORFLOW
 RValue RValueEmitter::visitPoundAssertExpr(PoundAssertExpr *E, SGFContext C) {
-  SILValue condition;
-  {
-    FullExpr scope(SGF.Cleanups, CleanupLocation(E));
-    condition =
-        SGF.emitRValueAsSingleValue(E->getCondition()).getUnmanagedValue();
-  }
-
-  // Sema forces conditions to have Builtin.i1 type.
-  assert(condition->getType().castTo<BuiltinIntegerType>()->isFixedWidth(1));
-
-  SILValue message = SGF.B.createStringLiteral(
-      E, E->getMessage(), StringLiteralInst::Encoding::UTF8);
-
-  auto resultType = SGF.getASTContext().TheEmptyTupleType;
-  SILValue result = SGF.B.createBuiltin(
-      E, SGF.getASTContext().getIdentifier("poundAssert"),
-      SGF.getLoweredType(resultType), {}, {condition, message});
-
-  return RValue(SGF, E, ManagedValue::forUnmanaged(result));
+  // TODO(marcrasi): Generate the real SIL for this.
+  return RValue(SGF.getASTContext().TheEmptyTupleType);
 }
 
 RValue SILGenFunction::emitRValue(Expr *E, SGFContext C) {

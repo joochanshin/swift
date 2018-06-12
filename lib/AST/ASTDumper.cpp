@@ -1831,7 +1831,10 @@ public:
   void visitAdjointExpr(AdjointExpr *E) {
     printCommon(E, "adjoint_expr");
     OS << " original=";
-    E->getOriginalExpr()->dump(OS);
+    // E->getOriginalName().print(OS);
+    visit(E->getOriginal());
+    if (auto adjointFunc = E->getAdjointFunction().getDecl())
+      printDeclRef(adjointFunc);
     OS << ')';
   }
 
@@ -2609,7 +2612,10 @@ public:
   // SWIFT_ENABLE_TENSORFLOW
   void visitPoundAssertExpr(PoundAssertExpr *E) {
     printCommon(E, "pound_assert");
-    OS << " message=" << QuotedString(E->getMessage()) << "\n";
+    if (E->getMessage()) {
+      OS << " message=" << QuotedString(E->getMessage().getValue());
+    }
+    OS << "\n";
     printRec(E->getCondition());
     OS << ")";
   }

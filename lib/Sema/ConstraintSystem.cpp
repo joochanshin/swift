@@ -256,6 +256,8 @@ LookupResult &ConstraintSystem::lookupMember(Type base, DeclName name) {
   if (isa<AbstractFunctionDecl>(DC))
     lookupOptions |= NameLookupFlags::KnownPrivate;
 
+  // FIXME: THIS NEEDS TO BE FIXED
+  // result = TC.lookupMember(DC, base, name, lookupOptions | NameLookupFlags::IgnoreAccessControl);
   result = TC.lookupMember(DC, base, name, lookupOptions);
 
   // If we aren't performing dynamic lookup, we're done.

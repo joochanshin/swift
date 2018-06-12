@@ -1304,11 +1304,19 @@ ValueAndGradientExpr::create(ASTContext &ctx, SourceLoc loc,
                                            parameters, rParenLoc);
 }
 
+// AdjointExpr *
+// AdjointExpr::create(ASTContext &ctx, SourceLoc loc, SourceLoc lParenLoc,
+//                     DeclName origName, DeclNameLoc origLoc,
+//                     SourceLoc rParenLoc) {
+//   return new (ctx) AdjointExpr(loc, lParenLoc, origName, origLoc, rParenLoc);
+// }
+
 AdjointExpr *
 AdjointExpr::create(ASTContext &ctx, SourceLoc loc, SourceLoc lParenLoc,
-                    Expr *originalExpr, SourceLoc rParenLoc) {
-  return new (ctx) AdjointExpr(loc, lParenLoc, originalExpr, rParenLoc);
+                    Expr *original, SourceLoc rParenLoc) {
+  return new (ctx) AdjointExpr(loc, lParenLoc, original, rParenLoc);
 }
+
 
 ObjectLiteralExpr::ObjectLiteralExpr(SourceLoc PoundLoc, LiteralKind LitKind,
                                      Expr *Arg,

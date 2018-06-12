@@ -2439,9 +2439,59 @@ namespace {
       return handleReverseAutoDiffExpr(expr, /*preservingOriginalResult=*/true);
     }
 
+    // SWIFT_ENABLE_TENSORFLOW
     Expr *visitAdjointExpr(AdjointExpr *expr) {
-      // FIXME
-      llvm_unreachable("Handle #adjoint");
+      auto &ctx = cs.getASTContext();
+      auto locator = cs.getConstraintLocator(expr);
+      auto adjointDeclRef = expr->getAdjointFunction();
+      auto adjointDecl = cast<FuncDecl>(adjointDeclRef.getDecl());
+
+      // If adjoint is within a type context (it is an instance/static method),
+      // use member locator.
+      if (adjointDecl->getInnermostTypeContext())
+        locator = cs.getConstraintLocator(expr, ConstraintLocator::Member);
+
+      // Remove argument labels from the function type.
+      std::function<Type(Type)> removeArgumentLabels = [&](Type type) -> Type {
+        auto fnType = type->getAs<FunctionType>();
+        if (!fnType) return type;
+
+        // Drop argument labels from the input type.
+        Type inputType = fnType->getInput();
+        if (auto tupleTy = dyn_cast<TupleType>(inputType.getPointer())) {
+          SmallVector<TupleTypeElt, 4> elements;
+          elements.reserve(tupleTy->getNumElements());
+          for (const auto &elt : tupleTy->getElements()) {
+            elements.push_back(elt.getWithoutName());
+          }
+          inputType = TupleType::get(elements, type->getASTContext());
+        }
+
+        return FunctionType::get(inputType,
+                                 removeArgumentLabels(fnType->getResult()),
+                                 fnType->getExtInfo());
+      };
+
+      // If adjoint has generic signature, calculate substitutions and update
+      // adjoint decl ref with them.
+      SmallVector<Substitution, 4> substitutions;
+      if (auto genSig = adjointDecl->getGenericSignature()) {
+        solution.computeSubstitutions(genSig, locator, substitutions);
+        expr->setAdjointFunction(
+          ConcreteDeclRef(ctx, adjointDecl, substitutions));
+      }
+
+      auto selected = getOverloadChoice(locator);
+      cs.setType(expr, simplifyType(selected.openedFullType));
+
+      llvm::errs() << "CSAPPLY COMPUTED TYPE\n";
+      assert(cs.hasType(expr));
+      if (cs.hasType(expr)) {
+        cs.getType(expr)->dump();
+      }
+      // TODO: change argument labels
+      // MIGHT NEED TO USE OPENED TYPE
+      return expr;
     }
 
     // SWIFT_ENABLE_TENSORFLOW
@@ -4698,17 +4748,6 @@ namespace {
 
     // SWIFT_ENABLE_TENSORFLOW
     Expr *visitPoundAssertExpr(PoundAssertExpr *E) {
-      // Convert the condition to a logic value.
-      auto condition = solution.convertBooleanTypeToBuiltinI1(
-          E->getCondition(), cs.getConstraintLocator(E));
-      // TODO(marcrasi): Once we pull in commit 754e8e27, `condition` can no
-      // longer be null so we don't need this check.
-      if (!condition) {
-        cs.setType(E->getCondition(), ErrorType::get(cs.getType(E)));
-      } else {
-        E->setCondition(condition);
-      }
-
       // CSGen already set this expression's type to Void.
       return E;
     }

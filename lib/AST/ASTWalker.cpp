@@ -464,9 +464,6 @@ class Traversal : public ASTVisitor<Traversal, Expr*, Stmt*,
   }
 
   Expr *visitAdjointExpr(AdjointExpr *E) {
-    Expr *originalExpr = doIt(E->getOriginalExpr());
-    if (!originalExpr) return nullptr;
-    E->setOriginalExpr(originalExpr);
     return E;
   }
 

@@ -1399,8 +1399,255 @@ namespace {
     }
 
     Type visitAdjointExpr(AdjointExpr *AE) {
-      // FIXME
-      llvm_unreachable("Handle #adjoint");
+      // NOTE: This function performs the following steps:
+      // 1. Resolve original function declaration from original expression.
+      //    - If original func decl can be directly extracted from original
+      //      expression (e.g. when it's a DeclRefExpr), do so.
+      //    - If original expression is a UnresolvedDeclRefExpr, extract
+      //      original func name to lookup the original func decl.
+      //    - If neither func decl or decl name can be extracted, type-check
+      //      original expression to attempt to convert it to one of the above
+      //      cases.
+      // 2. Verify that original function declaration has the @differentiable
+      //    attribute. Extract adjoint function from the attribute and store in
+      //    the AdjointExpr.
+      // 3. Constrain the type of the AdjointExpr to the expected type of the
+      //    adjoint function. The logic here is copied from other functions in
+      //    CSGen, namely `visitDeclRefExpr` and `visitUnresolvedDotExpr`.
+      auto &TC = CS.getTypeChecker();
+      auto &ctx = CS.getASTContext();
+      auto locator = CS.getConstraintLocator(AE);
+      auto original = AE->getOriginalExpr();
+
+      // This is necessary to peer through cases like `#adjoint((+))` where
+      // the original expression is a ParenExpr.
+      // There may also be other cases that require this.
+      original = skipImplicitConversions(original->getSemanticsProvidingExpr());
+
+      DeclName originalName;
+      DeclNameLoc originalNameLoc;
+      // The original function declaration. This needs to be resolved.
+      FuncDecl *originalDecl = nullptr;
+      // The base of the original function expression. This is relevant for
+      // type-checking the adjoint.
+      Expr *baseExpr = nullptr;
+
+      // Cast a (ValueDecl *) to a (FuncDecl *) and set original function
+      // declaration to it. Emits diagnostic and returns true on failure.
+      auto extractOriginalDeclFromDecl = [&](ValueDecl *decl) {
+        originalDecl = dyn_cast<FuncDecl>(decl);
+        if (!originalDecl) {
+          TC.diagnose(decl->getLoc(),
+                      diag::adjoint_expr_original_not_func_decl,
+                      decl->getFullName());
+          return true;
+        }
+        return false;
+      };
+
+      // Find referenced decl from an expr and set original function declaration
+      // to it. Emits diagnostic and returns true on failure.
+      auto extractOriginalDeclFromExpr = [&](Expr *method) {
+        DeclNameLoc methodLoc;
+        auto decl = findReferencedDecl(method, methodLoc).first;
+        originalDecl = dyn_cast<FuncDecl>(decl);
+        if (!originalDecl) {
+          TC.diagnose(decl->getLoc(),
+                      diag::adjoint_expr_original_not_func_decl,
+                      decl->getFullName());
+          return true;
+        }
+        return false;
+      };
+
+      while (true) {
+        if (auto UDRE = dyn_cast<UnresolvedDeclRefExpr>(original)) {
+          originalName = UDRE->getName();
+          originalNameLoc = UDRE->getNameLoc();
+          break;
+        } else if (auto DRE = dyn_cast<DeclRefExpr>(original)) {
+          auto decl = DRE->getDecl();
+          if (extractOriginalDeclFromDecl(decl)) return nullptr;
+          break;
+        } else if (auto MRE = dyn_cast<MemberRefExpr>(original)) {
+          auto decl = MRE->getMember().getDecl();
+          if (extractOriginalDeclFromDecl(decl)) return nullptr;
+        } else if (auto DSCE = dyn_cast<DotSyntaxCallExpr>(original)) {
+          if (extractOriginalDeclFromExpr(DSCE->getFn())) return nullptr;
+          baseExpr = DSCE->getBase();
+          break;
+        } else if (auto DSBIE = dyn_cast<DotSyntaxBaseIgnoredExpr>(original)) {
+          if (extractOriginalDeclFromExpr(DSBIE->getRHS())) return nullptr;
+          baseExpr = skipImplicitConversions(DSBIE->getLHS());
+          break;
+        } else {
+          // If original expression is not one of the cases above, attempt to
+          // type-check it so that it resolves to one of the cases.
+          // If type-checking fails, give up and emit a diagnostic.
+          auto type = CS.TC.typeCheckExpression(original, CS.DC);
+          CS.cacheExprTypes(original);
+          if (type.isNull()) {
+            TC.diagnose(AE->getLoc(),
+                        diag::adjoint_expr_original_func_decl_unresolved);
+            return nullptr;
+          }
+          continue;
+        }
+      }
+
+      // If original function declaration has not been resolved, attempt to
+      // perform lookup based on original function name.
+      if (!originalDecl) {
+        assert(bool(originalName) &&
+               "Expected original function name to perform lookup");
+        auto originalTypeCtx = CS.DC->getInnermostTypeContext();
+        if (!originalTypeCtx) originalTypeCtx = CS.DC;
+
+        auto overloadDiagnostic = [&]() {
+          TC.diagnose(originalNameLoc,
+                      diag::adjoint_expr_ambiguous_function_identifier,
+                      originalName);
+        };
+        auto ambiguousDiagnostic = [&]() {
+          TC.diagnose(originalNameLoc,
+                      diag::adjoint_expr_ambiguous_function_identifier,
+                      originalName);
+        };
+        auto notFunctionDiagnostic = [&]() {
+          TC.diagnose(originalNameLoc,
+                      diag::adjoint_expr_original_not_func_decl,
+                      originalName);
+        };
+
+        // The original function must have the @differentiable attribute.
+        auto isValidOriginalDecl = [&](FuncDecl *candidate) {
+          return candidate->getAttrs().hasAttribute<DifferentiableAttr>();
+        };
+
+        // Ignore access control when doing adjoint lookup.
+        auto lookupOptions = defaultMemberLookupOptions
+          | NameLookupFlags::IgnoreAccessControl;
+        originalDecl =
+          TC.lookupFuncDecl(originalName, originalNameLoc.getBaseNameLoc(),
+                            originalTypeCtx, isValidOriginalDecl,
+                            overloadDiagnostic, ambiguousDiagnostic,
+                            notFunctionDiagnostic, lookupOptions);
+        if (!originalDecl) return nullptr;
+      }
+
+      // Get the @differentiable attribute of the original func decl.
+      auto originalAttrs = originalDecl->getAttrs();
+      if (!originalAttrs.hasAttribute<DifferentiableAttr>()) {
+        TC.diagnose(original->getLoc(),
+                    diag::adjoint_expr_original_no_valid_differentiable_attr,
+                    originalDecl->getFullName());
+        return nullptr;
+      }
+      auto diffAttr = originalAttrs.getAttribute<DifferentiableAttr>();
+
+      // Set the adjoint function in the adjoint expression.
+      auto adjointFunc = diffAttr->getAdjointFunction();
+      assert(adjointFunc &&
+             "adjoint for valid @differentiable attribute should be defined");
+
+      // This is an inline version of `addMemberRefConstraints` that tries to
+      // serve the same purpose, but ignores access control when performing
+      // lookup. This is important for finding normally inaccessible adjoint
+      // functions.
+      // This version omits code for handling member expressions that
+      // aren't methods (e.g. stored variables).
+      auto addMemberRefConstraints =
+        [&](Expr *expr, Expr *base, DeclName name,
+            FunctionRefKind functionRefKind) -> Type {
+        auto baseTy = CS.getType(base);
+        auto memberLocator =
+          CS.getConstraintLocator(expr, ConstraintLocator::Member);
+        auto tv = CS.createTypeVariable(
+          memberLocator, TVO_CanBindToLValue | TVO_CanBindToInOut);
+
+        // From CS.performMemberLookup:
+        Type baseObjTy = baseTy->getRValueType();
+        Type instanceTy = baseObjTy;
+        if (auto baseObjMeta = baseObjTy->getAs<AnyMetatypeType>())
+          instanceTy = baseObjMeta->getInstanceType();
+
+        MemberLookupResult result;
+        if (instanceTy->isTypeVariableOrMember() ||
+            instanceTy->is<UnresolvedType>()) {
+          CS.addUnsolvedConstraint(
+            Constraint::createMember(CS, ConstraintKind::ValueMember, baseTy,
+                                     tv, name, CurDC, functionRefKind,
+                                     locator));
+          return tv;
+        }
+
+        if (auto *selfTy = instanceTy->getAs<DynamicSelfType>())
+          instanceTy = selfTy->getSelfType();
+        assert(instanceTy->mayHaveMembers() &&
+               "Instance type should be able to have members");
+
+        // Ignore access control when doing adjoint lookup.
+        auto options = defaultMemberLookupOptions
+          | NameLookupFlags::IgnoreAccessControl;
+        auto lookupResult = TC.lookupMember(CurDC, instanceTy, name, options);
+        for (auto entry : lookupResult) {
+          OverloadChoice choice(baseTy, entry.getValueDecl(), functionRefKind);
+          result.addViable(choice);
+        }
+        CS.addOverloadSet(tv, result.ViableCandidates, CurDC, memberLocator,
+                          result.getFavoredChoice());
+        return tv;
+      };
+
+      // The adjoint decl ref is set here, without substitutions.
+      // The correct substitutions for the adjoint decl ref are set in CSApply.
+      // Next, add constraints on the type of the #adjoint expression.
+      AE->setAdjointFunction(adjointFunc);
+
+      // Sets base expression based on the current method context.
+      auto setBaseExpression = [&] {
+        assert(adjointFunc->isInstanceMember() || adjointFunc->isStatic() &&
+               "Expected adjoint to be an instance/static method");
+        auto methodContext = CS.DC->getInnermostMethodContext();
+        auto baseType = methodContext->getParameterList(0)->get(0)->getType();
+        // For instance methods, the base expression should be a TypeExpr.
+        if (adjointFunc->isInstanceMember()) {
+          baseExpr =
+            TypeExpr::createImplicitHack(adjointFunc->getLoc(), baseType, ctx);
+          return;
+        }
+        // For static methods, the base expression should be a DeclRefExpr to
+        // the implicit self declaration.
+        auto selfDecl = methodContext->getImplicitSelfDecl();
+        baseExpr = new (ctx) DeclRefExpr(ConcreteDeclRef(ctx, selfDecl, {}),
+                                         DeclNameLoc(AE->getLoc()),
+                                         /*Implicit*/ true);
+        CS.setType(baseExpr, baseType);
+      };
+
+      // If adjoint is within a type context (it is an instance/static method),
+      // add member reference constraints.
+      // Code copied from `visitUnresolvedDotExpr`.
+      if (adjointFunc->getInnermostTypeContext()) {
+        if (!baseExpr) setBaseExpression();
+        CS.cacheExprTypes(baseExpr);
+        baseExpr->setImplicit();
+        // AE->baseExpr = baseExpr;
+        return addMemberRefConstraints(AE, baseExpr, adjointFunc->getFullName(),
+                                       FunctionRefKind::Unapplied);
+      }
+
+      // Otherwise, if adjoint is a top-level function, create overload choice
+      // and immediately resolve it.
+      // Code copied from `visitDeclRefExpr`.
+      Type baseType;
+      auto typeCtx = adjointFunc->getDeclContext()->getInnermostTypeContext();
+      if (typeCtx) baseType = typeCtx->getSelfTypeInContext();
+
+      auto tv = CS.createTypeVariable(locator, TVO_CanBindToLValue);
+      OverloadChoice choice(baseType, adjointFunc, FunctionRefKind::Unapplied);
+      CS.resolveOverload(locator, tv, choice, CurDC);
+      return tv;
     }
 
     Type visitPoundAssertExpr(PoundAssertExpr *PAE) {

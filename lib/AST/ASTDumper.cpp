@@ -1830,9 +1830,8 @@ public:
 
   void visitAdjointExpr(AdjointExpr *E) {
     printCommon(E, "adjoint_expr");
-    OS << " original=";
-    E->getOriginalExpr()->dump(OS);
-    OS << ')';
+    printRec(E->getOriginalExpr());
+    PrintWithColorRAII(OS, ParenthesisColor) << ')';
   }
 
   void visitObjectLiteralExpr(ObjectLiteralExpr *E) {

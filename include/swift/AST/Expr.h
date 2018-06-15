@@ -3928,12 +3928,15 @@ private:
                           originalExpr, params, rParenLoc) {}
 };
 
-/// The `#adjoint(...)` expression for the manual retrival of basic adjoints of
-/// functions that are marked `@differentiable(reverse, ...)`.
+/// The `#adjoint(...)` expression returns the declared adjoint of functions
+/// with the `@differentiable(reverse, ...)` attribute.
 class AdjointExpr : public Expr {
 private:
   SourceLoc Loc, LParenLoc;
+  // The original function expression.
   Expr *OriginalExpr;
+  // The resolved adjoint function declaration.
+  ConcreteDeclRef AdjointFunction = nullptr;
   SourceLoc RParenLoc;
 
   explicit AdjointExpr(SourceLoc loc, SourceLoc lParenLoc, Expr *originalExpr,
@@ -3946,17 +3949,12 @@ public:
                              SourceLoc lParenLoc, Expr *originalExpr,
                              SourceLoc rParenLoc);
 
-  Expr *getOriginalExpr() const {
-    return OriginalExpr;
-  }
+  Expr *getOriginalExpr() const { return OriginalExpr; }
+  void setOriginalExpr(Expr *newOriginal) { OriginalExpr = newOriginal; }
+  ConcreteDeclRef getAdjointFunction() { return AdjointFunction; }
+  void setAdjointFunction(ConcreteDeclRef ref) { AdjointFunction = ref; }
 
-  void setOriginalExpr(Expr *newOriginal) {
-    OriginalExpr = newOriginal;
-  }
-
-  SourceRange getSourceRange() const {
-    return SourceRange(Loc, RParenLoc);
-  }
+  SourceRange getSourceRange() const { return SourceRange(Loc, RParenLoc); }
 
   static bool classof(const Expr *E) {
     return E->getKind() == ExprKind::Adjoint;

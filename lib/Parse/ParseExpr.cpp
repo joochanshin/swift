@@ -3796,16 +3796,15 @@ ParserResult<Expr> Parser::parseExprAdjoint() {
   if (parseToken(tok::l_paren, lParenLoc, diag::expr_expected_lparen,
                  "#adjoint"))
     return errorAndSkipToEnd();
+  // Parse original function expression.
   auto exprResult = parseExpr(diag::expr_expected_function_to_differentiate);
   if (exprResult.isParseError())
     return errorAndSkipToEnd();
   if (parseToken(tok::r_paren, rParenLoc, diag::expr_expected_rparen,
                  "#adjoint"))
     return errorAndSkipToEnd();
-
   return makeParserResult<Expr>(
-    AdjointExpr::create(Context, poundLoc, lParenLoc, exprResult.get(),
-                        rParenLoc));
+    AdjointExpr::create(Context, poundLoc, lParenLoc, exprResult.get(), rParenLoc));
 }
 
 /// SWIFT_ENABLE_TENSORFLOW

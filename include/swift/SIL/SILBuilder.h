@@ -1302,11 +1302,16 @@ public:
 
   GraphOperationInst *createGraphOperation(
       SILLocation loc, Identifier name, ArrayRef<SILValue> operands,
+      ArrayRef<GraphOperationAttribute> attrs, ArrayRef<SILType> resultTypes);
+  /*
+  GraphOperationInst *createGraphOperation(
+      SILLocation loc, Identifier name, ArrayRef<SILValue> operands,
       ArrayRef<GraphOperationAttribute> attrs, ArrayRef<SILType> resultTypes) {
     return insert(GraphOperationInst::create(
         getModule(), getSILDebugLocation(loc), name, operands, attrs,
         resultTypes));
   }
+  */
 
   ClassMethodInst *createClassMethod(SILLocation Loc, SILValue Operand,
                                      SILDeclRef Member, SILType MethodTy) {

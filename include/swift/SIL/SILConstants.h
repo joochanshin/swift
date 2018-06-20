@@ -286,6 +286,12 @@ public:
   void dump() const;
 };
 
+/// A graph operation attribute. Attributes have a name and a constant value.
+struct GraphOperationAttribute {
+  Identifier name;
+  SymbolicValue value;
+};
+
 } // end namespace swift
 
 #endif

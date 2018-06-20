@@ -1608,6 +1608,7 @@ void SILCloner<ImplClass>::visitDestructureTupleInst(
 }
 
 // SWIFT_ENABLE_TENSORFLOW
+/*
 template <typename ImplClass>
 void SILCloner<ImplClass>::visitGraphOperationInst(GraphOperationInst *Inst) {
   getBuilder().setCurrentDebugScope(getOpScope(Inst->getDebugScope()));
@@ -1621,6 +1622,7 @@ void SILCloner<ImplClass>::visitGraphOperationInst(GraphOperationInst *Inst) {
                                         Inst->getName(), arguments,
                                         Inst->getAttributes(), resultTypes));
 }
+*/
 
 template <typename ImplClass>
 void SILCloner<ImplClass>::visitClassMethodInst(ClassMethodInst *Inst) {

@@ -1463,6 +1463,141 @@ MultipleValueInstruction *MultipleValueInstructionResult::getParent() {
   return reinterpret_cast<MultipleValueInstruction *>(value);
 }
 
+/// SWIFT_ENABLE_TENSORFLOW
+/// A result for the graph_op instruction. See documentation for
+/// graph_op for more information.
+class GraphOperationResult final : public MultipleValueInstructionResult {
+public:
+  GraphOperationResult(unsigned Index, SILType Type,
+                       ValueOwnershipKind OwnershipKind)
+  : MultipleValueInstructionResult(ValueKind::GraphOperationResult, Index,
+                                   Type, OwnershipKind) {}
+
+  static bool classof(const SILNode *N) {
+    return N->getKind() == SILNodeKind::GraphOperationResult;
+  }
+
+  GraphOperationInst *getParent() {
+    auto *Parent = MultipleValueInstructionResult::getParent();
+    return cast<GraphOperationInst>(Parent);
+  };
+
+  const GraphOperationInst *getParent() const {
+    return const_cast<GraphOperationResult *>(this)->getParent();
+  }
+};
+
+class GraphOperationInst final
+  : public InstructionBase<
+               SILInstructionKind::GraphOperationInst,
+               MultipleValueInstruction>,
+    public MultipleValueInstructionTrailingObjects<
+               GraphOperationInst, GraphOperationResult,
+               InitialTrailingObjects<>,
+               FinalTrailingObjects<Operand, GraphOperationAttribute>> {
+  friend TrailingObjects;
+
+  /// The name of the graph operation.
+  Identifier Name;
+  /// The number of operands.
+  unsigned NumOperands;
+  /// The number of attributes.
+  unsigned NumAttributes;
+
+  GraphOperationInst(SILModule &M, SILDebugLocation loc, Identifier name,
+                     ArrayRef<SILValue> arguments,
+                     ArrayRef<GraphOperationAttribute> attrs,
+                     ArrayRef<SILType> resultTypes,
+                     ArrayRef<ValueOwnershipKind> resultOwnerships) :
+    InstructionBase(loc),
+    MultipleValueInstructionTrailingObjects(this, resultTypes,
+                                            resultOwnerships),
+    Name(name), NumOperands(arguments.size()), NumAttributes(attrs.size()) {
+      auto allOperands = getAllOperands();
+      for (unsigned i : indices(arguments))
+        new (&allOperands[i]) Operand(this, arguments[i]);
+      std::uninitialized_copy(attrs.begin(), attrs.end(),
+                              getAttributes().data());
+    }
+
+public:
+  using MultipleValueInstructionTrailingObjects::numTrailingObjects;
+  using MultipleValueInstructionTrailingObjects::totalSizeToAlloc;
+
+  ~GraphOperationInst() {
+    for (auto &operand : getAllOperands())
+      operand.~Operand();
+  }
+
+  static GraphOperationInst *create(SILModule &M, SILDebugLocation loc,
+                                    Identifier name,
+                                    ArrayRef<SILValue> arguments,
+                                    ArrayRef<GraphOperationAttribute> attrs,
+                                    ArrayRef<SILType> resultTypes);
+
+  Identifier getName() const { return Name; }
+  unsigned getNumOperands() const { return NumOperands; }
+  unsigned getNumAttributes() const { return NumAttributes; }
+
+  unsigned numTrailingObjects(OverloadToken<Operand>) const {
+    return NumOperands;
+  }
+
+  ArrayRef<Operand> getAllOperands() const {
+    return { getTrailingObjects<Operand>(), NumOperands };
+  }
+
+  MutableArrayRef<Operand> getAllOperands() {
+    return { getTrailingObjects<Operand>(), NumOperands };
+  }
+
+  OperandValueArrayRef getArguments() const {
+    return OperandValueArrayRef(getAllOperands());
+  }
+
+  ArrayRef<GraphOperationAttribute> getAttributes() const {
+    return { getTrailingObjects<GraphOperationAttribute>(), NumAttributes };
+  }
+
+  MutableArrayRef<GraphOperationAttribute> getAttributes() {
+    return { getTrailingObjects<GraphOperationAttribute>(), NumAttributes };
+  }
+
+  Optional<GraphOperationAttribute> getAttribute(StringRef name) {
+    for (auto attr : getAttributes())
+      if (attr.name.is(name))
+        return attr;
+    return None;
+  };
+
+  static bool classof(const SILNode *N) {
+    return N->getKind() == SILNodeKind::GraphOperationInst;
+  }
+};
+
+GraphOperationInst *
+SILBuilder::createGraphOperation(
+    SILLocation loc, Identifier name, ArrayRef<SILValue> operands,
+    ArrayRef<GraphOperationAttribute> attrs, ArrayRef<SILType> resultTypes) {
+  return insert(GraphOperationInst::create(
+      getModule(), getSILDebugLocation(loc), name, operands, attrs,
+      resultTypes));
+}
+
+template <typename ImplClass>
+void SILCloner<ImplClass>::visitGraphOperationInst(GraphOperationInst *Inst) {
+  getBuilder().setCurrentDebugScope(getOpScope(Inst->getDebugScope()));
+  auto arguments =
+    getOpValueArray<4>(OperandValueArrayRef(Inst->getArguments()));
+  SmallVector<SILType, 4> resultTypes;
+  for (auto result : Inst->getResults())
+    resultTypes.push_back(result->getType());
+  doPostProcess(Inst,
+      getBuilder().createGraphOperation(getOpLocation(Inst->getLoc()),
+                                        Inst->getName(), arguments,
+                                        Inst->getAttributes(), resultTypes));
+}
+
 #ifndef NDEBUG
 
 //---

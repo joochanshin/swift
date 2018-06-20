@@ -2483,6 +2483,22 @@ DestructureTupleInst *DestructureTupleInst::create(SILModule &M,
       DestructureTupleInst(M, Loc, Operand, Types, OwnershipKinds);
 }
 
+ArrayRef<GraphOperationAttribute> GraphOperationInst::getAttributes() const {
+  return { getTrailingObjects<GraphOperationAttribute>(), NumAttributes };
+}
+
+MutableArrayRef<GraphOperationAttribute> GraphOperationInst::getAttributes() {
+  return { getTrailingObjects<GraphOperationAttribute>(), NumAttributes };
+}
+
+Optional<GraphOperationAttribute>
+GraphOperationInst::getAttribute(StringRef name) {
+  for (auto attr : getAttributes())
+    if (attr.name.is(name))
+      return attr;
+  return None;
+};
+
 // SWIFT_ENABLE_TENSORFLOW
 GraphOperationInst *GraphOperationInst::create(
     SILModule &M, SILDebugLocation loc, Identifier name,

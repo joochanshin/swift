@@ -30,7 +30,7 @@
 #include "swift/SIL/Consumption.h"
 #include "swift/SIL/SILAllocated.h"
 // SWIFT_ENABLE_TENSORFLOW
-#include "swift/SIL/SILConstants.h"
+// #include "swift/SIL/SILConstants.h"
 #include "swift/SIL/SILDeclRef.h"
 #include "swift/SIL/SILFunctionConventions.h"
 #include "swift/SIL/SILLocation.h"
@@ -54,6 +54,7 @@ class MultipleValueInstructionResult;
 class DestructureTupleInst;
 class DestructureStructInst;
 // SWIFT_ENABLE_TENSORFLOW
+struct GraphOperationAttribute;
 class GraphOperationInst;
 class NonValueInstruction;
 class SILBasicBlock;
@@ -8170,13 +8171,6 @@ public:
 };
 
 /// SWIFT_ENABLE_TENSORFLOW
-/// A graph operation attribute. Attributes have a name and a constant value.
-struct GraphOperationAttribute {
-  Identifier name;
-  SymbolicValue value;
-};
-
-/// SWIFT_ENABLE_TENSORFLOW
 /// A graph operation. This instruction will be extracted to a graph program
 /// via graph program extraction passes.
 class GraphOperationInst final
@@ -8247,6 +8241,11 @@ public:
     return OperandValueArrayRef(getAllOperands());
   }
 
+  ArrayRef<GraphOperationAttribute> getAttributes() const;
+  MutableArrayRef<GraphOperationAttribute> getAttributes();
+  Optional<GraphOperationAttribute> getAttribute(StringRef name);
+
+/*
   ArrayRef<GraphOperationAttribute> getAttributes() const {
     return { getTrailingObjects<GraphOperationAttribute>(), NumAttributes };
   }
@@ -8261,6 +8260,7 @@ public:
         return attr;
     return None;
   };
+*/
 
   static bool classof(const SILNode *N) {
     return N->getKind() == SILNodeKind::GraphOperationInst;

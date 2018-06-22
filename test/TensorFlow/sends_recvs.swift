@@ -5,10 +5,10 @@ import TensorFlow
 public func test1Send() {
   var a = Tensor<Float>(1.0)
   // One send.
-  print(a.toHost())
+  _hostOp(a.toHost())
   a += 1
   // This one should not be a send.
-  print(a.toHost())
+  _hostOp(a.toHost())
 }
 
 // CHECK-LABEL: --- TFPartition Host Result: {{.*}}test1Send{{.*}}
@@ -17,7 +17,7 @@ public func test1Send() {
 
 // CHECK: integer_literal $Builtin.Int64, 0
 // CHECK-NEXT: [[TENSOR_ID:%.*]] = struct $Int
-// CHECK:      // function_ref static TensorHandle.receiveFromDevice(_:_:)
+// CHECK:      // function_ref static TensorHandle.receiveFromAccelerator(_:_:)
 // CHECK-NEXT:      [[RECEIVE_H:%.*]] = function_ref @
 // CHECK-NEXT: apply [[RECEIVE_H]]<Float>([[TC]], [[TENSOR_ID]]
 
@@ -29,10 +29,10 @@ public func test1SendWithParam(x: Float) {
   TensorFlow.enableGPU()
   var a = Tensor<Float>(x) // expected-note {{value used here}}
   // One send.
-  print(a.toHost())
+  _hostOp(a.toHost())
   a += 1
   // This one should not be a send.
-  print(a.toHost())
+  _hostOp(a.toHost())
 }
 
 // GPU function takes the input arg of x.
@@ -60,13 +60,13 @@ public func test1SendWithParam(x: Float) {
 public func test2Sends() {
   var a = Tensor<Float>(1.0)
   // One send.
-  print(a.toHost())
+  _hostOp(a.toHost())
   a += 2
   // Another send.
-  print(a.toHost())
+  _hostOp(a.toHost())
   a += 3
   // This one should not be a send.
-  print(a.toHost())
+  _hostOp(a.toHost())
 }
 
 // CHECK-LABEL: --- TFPartition Host Result: {{.*}}test2Send{{.*}}
@@ -76,15 +76,15 @@ public func test2Sends() {
 // The first receive is over tensor id 0.
 // CHECK: integer_literal $Builtin.Int64, 0
 // CHECK-NEXT: [[TENSOR_ID0:%.*]] = struct $Int
-// CHECK:      // function_ref static TensorHandle.receiveFromDevice(_:_:)
+// CHECK:      // function_ref static TensorHandle.receiveFromAccelerator(_:_:)
 // CHECK-NEXT:      [[RECEIVE_H0:%.*]] = function_ref @
 // CHECK-NEXT: apply [[RECEIVE_H0]]<Float>([[TC]], [[TENSOR_ID0]]
 
 // The second receive is over tensor id 1.
-// CHECK: function_ref print(_:separator:terminator:)
+// CHECK: function_ref _hostOp
 // CHECK: integer_literal $Builtin.Int64, 1
 // CHECK-NEXT: [[TENSOR_ID1:%.*]] = struct $Int
-// CHECK:      // function_ref static TensorHandle.receiveFromDevice(_:_:)
+// CHECK:      // function_ref static TensorHandle.receiveFromAccelerator(_:_:)
 // CHECK-NEXT:      [[RECEIVE_H1:%.*]] = function_ref @
 // CHECK-NEXT: apply [[RECEIVE_H1]]<Float>([[TC]], [[TENSOR_ID1]]
 
@@ -97,12 +97,12 @@ public func testSendsInALoopCPU() {
   while count < maxCount {
     a += a
     // One send.
-    print(a.toHost())
+    _hostOp(a.toHost())
     count += 1
   }
   a += a
   // This one should not be a send.
-  print(a.toHost())
+  _hostOp(a.toHost())
 }
 
 
@@ -116,7 +116,24 @@ public func testSendsInALoopGPU() {
   while count < maxCount {
     a += a
     // One send.
-    print(a.toHost())
+    _hostOp(a.toHost())
+    count += 1
+  }
+  a += a
+  let _ = a.array
+}
+
+public func testSendsInALoopTPU() {
+  TensorFlow.enableTPU()
+  let maxCount = 10
+  // a cannot be an integer tensor due to a TensorFlow Eigen bug (b/77737504).
+  var a = Tensor<Float>(1)
+  var count = 1
+
+  while count < maxCount {
+    a = _addScalarTensorsWithShape(a, a)
+    // One send.
+    _hostOp(a.toHost())
     count += 1
   }
   a += a
@@ -136,6 +153,25 @@ public func testSendsInALoopGPU() {
 // currently another transfer, which we can optimize away in the future.
 // CHECK:      bb2
 // CHECK:      builtin "__tfop_tfc.TensorTransfer
+
+public func testSendsInALoopWithNoResultTensor() {
+  let maxCount = 10
+  var count = 1
+  var a = Tensor<Float>(1.0)
+  while count < maxCount {
+    a += a
+    // One send.
+    print(a.toHost())
+    count += 1
+  }
+}
+
+// No result tensor from this accelerator function.
+// CHECK-LABEL: --- TFPartition Accelerator Result: {{.*}}testSendsInALoopWithNoResultTensor{{.*}}
+//
+// CHECK:      sil {{.*}}testSendsInALoopWithNoResultTensor{{.*}} () -> () {
+// CHECK:        return {{.*}} : $()
+// CHECK-NEXT: } // end sil function {{.*}}testSendsInALoopWithNoResultTensor{{.*}}
 
 public func testCannotSendResource() {
   // expected-error @+2 {{This value type cannot be sent/received}}
@@ -176,13 +212,13 @@ public func test1RecvScalarCPU() {
 //
 // CHECK-LABEL: --- TFPartition Host Result: {{.*}}test1RecvScalarCPU{{.*}}
 // CHECK:      function_ref @_swift_tfc_StartTensorComputation
-// CHECK:      // function_ref static TensorHandle.receiveFromDevice
+// CHECK:      // function_ref static TensorHandle.receiveFromAccelerator
 // CHECK-NEXT: function_ref 
 // CHECK-NEXT: [[X_HANDLE:%.*]] = apply
 // CHECK:      // function_ref static TensorHandle.scalar(_:)
 // CHECK-NEXT: [[MAKE_SCALAR_TENSOR_FN:%.*]] = function_ref
 // CHECK-NEXT: [[NEW_X_HANDLE:%.*]] = apply [[MAKE_SCALAR_TENSOR_FN]]<Float>(
-// CHECK:      // function_ref TensorHandle.sendToDevice(_:_:)
+// CHECK:      // function_ref TensorHandle.sendToAccelerator(_:_:)
 // CHECK-NEXT: [[SEND_FN:%.*]] = function_ref
 // CHECK-NEXT: apply [[SEND_FN]]<Float>({{.*}}, {{.*}}, [[NEW_X_HANDLE]])
 // CHECK:      function_ref @_swift_tfc_FinishTensorComputation
@@ -221,9 +257,9 @@ public func atariSim(_ a: Tensor<Float>) -> Tensor<Float> {
 public func test1RecvTensor() {
   let a = Tensor<Float>(1.0) // expected-warning {{value implicitly copied to the host}}
   // One send.
-  print(a.toHost())
+  _hostOp(a.toHost())
   // One recv.
-  var b = atariSim(a).toDevice()
+  var b = atariSim(a).toAccelerator()
   b += a
   let _ = b.array
 }
@@ -236,7 +272,7 @@ public func test1RecvTensor() {
 
 // CHECK-LABEL: --- TFPartition Host Result: {{.*}}test1RecvTensor{{.*}}
 // CHECK:      function_ref @_swift_tfc_StartTensorComputation
-// CHECK:      // function_ref static TensorHandle.receiveFromDevice
+// CHECK:      // function_ref static TensorHandle.receiveFromAccelerator
 // CHECK-NEXT: function_ref 
 // CHECK-NEXT: [[A_HANDLE:%.*]] = apply
 // CHECK-NEXT: [[A_TENSOR:%.*]] = struct $Tensor<Float> ([[A_HANDLE]]
@@ -244,7 +280,7 @@ public func test1RecvTensor() {
 // CHECK-NEXT: [[ATARI_FN:%.*]] = function_ref
 // CHECK-NEXT: [[B_TENSOR:%.*]] = apply [[ATARI_FN]]([[A_TENSOR]])
 // CHECK-NEXT: [[B_HANDLE:%.*]] = struct_extract [[B_TENSOR]] : $Tensor<Float>, #Tensor.handle
-// CHECK:      // function_ref TensorHandle.sendToDevice(_:_:)
+// CHECK:      // function_ref TensorHandle.sendToAccelerator(_:_:)
 // CHECK-NEXT: [[SEND_FN:%.*]] = function_ref
 // CHECK-NEXT: apply [[SEND_FN]]<Float>({{.*}}, {{.*}}, [[B_HANDLE]])
 // CHECK:      function_ref @_swift_tfc_FinishTensorComputation

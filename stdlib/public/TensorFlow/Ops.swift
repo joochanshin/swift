@@ -436,6 +436,40 @@ public extension Tensor where Scalar == Bool {
 // Transforms
 //===----------------------------------------------------------------------===//
 
+/// Returns a transposed tensor, with dimensions permuted in the specified
+/// order.
+@_inlineable @inline(__always)
+@differentiable(
+  reverse, withRespectTo: (.0),
+  adjoint: _adjointTranspose(_:originalValue:seed:)
+)
+func transpose<Scalar : AccelerableByTensorFlow>(
+  _ x: Tensor<Scalar>, withPermutations permutations: Tensor<Int32>
+) -> Tensor<Scalar> {
+  return Raw.transpose(tensor, perm: permutations)
+}
+
+/// Returns a transposed tensor, with dimensions permuted in the specified
+/// order.
+@_inlineable @inline(__always)
+func transpose<Scalar : AccelerableByTensorFlow>(
+  _ x: Tensor<Scalar>, withPermutations permutations: Int32...
+) -> Tensor<Scalar> {
+  return transpose(x, withPermutations: Tensor<Int32>(permutations))
+}
+
+/// Returns a transposed tensor, with dimensions permuted in reverse order.
+@_inlineable @inline(__always)
+func transpose<Scalar : AccelerableByTensorFlow>(
+  _ x: Tensor<Scalar>
+) -> Tensor<Scalar> {
+  let defaultPermutations = x.rankTensor - 1 - Tensor<Int32>(
+    rangeFrom: 0, to: x.rank, stride: 1
+  )
+  return transpose(x, withPermutations: Tensor<Int32>(defaultPermutations))
+}
+
+/*
 public extension Tensor {
   /// Returns a transposed tensor, with dimensions permuted in the specified
   /// order.
@@ -466,8 +500,31 @@ public extension Tensor {
     return transposed(withPermutations: Tensor<Int32>(defaultPermutations))
   }
 }
+*/
+
+/// Concatenates tensors along the first dimension.
+/// - Precondition: The tensors must have the same shape, except for the
+///   leading dimension.
+@_inlineable @inline(__always)
+func concatenate<Scalar : AccelerableByTensorFlow>(
+  _ lhs: Tensor<Scalar>, _ rhs: Tensor<Scalar>
+) -> Tensor<Scalar> {
+  return Raw.concatV2([lhs, rhs], axis: Tensor<Int32>(0))
+}
+
+/// Concatenates tensors along the specified axis.
+/// - Precondition: The tensors must have the same dimensions, except for the
+///   specified axis.
+/// - Precondition: The axis must be in the range `-rank..<rank`.
+@_inlineable @inline(__always)
+func concatenate<Scalar : AccelerableByTensorFlow>(
+  _ lhs: Tensor<Scalar>, _ rhs: Tensor<Scalar>, alongAxis axis: Int32
+) -> Tensor<Scalar> {
+  return Raw.concatV2([lhs, rhs], axis: Tensor<Int32>(axis))
+}
 
 public extension Tensor {
+  /*
   /// Concatenates tensors along the first dimension.
   /// - Precondition: The tensors must have the same shape, except for the
   ///   leading dimension.
@@ -493,6 +550,17 @@ public extension Tensor {
   @_inlineable @inline(__always)
   static func ++ (lhs: Tensor, rhs: Tensor) -> Tensor {
     return lhs.concatenated(with: rhs)
+  }
+  */
+
+  /// Concatenation operator.
+  /// - Note: `++` is a custom operator that does not exist in Swift, but does
+  ///   in Haskell/Scala. Its addition is not an insignificant language change
+  ///   and may be controversial. The existence/naming of `++` will be discussed
+  ///   during a later API design phase.
+  @_inlineable @inline(__always)
+  static func ++ (lhs: Tensor, rhs: Tensor) -> Tensor {
+    return concatenate(lhs, rhs)
   }
 }
 

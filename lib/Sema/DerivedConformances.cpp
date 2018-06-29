@@ -64,6 +64,17 @@ bool DerivedConformance::derivesProtocolConformance(TypeChecker &TC,
     return canDeriveHashable(TC, Nominal);
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  // The only requirement for deriving Parameterized is that there exist some
+  // stored properties marked with @parameter. The "Parameters" struct can
+  // always be derived, even if the parameters have different types.
+  if (*knownProtocol == KnownProtocolKind::Parameterized)
+    return !Nominal->getAllParameters().empty();
+
+  // SWIFT_ENABLE_TENSORFLOW
+  if (*knownProtocol == KnownProtocolKind::ParameterAggregate)
+    return canDeriveParameterAggregate(TC, Nominal);
+
   if (auto *enumDecl = dyn_cast<EnumDecl>(Nominal)) {
     switch (*knownProtocol) {
         // The presence of a raw type is an explicit declaration that
@@ -195,6 +206,11 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
     if (name.isSimpleName(ctx.Id_intValue))
       return getRequirement(KnownProtocolKind::CodingKey);
 
+    // SWIFT_ENABLE_TENSORFLOW
+    // Parameterized.allParameters
+    if (name.isSimpleName(ctx.Id_allParameters))
+      return getRequirement(KnownProtocolKind::Parameterized);
+
     return nullptr;
   }
 
@@ -215,6 +231,18 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
       auto argumentNames = name.getArgumentNames();
       if (argumentNames.size() == 1 && argumentNames[0] == ctx.Id_into)
         return getRequirement(KnownProtocolKind::Hashable);
+    }
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // ParameterAggregate.update(withGradients:_:)
+    if (name.isCompoundName() &&
+        name.getBaseName() == ctx.getIdentifier("update")) {
+      auto argumentNames = name.getArgumentNames();
+      if (argumentNames.size() == 2 &&
+          argumentNames[0] == ctx.getIdentifier("withGradients") &&
+          argumentNames[1].empty()) {
+        return getRequirement(KnownProtocolKind::ParameterAggregate);
+      }
     }
 
     return nullptr;
@@ -250,6 +278,16 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
     // CaseIterable.AllCases
     if (name.isSimpleName(ctx.Id_AllCases))
       return getRequirement(KnownProtocolKind::CaseIterable);
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // Parameterized.Parameters
+    if (name.isSimpleName(ctx.Id_Parameters))
+      return getRequirement(KnownProtocolKind::Parameterized);
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // ParameterAggregate.Parameter
+    if (name.isSimpleName(ctx.Id_Parameter))
+      return getRequirement(KnownProtocolKind::ParameterAggregate);
 
     return nullptr;
   }

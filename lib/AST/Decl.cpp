@@ -2579,6 +2579,20 @@ bool NominalTypeDecl::isOptionalDecl() const {
   return this == getASTContext().getOptionalDecl();
 }
 
+ArrayRef<VarDecl *>
+NominalTypeDecl::getAllParameters() {
+  if (Parameters) return *Parameters;
+  SmallVector<VarDecl *, 2> parameters;
+  for (auto member : getMembers()) {
+    auto varDecl = dyn_cast<VarDecl>(member);
+    if (!varDecl) continue;
+    if (varDecl->getAttrs().hasAttribute<ParameterAttr>())
+      parameters.push_back(varDecl);
+  }
+  Parameters = parameters;
+  return parameters;
+}
+
 GenericTypeDecl::GenericTypeDecl(DeclKind K, DeclContext *DC,
                                  Identifier name, SourceLoc nameLoc,
                                  MutableArrayRef<TypeLoc> inherited,

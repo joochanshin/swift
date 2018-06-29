@@ -167,6 +167,34 @@ public:
   /// \returns the derived member, which will also be added to the type.
   ValueDecl *deriveDecodable(ValueDecl *requirement);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Derive a Parameterized requirement for a nominal type.
+  ///
+  /// \returns the derived member, which will also be added to the type.
+  ValueDecl *deriveParameterized(ValueDecl *requirement);
+
+  /// Derive a Parameterized type witness for a nominal type, if it has
+  /// parameters (stored properties marked with @parameter).
+  ///
+  /// \returns the derived member, which will also be added to the type.
+  Type deriveParameterized(AssociatedTypeDecl *assocType);
+
+  /// Determine if a ParameterAggregate requirement can be derived for a type.
+  ///
+  /// \returns True if the requirement can be derived.
+  static bool canDeriveParameterAggregate(TypeChecker &tc,
+                                          NominalTypeDecl *type);
+
+  /// Derive a ParameterAggregate requirement for a nominal type.
+  ///
+  /// \returns the derived member, which will also be added to the type.
+  ValueDecl *deriveParameterAggregate(ValueDecl *requirement);
+
+  /// Derive a ParameterAggregate type witness for a nominal type.
+  ///
+  /// \returns the derived member, which will also be added to the type.
+  Type deriveParameterAggregate(AssociatedTypeDecl *assocType);
+
   /// Declare a read-only property.
   std::pair<VarDecl *, PatternBindingDecl *>
   declareDerivedProperty(Identifier name, Type propertyInterfaceType,

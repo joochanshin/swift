@@ -5856,6 +5856,7 @@ public:
     UNINTERESTING_ATTR(Differentiable)
     UNINTERESTING_ATTR(CompilerEvaluable)
     UNINTERESTING_ATTR(TensorFlowGraph)
+    UNINTERESTING_ATTR(Parameter)
 
     // These can't appear on overridable declarations.
     UNINTERESTING_ATTR(Prefix)

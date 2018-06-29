@@ -2923,6 +2923,11 @@ class NominalTypeDecl : public GenericTypeDecl, public IterableDeclContext {
     getSatisfiedProtocolRequirementsForMember(const ValueDecl *Member,
                                               bool Sorted) const;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// \brief The parameters of the nominal type (instance stored properties
+  /// declared with @parameter).
+  Optional<SmallVector<VarDecl *, 2>> Parameters;
+
   friend class ASTContext;
   friend class MemberLookupTable;
   friend class ConformanceLookupTable;
@@ -3079,6 +3084,11 @@ public:
 
   /// Is this the decl for Optional<T>?
   bool isOptionalDecl() const;
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Retrieve all parameters of the nominal type (instance stored properties
+  /// declared with @parameter).
+  ArrayRef<VarDecl *> getAllParameters();
 
 private:
   /// Predicate used to filter StoredPropertyRange.

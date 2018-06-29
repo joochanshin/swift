@@ -2268,6 +2268,11 @@ ERROR(broken_encodable_requirement,none,
       "Encodable protocol is broken: unexpected requirement", ())
 ERROR(broken_decodable_requirement,none,
       "Decodable protocol is broken: unexpected requirement", ())
+// SWIFT_ENABLE_TENSORFLOW
+ERROR(broken_parameterized_requirement,none,
+      "Parameterized protocol is broken: unexpected requirement", ())
+ERROR(broken_parameter_aggregate_requirement,none,
+      "ParameterAggregate protocol is broken: unexpected requirement", ())
 
 NOTE(codable_extraneous_codingkey_case_here,none,
      "CodingKey case %0 does not match any stored properties", (Identifier))
@@ -2556,6 +2561,13 @@ ERROR(tf_graph_attr_function_tensorflow_value_only,none,
       "values", ())
 ERROR(tf_graph_attr_no_generic_functions,none,
       "@TensorFlowGraph cannot be applied to generic functions", ())
+
+// @parameter attribute
+ERROR(parameter_attr_instance_stored_property_only,none,
+      "only instance stored properties can be declared @%0", (StringRef))
+ERROR(parameter_attr_fp_tensor_type_only,none,
+      "stored properties declared with @%0 must have type 'Tensor' where "
+      "'Tensor.Scalar' conforms to 'FloatingPoint'", (StringRef))
 
 //------------------------------------------------------------------------------
 // MARK: Type Check Expressions

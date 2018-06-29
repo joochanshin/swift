@@ -123,6 +123,7 @@ public:
   IGNORED_ATTR(Differentiable)
   IGNORED_ATTR(CompilerEvaluable)
   IGNORED_ATTR(TensorFlowGraph)
+  IGNORED_ATTR(Parameter)
 #undef IGNORED_ATTR
 
   // @noreturn has been replaced with a 'Never' return type.
@@ -904,6 +905,7 @@ public:
   void visitDifferentiableAttr(DifferentiableAttr *attr);
   void visitCompilerEvaluableAttr(CompilerEvaluableAttr *attr);
   void visitTensorFlowGraphAttr(TensorFlowGraphAttr *attr);
+  void visitParameterAttr(ParameterAttr *attr);
 };
 } // end anonymous namespace
 
@@ -2670,6 +2672,43 @@ void AttributeChecker::visitTensorFlowGraphAttr(TensorFlowGraphAttr *attr) {
     fnTy->getExtInfo().withRepresentation(
       AnyFunctionType::Representation::TensorFlow));
   FD->setInterfaceType(newFnTy);
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+void AttributeChecker::visitParameterAttr(ParameterAttr *attr) {
+  VarDecl *VD = dyn_cast<VarDecl>(D);
+  if (!VD->getDeclContext()->getAsNominalTypeOrNominalTypeExtensionContext() ||
+      !VD->hasStorage() || VD->isStatic())
+    diagnoseAndRemoveAttr(attr,
+                          diag::parameter_attr_instance_stored_property_only,
+                          attr->getAttrName());
+  // auto type = VD->getInterfaceType();
+  // auto floatingPointProto =
+  //   VD->getASTContext().getProtocol(KnownProtocolKind::FloatingPoint);
+  // auto vectorNumericProto =
+  //   VD->getASTContext().getProtocol(KnownProtocolKind::VectorNumeric);
+  // auto module = D->getModuleContext();
+  // if (module->lookupConformance(type, floatingPointProto))
+  //   return;
+
+  // auto vectorNumericConf = module->lookupConformance(type, vectorNumericProto);
+  // if (!vectorNumericConf) {
+  //   diagnoseAndRemoveAttr(attr, diag::parameter_attr_fp_tensor_type_only,
+  //                         attr->getAttrName());
+  //   return;
+  // }
+  // DeclName scalarDeclName(VD->getASTContext().getIdentifier("ScalarElement"));
+  // auto lookup = vectorNumericProto->lookupDirect(scalarDeclName);
+  // auto scalarAssocTy =
+  //   cast<AssociatedTypeDecl>(lookup[0])->getDeclaredInterfaceType();
+  // auto scalarTy = vectorNumericConf->getAssociatedType(type, scalarAssocTy);
+  // auto scalarConf =
+  //   module->lookupConformance(scalarTy, floatingPointProto);
+  // if (!scalarConf) {
+  //   diagnoseAndRemoveAttr(attr, diag::parameter_attr_fp_tensor_type_only,
+  //                         attr->getAttrName());
+  //   return;
+  // }
 }
 
 void TypeChecker::checkDeclAttributes(Decl *D) {

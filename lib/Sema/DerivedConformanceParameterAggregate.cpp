@@ -86,6 +86,70 @@ static TypeAliasDecl *getParameterTypeAliasDecl(NominalTypeDecl *nominal) {
   return parameterDecl;
 }
 
+static void derivedBody_allKeyPathsGetter(AbstractFunctionDecl *updateDecl) {
+  auto *nominal = updateDecl->getDeclContext()
+                      ->getAsNominalTypeOrNominalTypeExtensionContext();
+  auto &C = nominal->getASTContext();
+
+  auto *selfDecl = updateDecl->getImplicitSelfDecl();
+  Expr *selfDRE =
+      new (C) DeclRefExpr(selfDecl, DeclNameLoc(), /*Implicit*/ true);
+  // WIP: Synthesis key path expressions
+  // KeyPathExpr::Component
+  // KeyPathExpr(C, SourceLoc(), SourceLoc(), <#ArrayRef<Component> components#>, SourceLoc())
+
+  // SmallVector<ASTNode, 2> updateCallNodes;
+  // for (auto member : nominal->getMembers()) {
+  //   auto varDecl = dyn_cast<VarDecl>(member);
+  //   if (!varDecl || varDecl->isStatic() || !varDecl->hasStorage())
+  //     continue;
+  //   auto *call = createUpdateCallExpr(varDecl);
+  //   updateCallNodes.push_back(call);
+  // }
+  // updateDecl->setBody(
+  //     BraceStmt::create(C, SourceLoc(), updateCallNodes, SourceLoc(),
+  //                       /*Implicit*/ true));
+}
+
+// Synthesize the `allKeyPaths` static property declaration.
+static ValueDecl *
+deriveParameterAggregate_allKeyPaths(DerivedConformance &derived) {
+  auto nominal = derived.Nominal;
+  auto parentDC = derived.getConformanceContext();
+  auto &TC = derived.TC;
+  auto &C = TC.Context;
+
+  auto *writableKeyPathDecl = cast<ClassDecl>(C.getWritableKeyPathDecl());
+  auto parameterType = deriveParameterAggregate_Parameter(TC, nominal);
+  if (!parameterType) {
+    llvm::errs() << "HAHA NO PARAMETER TYPE\n";
+    // TODO: emit diagnostic
+    return nullptr;
+  }
+  auto writableKeyPathType =
+      BoundGenericClassType::get(writableKeyPathDecl, /*parent*/ Type(),
+                                 {nominal->getDeclaredInterfaceType(),
+                                  parameterType});
+  writableKeyPathType->dump();
+  auto allKeyPathsType = ArraySliceType::get(writableKeyPathType);
+  // auto allKeyPathsType = nominal->mapTypeIntoContext(resultTy);
+
+  VarDecl *allKeyPathsDecl;
+  PatternBindingDecl *pbDecl;
+  std::tie(allKeyPathsDecl, pbDecl) = derived.declareDerivedProperty(
+      C.Id_allKeyPaths, allKeyPathsType, allKeyPathsType, /*isStatic*/ true,
+      /*isFinal*/ true);
+
+  auto *getterDecl = DerivedConformance::addGetterToReadOnlyDerivedProperty(
+      derived.TC, allKeyPathsDecl, allKeyPathsType);
+  getterDecl->setBodySynthesizer(&derivedBody_allKeyPathsGetter);
+
+  derived.addMembersToConformanceContext(
+      {getterDecl, allKeyPathsDecl, pbDecl});
+
+  return allKeyPathsDecl;
+}
+
 static void
 deriveBodyParameterAggregate_update(AbstractFunctionDecl *updateDecl) {
   auto *nominal = updateDecl->getDeclContext()
@@ -241,6 +305,8 @@ static ValueDecl *deriveParameterAggregate_update(DerivedConformance &derived) {
 
 ValueDecl *
 DerivedConformance::deriveParameterAggregate(ValueDecl *requirement) {
+  if (requirement->getBaseName() == TC.Context.Id_allKeyPaths)
+    return deriveParameterAggregate_allKeyPaths(*this);
   if (requirement->getBaseName() == TC.Context.getIdentifier("update"))
     return deriveParameterAggregate_update(*this);
   TC.diagnose(requirement->getLoc(),

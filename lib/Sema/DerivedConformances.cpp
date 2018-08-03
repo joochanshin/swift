@@ -207,6 +207,11 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
       return getRequirement(KnownProtocolKind::CodingKey);
 
     // SWIFT_ENABLE_TENSORFLOW
+    // ParameterAggregate.allKeyPaths
+    if (name.isSimpleName(ctx.Id_allKeyPaths))
+      return getRequirement(KnownProtocolKind::ParameterAggregate);
+
+    // SWIFT_ENABLE_TENSORFLOW
     // Parameterized.allParameters
     if (name.isSimpleName(ctx.Id_allParameters))
       return getRequirement(KnownProtocolKind::Parameterized);

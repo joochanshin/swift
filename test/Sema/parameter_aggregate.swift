@@ -77,4 +77,8 @@ struct HeterogeneousParameters : ParameterAggregate {
     updater(&tmp, Float(gradients.double))
     double = Double(tmp)
   }
+
+  static var allKeyPaths: [WritableKeyPath<HeterogeneousParameters, Parameter>] {
+    return [\HeterogeneousParameters.float]
+  }
 }

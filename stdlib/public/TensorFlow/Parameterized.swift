@@ -28,6 +28,9 @@ public protocol ParameterAggregate {
     withGradients gradients: Self,
     _ updater: (inout Parameter, Parameter) -> Void
   )
+
+  /// A collection of keypaths to all parameters of this type.
+  static var allKeyPaths: [WritableKeyPath<Self, Parameter>] { get }
 }
 
 //===----------------------------------------------------------------------===//

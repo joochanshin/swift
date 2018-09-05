@@ -1673,7 +1673,10 @@ void ConstraintSystem::resolveOverload(ConstraintLocator *locator,
   case OverloadChoiceKind::DeclViaUnwrappedOptional:
   case OverloadChoiceKind::DynamicMemberLookup: {
     // Retrieve the type of a reference to the specific declaration choice.
+    llvm::errs() << "CHOICE\n";
+    choice.getDecl()->dump();
     if (auto baseTy = choice.getBaseType()) {
+      choice.getBaseType()->dump();
       assert(!baseTy->hasTypeParameter());
 
       auto getDotBase = [](const Expr *E) -> const DeclRefExpr * {

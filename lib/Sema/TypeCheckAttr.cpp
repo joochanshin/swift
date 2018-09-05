@@ -984,6 +984,8 @@ static bool hasValidDynamicCallableMethod(TypeChecker &TC,
   // If there are no valid candidates, return false.
   if (candidates.size() == 0) return false;
 
+  return true;
+  /*
   auto candidate = cast<FuncDecl>(candidates.front().getValueDecl());
   // If there are multiple valid candidates, emit overload error.
   if (candidates.size() > 1) {
@@ -995,6 +997,7 @@ static bool hasValidDynamicCallableMethod(TypeChecker &TC,
   }
   // Otherwise, there is a single valid method.
   return true;
+   */
 }
 
 void AttributeChecker::

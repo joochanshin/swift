@@ -7117,6 +7117,9 @@ static Expr *finishApplyDynamicCallable(ConstraintSystem &cs, ApplyExpr *apply,
     }
   }
 
+  llvm::errs() << "CS APPLY\n";
+  cs.getType(fn)->dump();
+
   auto method = useKwargsMethod
     ? *methods.keywordArgumentsMethods.begin()
     : *methods.argumentsMethods.begin();

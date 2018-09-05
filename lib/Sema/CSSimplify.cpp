@@ -782,6 +782,15 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
   // Apply labels to arguments.
   SmallVector<AnyFunctionType::Param, 8> argsWithLabels;
   argsWithLabels.append(args.begin(), args.end());
+  // llvm::errs() << "HELLO LABELS\n";
+  // callee->dump();
+  // for (auto arg : argsWithLabels) {
+  //   llvm::errs() << "'" << arg.getLabel() << "'\n";
+  //   arg.getType()->dump();
+  // }
+  // for (auto arg : argLabels) {
+  //   llvm::errs() << "'" << arg << "'\n";
+  // }
   AnyFunctionType::relabelParams(argsWithLabels, argLabels);
 
   // FIXME: Remove this. It's functionally identical to the real code
@@ -4382,11 +4391,12 @@ ConstraintSystem::simplifyKeyPathApplicationConstraint(
 /// Returns the function declaration corresponding to a @dynamicCallable
 /// attribute required method (if it exists) implemented by a type. Otherwise,
 /// return nullptr.
-static FuncDecl *
-lookupDynamicCallableMethod(Type type, ConstraintSystem &CS,
-                            const ConstraintLocatorBuilder &locator,
-                            Identifier argumentName, bool hasKeywordArgs,
-                            bool &error) {
+// static FuncDecl *
+static llvm::SmallVector<FuncDecl *, 4>
+lookupDynamicCallableMethods(Type type, ConstraintSystem &CS,
+                             const ConstraintLocatorBuilder &locator,
+                             Identifier argumentName, bool hasKeywordArgs,
+                             bool &error) {
   auto &ctx = CS.getASTContext();
   auto decl = type->getAnyNominal();
   auto methodName = DeclName(ctx, ctx.Id_dynamicallyCall, { argumentName });
@@ -4404,12 +4414,21 @@ lookupDynamicCallableMethod(Type type, ConstraintSystem &CS,
   candidates.erase(std::remove_if(candidates.begin(), candidates.end(), filter),
                    candidates.end());
 
+  SmallVector<FuncDecl *, 4> methods;
+  for (auto candidate : candidates) {
+    auto funcDecl = dyn_cast_or_null<FuncDecl>(candidate.getDecl());
+    if (!funcDecl) continue;
+    methods.push_back(funcDecl);
+  }
+  return methods;
+  /*
   // If there is one candidate, return it. Otherwise, return nullptr.
   auto size = candidates.size();
   if (size == 1) return cast<FuncDecl>(candidates.front().getDecl());
   // If there are >1 candidates, it is an overload error.
   else if (size > 1) error = true;
   return nullptr;
+  */
 }
 
 /// Looks up and returns the @dynamicCallable required methods (if they exist)
@@ -4427,12 +4446,25 @@ lookupDynamicCallableMethods(Type type, ConstraintSystem &CS,
   // methods.keywordArgumentsMethod =
   //   lookupDynamicCallableMethod(type, CS, locator, ctx.Id_withKeywordArguments,
   //                               /*hasKeywordArgs*/ true, error);
-  methods.addArgumentsMethod(
-    lookupDynamicCallableMethod(type, CS, locator, ctx.Id_withArguments,
-                                /*hasKeywordArgs*/ false, error));
-  methods.addKeywordArgumentsMethod(
-    lookupDynamicCallableMethod(type, CS, locator, ctx.Id_withKeywordArguments,
-                                /*hasKeywordArgs*/ true, error));
+
+  auto argMethods =
+    lookupDynamicCallableMethods(type, CS, locator, ctx.Id_withArguments,
+                                 /*hasKeywordArgs*/ false, error);
+  auto kwargMethods =
+    lookupDynamicCallableMethods(type, CS, locator, ctx.Id_withKeywordArguments,
+                                 /*hasKeywordArgs*/ true, error);
+  // methods.argumentsMethods.insert(argMethods.begin(), argMethods.end());
+  // methods.keywordArgumentsMethods.insert(kwargMethods.begin(),
+  //                                        kwargMethods.end());
+  methods.argumentsMethods.append(argMethods.begin(), argMethods.end());
+  methods.keywordArgumentsMethods.append(kwargMethods.begin(),
+                                         kwargMethods.end());
+  // methods.addArgumentsMethod(
+  //   lookupDynamicCallableMethod(type, CS, locator, ctx.Id_withArguments,
+  //                               /*hasKeywordArgs*/ false, error));
+  // methods.addKeywordArgumentsMethod(
+  //   lookupDynamicCallableMethod(type, CS, locator, ctx.Id_withKeywordArguments,
+  //                               /*hasKeywordArgs*/ true, error));
   return methods;
 }
 
@@ -4458,12 +4490,30 @@ getDynamicCallableMethods(Type type, ConstraintSystem &CS,
       auto tmp = getDynamicCallableMethods(componentType, CS, locator, error);
       if (error) return methods;
       for (auto method : tmp.argumentsMethods) {
-        if (!methods.argumentsMethods.count(method))
+        bool foundMethod = false;
+        for (auto m : methods.argumentsMethods) {
+          if (method == m) {
+            foundMethod = true;
+            break;
+          }
+        }
+        if (!foundMethod)
           methods.addArgumentsMethod(method);
+        // if (!methods.argumentsMethods.count(method))
+        //   methods.addArgumentsMethod(method);
       }
       for (auto method : tmp.keywordArgumentsMethods) {
-        if (!methods.keywordArgumentsMethods.count(method))
+        bool foundMethod = false;
+        for (auto m : methods.keywordArgumentsMethods) {
+          if (method == m) {
+            foundMethod = true;
+            break;
+          }
+        }
+        if (!foundMethod)
           methods.addKeywordArgumentsMethod(method);
+        // if (!methods.keywordArgumentsMethods.count(method))
+        //   methods.addKeywordArgumentsMethod(method);
       }
       /*
       if (tmp.argumentsMethod) {
@@ -4560,17 +4610,6 @@ simplifyDynamicCallableApplicableFnConstraint(
 
   // Determine whether to call the positional arguments method or the
   // keyword arguments method.
-  /*
-  bool useKwargsMethod = methods.argumentsMethod == nullptr;
-  if (!useKwargsMethod) {
-    for (auto param : func1->getParams()) {
-      if (param.hasLabel()) {
-        useKwargsMethod = true;
-        break;
-      }
-    }
-  }
-   */
   bool useKwargsMethod = methods.argumentsMethods.empty();
   if (!useKwargsMethod) {
     for (auto param : func1->getParams()) {
@@ -4581,10 +4620,84 @@ simplifyDynamicCallableApplicableFnConstraint(
     }
   }
 
+  llvm::errs() << "HELLO\n";
+  methods.dump();
+  CS.dump();
+
+  auto loc = CS.getConstraintLocator(locator);
+  auto tv = CS.createTypeVariable(loc, TVO_CanBindToLValue);
+  SmallVector<OverloadChoice, 4> choices;
+  for (unsigned i = 0, n = methods.argumentsMethods.size(); i != n; ++i) {
+    // If the result is invalid, skip it.
+    // FIXME: Note this as invalid, in case we don't find a solution,
+    // so we don't let errors cascade further.
+    CS.getTypeChecker().validateDecl(methods.argumentsMethods[i]);
+    if (methods.argumentsMethods[i]->isInvalid())
+      continue;
+
+    OverloadChoice choice =
+      OverloadChoice(type2, methods.argumentsMethods[i], FunctionRefKind::SingleApply);
+    choices.push_back(choice);
+  }
+
+  if (choices.empty())
+    return SolutionKind::Error;
+
+  // Record this overload set.
+  CS.addOverloadSet(tv, choices, CS.DC, loc);
+  llvm::errs() << "HELLO added overload set\n";
+  // type1->dump();
+  CS.dump();
+
+  auto tvParam = CS.createTypeVariable(loc);
+  // auto tvResult = CS.createTypeVariable(loc);
+
+  auto arrayLitProto =
+    ctx.getProtocol(KnownProtocolKind::ExpressibleByArrayLiteral);
+  CS.addConstraint(ConstraintKind::ConformsTo, tvParam,
+                   arrayLitProto->getDeclaredType(), locator);
+
+  auto elementAssocTy = cast<AssociatedTypeDecl>(
+    arrayLitProto->lookupDirect(
+      ctx.getIdentifier("ArrayLiteralElement")).front());
+  Type arrayElementTy = DependentMemberType::get(tvParam, elementAssocTy);
+  CS.addConstraint(ConstraintKind::Defaultable, arrayElementTy,
+                   ctx.TheAnyType, locator);
+
+  for (auto i : indices(func1->getParams())) {
+    auto param = func1->getParams()[i];
+    auto paramType = param.getType();
+    auto locatorBuilder =
+      locator.withPathElement(LocatorPathElt::getTupleElement(i));
+
+    CS.addConstraint(ConstraintKind::ArgumentConversion, paramType,
+                     arrayElementTy, locatorBuilder);
+  }
+
+  AnyFunctionType *funcType = FunctionType::get({ AnyFunctionType::Param(tvParam) }, func1->getResult());
+  // funcType = FunctionType::get({ AnyFunctionType::Param(type2) }, funcType);
+  CS.addConstraint(ConstraintKind::ApplicableFunction, funcType, tv, locator);
+
+  llvm::errs() << "HELLO added various constraints\n";
+  CS.dump();
+
+  return SolutionKind::Solved;
+
+  llvm::SmallVector<FuncDecl *, 4> validCandidates;
+  /*
+  if (useKwargsMethod) {
+    candidates.append(methods.keywordArgumentsMethods.begin(),
+                      methods.keywordArgumentsMethods.end());
+  }
+  candidates.append(methods.argumentsMethods.begin(),
+                    methods.argumentsMethods.end());
+   */
+
+  /*
+  // Old code, no longer useful.
   auto method = useKwargsMethod
     ? *methods.keywordArgumentsMethods.begin()
     : *methods.argumentsMethods.begin();
-
   if (!method) {
     assert(useKwargsMethod &&
            "Undefined method implies kwargs method is missing");
@@ -4599,7 +4712,9 @@ simplifyDynamicCallableApplicableFnConstraint(
                    type2);
     return SolutionKind::Error;
   }
+   */
 
+#if false
   auto memberType = CS.getTypeOfMemberReference(type2, method, CS.DC,
                                                 /*isDynamicResult*/ false,
                                                 FunctionRefKind::DoubleApply,
@@ -4619,7 +4734,8 @@ simplifyDynamicCallableApplicableFnConstraint(
       auto param = func1->getParams()[i];
       auto paramType = param.getType();
       auto locatorBuilder =
-        locator.withPathElement(LocatorPathElt::getTupleElement(i));
+      locator.withPathElement(LocatorPathElt::getTupleElement(i));
+
       if (CS.matchTypes(paramType, argElementType,
                         ConstraintKind::ArgumentConversion, flags,
                         locatorBuilder).isFailure()) {
@@ -4637,33 +4753,148 @@ simplifyDynamicCallableApplicableFnConstraint(
       CS.TC.conformsToProtocol(argType, arrayLitProto, CS.DC,
                                ConformanceCheckFlags::InExpression);
     Type arrayElementType =
-      ProtocolConformanceRef::getTypeWitnessByName(
+    ProtocolConformanceRef::getTypeWitnessByName(
         argType, *conformance, ctx.Id_ArrayLiteralElement, &CS.TC);
 
-    if (!argTypesMatch(arrayElementType))
+    if (!argTypesMatch(arrayElementType)) {
+      llvm::errs() << "HELLO array elment type didn't match\n";
       return SolutionKind::Error;
+    }
   } else {
     auto dictLitProto =
-      ctx.getProtocol(KnownProtocolKind::ExpressibleByDictionaryLiteral);
+    ctx.getProtocol(KnownProtocolKind::ExpressibleByDictionaryLiteral);
     auto conformance =
-      CS.TC.conformsToProtocol(argType, dictLitProto, CS.DC,
-                               ConformanceCheckFlags::InExpression);
+    CS.TC.conformsToProtocol(argType, dictLitProto, CS.DC,
+                             ConformanceCheckFlags::InExpression);
     Type dictValueType =
-      ProtocolConformanceRef::getTypeWitnessByName(
-        argType, *conformance, ctx.Id_Value, &CS.TC);
+    ProtocolConformanceRef::getTypeWitnessByName(
+                                                 argType, *conformance, ctx.Id_Value, &CS.TC);
 
-    if (!argTypesMatch(dictValueType))
+    if (!argTypesMatch(dictValueType)) {
       return SolutionKind::Error;
+    }
   }
 
   // Add constraints on result type.
   auto locatorBuilder =
-    locator.withPathElement(ConstraintLocator::FunctionResult);
+  locator.withPathElement(ConstraintLocator::FunctionResult);
   if (CS.matchTypes(func1->getResult(), methodType->getResult(),
                     ConstraintKind::Bind, flags,
-                    locatorBuilder).isFailure())
+                    locatorBuilder).isFailure()) {
     return SolutionKind::Error;
+  }
+  return SolutionKind::Solved;
+#endif
 
+  SmallVector<Constraint*, 2> constraints;
+  // constraints.push_back(
+  //     Constraint::create(CS, ConstraintKind::ApplicableFunction, <#Type First#>, <#Type Second#>, <#ConstraintLocator *locator#>)
+
+  // CS.addDisjunctionConstraint(<#ArrayRef<Constraint *> constraints#>, <#ConstraintLocatorBuilder locator#>)
+  // llvm::SetVector<Constraint *> constraints;
+  auto checkCandidates = [&](SmallVector<FuncDecl *, 4> candidates,
+                             bool isKwargsMethod,
+                             SmallVector<FuncDecl *, 4> result) {
+    for (auto method : candidates) {
+      auto memberType =
+        CS.getTypeOfMemberReference(type2, method, CS.DC,
+                                    /*isDynamicResult*/ false,
+                                    FunctionRefKind::DoubleApply,
+                                    locator).second;
+      auto methodType = memberType->castTo<AnyFunctionType>();
+      auto argType = methodType->getParams()[0].getType();
+
+      // Attempts to solve an argument conversion constraint from each dynamic
+      // call parameter to the specified type. Returns true if the constraint can
+      // be solved.
+      auto argTypesMatch = [&](Type argElementType) {
+        // Allow argument type to default to `Any`.
+        CS.addConstraint(ConstraintKind::Defaultable, argElementType,
+                         ctx.TheAnyType, locator);
+        // Constraint each dynamic call parameter to argument type.
+        for (auto i : indices(func1->getParams())) {
+          auto param = func1->getParams()[i];
+          auto paramType = param.getType();
+          auto locatorBuilder =
+            locator.withPathElement(LocatorPathElt::getTupleElement(i));
+
+          // NOTE: NEED TO UNCOMMENT
+          // auto *argTypesConstraint = Constraint::create(
+          //   CS, ConstraintKind::ArgumentConversion, paramType, argElementType,
+          //   CS.getConstraintLocator(locatorBuilder));
+
+          if (CS.matchTypes(paramType, argElementType,
+                            ConstraintKind::ArgumentConversion, flags,
+                            locatorBuilder).isFailure()) {
+            return false;
+          }
+        }
+        return true;
+      };
+
+      // Add constraints on argument type.
+      if (!isKwargsMethod) {
+        llvm::errs() << "Hello\n";
+        auto arrayLitProto =
+          ctx.getProtocol(KnownProtocolKind::ExpressibleByArrayLiteral);
+        auto conformance =
+          CS.TC.conformsToProtocol(argType, arrayLitProto, CS.DC,
+                                   ConformanceCheckFlags::InExpression);
+        Type arrayElementType =
+          ProtocolConformanceRef::getTypeWitnessByName(
+            argType, *conformance, ctx.Id_ArrayLiteralElement, &CS.TC);
+
+        if (!argTypesMatch(arrayElementType)) {
+          llvm::errs() << "HELLO array elment type didn't match\n";
+          continue;
+          // return SolutionKind::Error;
+        }
+      } else {
+        auto dictLitProto =
+          ctx.getProtocol(KnownProtocolKind::ExpressibleByDictionaryLiteral);
+        auto conformance =
+          CS.TC.conformsToProtocol(argType, dictLitProto, CS.DC,
+                                   ConformanceCheckFlags::InExpression);
+        Type dictValueType =
+          ProtocolConformanceRef::getTypeWitnessByName(
+            argType, *conformance, ctx.Id_Value, &CS.TC);
+
+        if (!argTypesMatch(dictValueType)) {
+          continue;
+          // return SolutionKind::Error;
+        }
+      }
+
+      // Add constraints on result type.
+      auto locatorBuilder =
+        locator.withPathElement(ConstraintLocator::FunctionResult);
+      if (CS.matchTypes(func1->getResult(), methodType->getResult(),
+                        ConstraintKind::Bind, flags,
+                        locatorBuilder).isFailure()) {
+        llvm::errs() << "result type didn't match\n";
+        continue;
+        // return SolutionKind::Error;
+      }
+      // return SolutionKind::Solved;
+      result.push_back(method);
+      // TODO: test comment
+      break;
+    }
+  };
+
+  // // Idea: add disjunction on dynamicallyCall method types!
+  // // This is higher-level than checking argument/result types individually
+  // // Question: does
+  // // Note: Check out how disjunction constraints are formed
+  // checkCandidates(methods.argumentsMethods, /*isKwargsMethod*/ false,
+  //                 validCandidates);
+  // checkCandidates(methods.keywordArgumentsMethods, /*isKwargsMethod*/ true,
+  //                 validCandidates);
+  // llvm::errs() << "valid candidates: " << validCandidates.size() << "\n";
+  // for (auto cand : validCandidates)
+  //   cand->dump();
+  // if (validCandidates.empty())
+  //   return SolutionKind::Error;
   return SolutionKind::Solved;
 }
 
@@ -4734,6 +4965,12 @@ ConstraintSystem::simplifyApplicableFnConstraint(
   // For a function, bind the output and convert the argument to the input.
   auto func1 = type1->castTo<FunctionType>();
   if (auto func2 = dyn_cast<FunctionType>(desugar2)) {
+    llvm::errs() << "SIMPLIFY APPLICABLE FUNCTION\n";
+    type1->dump();
+    type2->dump();
+    llvm::errs() << func1->getParams().size() << "\n";
+    llvm::errs() << func2->getParams().size() << "\n";
+
     // The argument type must be convertible to the input type.
     if (::matchCallArguments(
             *this, func1->getParams(), func2->getParams(),

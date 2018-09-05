@@ -152,7 +152,7 @@ namespace swift {
     ///
     /// This option enables verbose debugging output from the constraint
     /// solver.
-    bool DebugConstraintSolver = false;
+    bool DebugConstraintSolver = true;
 
     /// \brief Specific solution attempt for which the constraint
     /// solver should be debugged.

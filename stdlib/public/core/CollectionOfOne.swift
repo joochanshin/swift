@@ -117,7 +117,7 @@ extension CollectionOfOne: RandomAccessCollection, MutableCollection {
   ///
   /// - Complexity: O(1)
   @inlinable // trivial-implementation
-  public func makeIterator() -> Iterator {
+  public __consuming func makeIterator() -> Iterator {
     return Iterator(_elements: _element)
   }
 
@@ -131,9 +131,9 @@ extension CollectionOfOne: RandomAccessCollection, MutableCollection {
       _precondition(position == 0, "Index out of range")
       return _element
     }
-    set {
+    _modify {
       _precondition(position == 0, "Index out of range")
-      _element = newValue
+      yield &_element
     }
   }
 

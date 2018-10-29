@@ -132,21 +132,10 @@ TypeChecker::gatherGenericParamBindingsText(
 void
 TypeChecker::prepareGenericParamList(GenericParamList *gp,
                                      DeclContext *dc) {
-  AccessLevel access;
-  if (auto *fd = dyn_cast<FuncDecl>(dc))
-    access = fd->getFormalAccess();
-  else if (auto *nominal = dyn_cast<NominalTypeDecl>(dc))
-    access = nominal->getFormalAccess();
-  else
-    access = AccessLevel::Internal;
-  access = std::max(access, AccessLevel::Internal);
-
   unsigned depth = gp->getDepth();
   for (auto paramDecl : *gp) {
     checkDeclAttributesEarly(paramDecl);
     paramDecl->setDepth(depth);
-    if (!paramDecl->hasAccess())
-      paramDecl->setAccess(access);
   }
 }
 
@@ -274,9 +263,7 @@ void TypeChecker::checkProtocolSelfRequirements(ValueDecl *decl) {
         continue;
 
       diagnose(decl,
-               Context.isSwiftVersion3()
-                 ? diag::requirement_restricts_self_swift3
-                 : diag::requirement_restricts_self,
+               diag::requirement_restricts_self,
                decl->getDescriptiveKind(), decl->getFullName(),
                req.getFirstType().getString(),
                static_cast<unsigned>(req.getKind()),
@@ -332,7 +319,7 @@ void TypeChecker::checkReferencedGenericParams(GenericContext *dc) {
   ReferencedGenericTypeWalker paramsAndResultWalker;
   auto *funcTy = decl->getInterfaceType()->castTo<GenericFunctionType>();
   for (const auto &param : funcTy->getParams())
-    param.getType().walk(paramsAndResultWalker);
+    param.getOldType().walk(paramsAndResultWalker);
   funcTy->getResult().walk(paramsAndResultWalker);
 
   // Set of generic params referenced in parameter types,
@@ -837,7 +824,6 @@ RequirementCheckResult TypeChecker::checkGenericArguments(
   SmallVector<RequirementSet, 8> pendingReqs;
   pendingReqs.push_back({requirements, {}});
 
-  auto *env = dc->getGenericEnvironmentOfContext();
   ASTContext &ctx = dc->getASTContext();
   while (!pendingReqs.empty()) {
     auto current = pendingReqs.pop_back_val();
@@ -858,21 +844,15 @@ RequirementCheckResult TypeChecker::checkGenericArguments(
       auto kind = req.getKind();
       Type rawFirstType = rawReq.getFirstType();
       Type firstType = req.getFirstType();
-      if (firstType->hasTypeParameter()) {
-        if (!env)
-          continue;
-        firstType = env->mapTypeIntoContext(firstType);
-      }
+      if (firstType->hasTypeParameter())
+        firstType = dc->mapTypeIntoContext(firstType);
 
       Type rawSecondType, secondType;
       if (kind != RequirementKind::Layout) {
         rawSecondType = rawReq.getSecondType();
         secondType = req.getSecondType();
-        if (secondType->hasTypeParameter()) {
-          if (!env)
-            continue;
-          secondType = env->mapTypeIntoContext(secondType);
-        }
+        if (secondType->hasTypeParameter())
+          secondType = dc->mapTypeIntoContext(secondType);
       }
 
       // Don't do further checking on error types.
@@ -944,9 +924,7 @@ RequirementCheckResult TypeChecker::checkGenericArguments(
 
       case RequirementKind::Superclass: {
         // Superclass requirements.
-        // FIXME: Don't use the type checker instance here?
-        TypeChecker &tc = static_cast<TypeChecker &>(*ctx.getLazyResolver());
-        if (!tc.isSubclassOf(firstType, secondType, dc)) {
+        if (!secondType->isExactSuperclassOf(firstType)) {
           diagnostic = diag::type_does_not_inherit;
           diagnosticNote = diag::type_does_not_inherit_or_conform_requirement;
           requirementFailure = true;
@@ -1049,4 +1027,5 @@ RequirementRequest::evaluate(Evaluator &evaluator,
                        resolveType(reqRepr.getSubjectLoc()),
                        reqRepr.getLayoutConstraint());
   }
+  llvm_unreachable("unhandled kind");
 }

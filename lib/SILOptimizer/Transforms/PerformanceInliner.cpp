@@ -12,6 +12,7 @@
 
 #define DEBUG_TYPE "sil-inliner"
 #include "swift/AST/Module.h"
+#include "swift/SIL/MemAccessUtils.h"
 #include "swift/SIL/OptimizationRemark.h"
 #include "swift/SILOptimizer/Analysis/SideEffectAnalysis.h"
 #include "swift/SILOptimizer/PassManager/Passes.h"
@@ -20,7 +21,6 @@
 #include "swift/SILOptimizer/Utils/Generics.h"
 #include "swift/SILOptimizer/Utils/PerformanceInlinerUtils.h"
 #include "swift/SILOptimizer/Utils/SILOptFunctionBuilder.h"
-#include "swift/Strings.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -101,6 +101,11 @@ class SILPerformanceInliner {
     /// specialization for a call.
     GenericSpecializationBenefit = RemovedCallBenefit + 300,
 
+    /// The benefit of inlining an exclusivity-containing callee.
+    /// The exclusivity needs to be: dynamic,
+    /// has no nested conflict and addresses known storage
+    ExclusivityBenefit = RemovedCallBenefit + 300,
+
     /// The benefit of inlining class methods with -Osize.
     /// We only inline very small class methods with -Osize.
     OSizeClassMethodBenefit = 5,
@@ -109,8 +114,8 @@ class SILPerformanceInliner {
     /// increasing the code size.
     TrivialFunctionThreshold = 18,
 
-    /// Configuration for the "soft" caller block limit. When changing, make sure
-    /// you update BlockLimitMaxIntNumerator.
+    /// Configuration for the "soft" caller block limit. When changing, make
+    /// sure you update BlockLimitMaxIntNumerator.
     BlockLimitDenominator = 3000,
 
     /// Computations with BlockLimitDenominator will overflow with numerators
@@ -299,9 +304,18 @@ bool SILPerformanceInliner::isProfitableToInline(
   SILBasicBlock *CalleeEntry = &Callee->front();
   DominanceOrder domOrder(CalleeEntry, DT, Callee->size());
 
+  // We don't want to blow up code-size
+  // We will only inline if *ALL* dynamic accesses are
+  // known and have no nested conflict
+  bool AllAccessesBeneficialToInline = true;
+
   // Calculate the inlining cost of the callee.
   int CalleeCost = 0;
   int Benefit = 0;
+  // We don’t know if we want to update the benefit with
+  // the exclusivity heuristic or not. We can *only* do that
+  // if AllAccessesBeneficialToInline is true
+  int ExclusivityBenefitWeight = 0;
 
   SubstitutionMap CalleeSubstMap = AI.getSubstitutionMap();
 
@@ -393,6 +407,21 @@ bool SILPerformanceInliner::isProfitableToInline(
       } else if (auto *BI = dyn_cast<BuiltinInst>(&I)) {
         if (BI->getBuiltinInfo().ID == BuiltinValueKind::OnFastPath)
           BlockW.updateBenefit(Benefit, FastPathBuiltinBenefit);
+      } else if (auto *BAI = dyn_cast<BeginAccessInst>(&I)) {
+        if (BAI->getEnforcement() == SILAccessEnforcement::Dynamic) {
+          // The access is dynamic and has no nested conflict
+          // See if the storage location is considered by
+          // access enforcement optimizations
+          AccessedStorage storage =
+              findAccessedStorageNonNested(BAI->getSource());
+          if (BAI->hasNoNestedConflict() &&
+              (storage.isUniquelyIdentified() ||
+               storage.getKind() == AccessedStorage::Class)) {
+            BlockW.updateBenefit(ExclusivityBenefitWeight, ExclusivityBenefit);
+          } else {
+            AllAccessesBeneficialToInline = false;
+          }
+        }
       }
     }
     // Don't count costs in blocks which are dead after inlining.
@@ -406,6 +435,10 @@ bool SILPerformanceInliner::isProfitableToInline(
     } else {
       domOrder.pushChildren(block);
     }
+  }
+
+  if (AllAccessesBeneficialToInline) {
+    Benefit = std::max(Benefit, ExclusivityBenefitWeight);
   }
 
   if (AI.getFunction()->isThunk()) {
@@ -492,9 +525,9 @@ static Optional<bool> shouldInlineGeneric(FullApplySite AI) {
   // Do not inline @_semantics functions when compiling the stdlib,
   // because they need to be preserved, so that the optimizer
   // can properly optimize a user code later.
-  auto ModuleName = Callee->getModule().getSwiftModule()->getName().str();
+  ModuleDecl *SwiftModule = Callee->getModule().getSwiftModule();
   if (Callee->hasSemanticsAttrThatStartsWith("array.") &&
-      (ModuleName == STDLIB_NAME || ModuleName == SWIFT_ONONE_SUPPORT))
+      (SwiftModule->isStdlibModule() || SwiftModule->isOnoneSupportModule()))
     return false;
 
   // Do not inline into thunks.
@@ -834,27 +867,23 @@ bool SILPerformanceInliner::inlineCallsIntoFunction(SILFunction *Caller) {
                             << "] " << Callee->getName() << "\n");
 
     SILOpenedArchetypesTracker OpenedArchetypesTracker(Caller);
-    Caller->getModule().registerDeleteNotificationHandler(&OpenedArchetypesTracker);
+    Caller->getModule().registerDeleteNotificationHandler(
+        &OpenedArchetypesTracker);
     // The callee only needs to know about opened archetypes used in
     // the substitution list.
     OpenedArchetypesTracker.registerUsedOpenedArchetypes(AI.getInstruction());
 
-    SILInliner Inliner(FuncBuilder, *Caller, *Callee,
-                       SILInliner::InlineKind::PerformanceInline,
-                       AI.getSubstitutionMap(),
-                       OpenedArchetypesTracker);
+    SILInliner Inliner(FuncBuilder, SILInliner::InlineKind::PerformanceInline,
+                       AI.getSubstitutionMap(), OpenedArchetypesTracker);
 
     // We've already determined we should be able to inline this, so
     // unconditionally inline the function.
     //
     // If for whatever reason we can not inline this function, inlineFunction
     // will assert, so we are safe making this assumption.
-    Inliner.inlineFunction(AI, Args);
-    recursivelyDeleteTriviallyDeadInstructions(AI.getInstruction(), true);
-
+    Inliner.inlineFunction(Callee, AI, Args);
     NumFunctionsInlined++;
   }
-
   return true;
 }
 

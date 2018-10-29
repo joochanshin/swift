@@ -17,8 +17,6 @@
 // RUN: %FileCheck %s -check-prefix=FILE2 < %t/both.txt
 
 
-// XFAIL: linux
-
 import ClangModuleB
 import ClangModuleC.Sub1
 import ClangModuleC.Sub2
@@ -74,6 +72,7 @@ func test() {
 // FILE2-NOT: Unit |{{.*}}ClangModuleB
 // FILE2-NOT: Record
 // FILE2: Unit | user | ClangModuleA | {{.*}}ClangModuleA-{{[A-Z0-9]*}}.pcm | ClangModuleA-{{[A-Z0-9]*}}.pcm-
+// FILE2: Record | user | {{.*}}s2.swift | s2.swift-
 // FILE2-NOT: Unit |{{.*}}ClangModuleB
 // FILE2-NOT: Record
 // FILE2: DEPEND END

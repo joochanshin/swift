@@ -333,7 +333,7 @@ ConstraintSystem::getPotentialBindingForRelationalConstraint(
   // should be allowed to escape. As a result we allow anything
   // passed in to escape.
   if (auto *fnTy = type->getAs<AnyFunctionType>())
-    if (typeVar->getImpl().getArchetype() && !shouldAttemptFixes())
+    if (typeVar->getImpl().getGenericParameter() && !shouldAttemptFixes())
       type = fnTy->withExtInfo(fnTy->getExtInfo().withNoEscape(false));
 
   // Check whether we can perform this binding.
@@ -365,6 +365,11 @@ ConstraintSystem::getPotentialBindingForRelationalConstraint(
         otherTypeVar->getImpl().canBindToLValue())
       return None;
   }
+
+  if (type->is<InOutType>() && !typeVar->getImpl().canBindToInOut())
+    type = LValueType::get(type->getInOutObjectType());
+  if (type->is<LValueType>() && !typeVar->getImpl().canBindToLValue())
+    type = type->getRValueType();
 
   // BindParam constraints are not reflexive and must be treated specially.
   if (constraint->getKind() == ConstraintKind::BindParam) {
@@ -752,6 +757,29 @@ ConstraintSystem::getPotentialBindings(TypeVariableType *typeVar) {
   return result;
 }
 
+// Given a possibly-Optional type, return the direct superclass of the
+// (underlying) type wrapped in the same number of optional levels as
+// type.
+static Type getOptionalSuperclass(Type type) {
+  int optionalLevels = 0;
+  while (auto underlying = type->getOptionalObjectType()) {
+    ++optionalLevels;
+    type = underlying;
+  }
+
+  if (!type->mayHaveSuperclass())
+    return Type();
+
+  auto superclass = type->getSuperclass();
+  if (!superclass)
+    return Type();
+
+  while (optionalLevels--)
+    superclass = OptionalType::get(superclass);
+
+  return superclass;
+}
+
 /// \brief Enumerates all of the 'direct' supertypes of the given type.
 ///
 /// The direct supertype S of a type T is a supertype of T (e.g., T < S)
@@ -759,24 +787,24 @@ ConstraintSystem::getPotentialBindings(TypeVariableType *typeVar) {
 static SmallVector<Type, 4> enumerateDirectSupertypes(Type type) {
   SmallVector<Type, 4> result;
 
-  if (type->mayHaveSuperclass()) {
+  if (type->is<InOutType>() || type->is<LValueType>()) {
+    type = type->getWithoutSpecifierType();
+    result.push_back(type);
+  }
+
+  if (auto superclass = getOptionalSuperclass(type)) {
     // FIXME: Can also weaken to the set of protocol constraints, but only
     // if there are any protocols that the type conforms to but the superclass
     // does not.
 
-    // If there is a superclass, it is a direct supertype.
-    if (auto superclass = type->getSuperclass())
-      result.push_back(superclass);
+    result.push_back(superclass);
   }
-
-  if (type->is<InOutType>() || type->is<LValueType>())
-    result.push_back(type->getWithoutSpecifierType());
 
   // FIXME: lots of other cases to consider!
   return result;
 }
 
-bool TypeVarBindingGenerator::computeNext() {
+bool TypeVarBindingProducer::computeNext() {
   SmallVector<Binding, 4> newBindings;
   auto addNewBinding = [&](Binding binding) {
     auto type = binding.BindingType;
@@ -847,4 +875,37 @@ bool TypeVarBindingGenerator::computeNext() {
   ++NumTries;
   Bindings = std::move(newBindings);
   return true;
+}
+
+bool TypeVariableBinding::attempt(ConstraintSystem &cs) const {
+  auto type = Binding.BindingType;
+  auto *locator = TypeVar->getImpl().getLocator();
+
+  if (Binding.DefaultedProtocol) {
+    type = cs.openUnboundGenericType(type, locator);
+    type = type->reconstituteSugar(/*recursive=*/false);
+  } else if (Binding.BindingSource == ConstraintKind::ArgumentConversion &&
+             !type->hasTypeVariable() && cs.isCollectionType(type)) {
+    // If the type binding comes from the argument conversion, let's
+    // instead of binding collection types directly, try to bind
+    // using temporary type variables substituted for element
+    // types, that's going to ensure that subtype relationship is
+    // always preserved.
+    auto *BGT = type->castTo<BoundGenericType>();
+    auto UGT = UnboundGenericType::get(BGT->getDecl(), BGT->getParent(),
+                                       BGT->getASTContext());
+
+    type = cs.openUnboundGenericType(UGT, locator);
+    type = type->reconstituteSugar(/*recursive=*/false);
+  }
+
+  // FIXME: We want the locator that indicates where the binding came
+  // from.
+  cs.addConstraint(ConstraintKind::Bind, TypeVar, type, locator);
+
+  // If this was from a defaultable binding note that.
+  if (Binding.isDefaultableBinding())
+    cs.DefaultedConstraints.push_back(Binding.DefaultableBinding);
+
+  return !cs.failedConstraint && !cs.simplify();
 }

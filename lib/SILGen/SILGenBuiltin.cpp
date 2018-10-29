@@ -30,6 +30,16 @@
 using namespace swift;
 using namespace Lowering;
 
+static bool isTrivialShuffle(TupleShuffleExpr *shuffle) {
+  // Each element must be mapped to the corresponding element of the input.
+  auto mapping = shuffle->getElementMapping();
+  for (auto index : indices(mapping)) {
+    if (mapping[index] < 0 || unsigned(mapping[index]) != index)
+      return false;
+  }
+  return true;
+}
+
 /// Break down an expression that's the formal argument expression to
 /// a builtin function, returning its individualized arguments.
 ///
@@ -43,7 +53,15 @@ static ArrayRef<Expr*> decomposeArguments(SILGenFunction &SGF,
   assert(arg->getType()->castTo<TupleType>()->getNumElements()
            == expectedCount);
 
-  auto tuple = dyn_cast<TupleExpr>(arg->getSemanticsProvidingExpr());
+  // The use of owned parameters can trip up CSApply enough to introduce
+  // a trivial tuple shuffle here.
+  arg = arg->getSemanticsProvidingExpr();
+  if (auto shuffle = dyn_cast<TupleShuffleExpr>(arg)) {
+    if (isTrivialShuffle(shuffle))
+      arg = shuffle->getSubExpr();
+  }
+
+  auto tuple = dyn_cast<TupleExpr>(arg);
   if (tuple && tuple->getElements().size() == expectedCount) {
     return tuple->getElements();
   }
@@ -849,9 +867,15 @@ static ManagedValue emitBuiltinValueToBridgeObject(SILGenFunction &SGF,
   assert(args.size() == 1 && "ValueToBridgeObject should have one argument");
   assert(subs.getReplacementTypes().size() == 1 &&
          "ValueToBridgeObject should have one sub");
-  auto &fromTL = SGF.getTypeLowering(subs.getReplacementTypes()[0]);
-  assert(fromTL.isTrivial() && "Expected a trivial type");
-  (void)fromTL;
+
+  Type argTy = subs.getReplacementTypes()[0];
+  if (!argTy->is<BuiltinIntegerType>()) {
+    SGF.SGM.diagnose(loc, diag::invalid_sil_builtin,
+                     "argument to builtin should be a builtin integer");
+    SILType objPointerType = SILType::getBridgeObjectType(SGF.F.getASTContext());
+    SILValue undef = SILUndef::get(objPointerType, SGF.SGM.M);
+    return ManagedValue::forUnmanaged(undef);
+  }
 
   SILValue result = SGF.B.createValueToBridgeObject(loc, args[0].getValue());
   return SGF.emitManagedRetain(loc, result);
@@ -969,58 +993,6 @@ static ManagedValue emitBuiltinProjectTailElems(SILGenFunction &SGF,
   result = SGF.B.createAddressToPointer(loc, result, rawPointerType);
   return ManagedValue::forUnmanaged(result);
 }
-
-static ManagedValue emitBuiltinIdentityKeyPath(SILGenFunction &SGF,
-                                               SILLocation loc,
-                                               SubstitutionMap subs,
-                                               ArrayRef<ManagedValue> args,
-                                               SGFContext C) {
-  assert(subs.getReplacementTypes().size() == 1 &&
-         "identityKeyPath should have one substitution");
-  assert(args.size() == 0 &&
-         "identityKeyPath should have no args");
-
-  auto identityTy = subs.getReplacementTypes()[0]->getCanonicalType();
-  
-  // The `self` key can be used for identity in Cocoa KVC as well.
-  StringRef objcString = SGF.getASTContext().LangOpts.EnableObjCInterop
-    ? "self" : "";
-  
-  // The key path pattern has to capture some generic context if the type is
-  // dependent on this generic context. We only need the specific type, though,
-  // not the entire generic environment.
-  bool isDependent = identityTy->hasArchetype();
-  CanType identityPatternTy = identityTy;
-  CanGenericSignature patternSig = nullptr;
-  SubstitutionMap patternSubs;
-  if (isDependent) {
-    auto param = GenericTypeParamType::get(0, 0, SGF.getASTContext());
-    identityPatternTy = param->getCanonicalType();
-    patternSig = GenericSignature::get(param, {})->getCanonicalSignature();
-    patternSubs = SubstitutionMap::get(patternSig,
-                                       llvm::makeArrayRef((Type)identityTy),
-                                       {});
-  }
-  
-  auto identityPattern = KeyPathPattern::get(SGF.SGM.M,
-                                             patternSig,
-                                             identityPatternTy,
-                                             identityPatternTy,
-                                             {},
-                                             objcString);
-  
-  auto kpTy = BoundGenericType::get(SGF.getASTContext().getWritableKeyPathDecl(),
-                                    Type(),
-                                    {identityTy, identityTy})
-    ->getCanonicalType();
-  
-  auto keyPath = SGF.B.createKeyPath(loc, identityPattern,
-                                     patternSubs,
-                                     {},
-                                     SILType::getPrimitiveObjectType(kpTy));
-  return SGF.emitManagedRValueWithCleanup(keyPath);
-}
-
 
 /// Specialized emitter for type traits.
 template<TypeTraitResult (TypeBase::*Trait)(),

@@ -148,7 +148,7 @@ public protocol RawRepresentable {
 /// - Parameters:
 ///   - lhs: A raw-representable instance.
 ///   - rhs: A second raw-representable instance.
-@inlinable // FIXME(sil-serialize-all)
+@inlinable // trivial-implementation
 public func == <T : RawRepresentable>(lhs: T, rhs: T) -> Bool
   where T.RawValue : Equatable {
   return lhs.rawValue == rhs.rawValue
@@ -159,7 +159,7 @@ public func == <T : RawRepresentable>(lhs: T, rhs: T) -> Bool
 /// - Parameters:
 ///   - lhs: A raw-representable instance.
 ///   - rhs: A second raw-representable instance.
-@inlinable // FIXME(sil-serialize-all)
+@inlinable // trivial-implementation
 public func != <T : RawRepresentable>(lhs: T, rhs: T) -> Bool
   where T.RawValue : Equatable {
   return lhs.rawValue != rhs.rawValue
@@ -172,7 +172,7 @@ public func != <T : RawRepresentable>(lhs: T, rhs: T) -> Bool
 /// - Parameters:
 ///   - lhs: A raw-representable instance.
 ///   - rhs: A second raw-representable instance.
-@inlinable // FIXME(sil-serialize-all)
+@inlinable // trivial-implementation
 public func != <T : Equatable>(lhs: T, rhs: T) -> Bool
   where T : RawRepresentable, T.RawValue : Equatable {
   return lhs.rawValue != rhs.rawValue
@@ -469,18 +469,6 @@ public protocol _ExpressibleByBuiltinUTF16StringLiteral
   init(
     _builtinUTF16StringLiteral start: Builtin.RawPointer,
     utf16CodeUnitCount: Builtin.Word)
-}
-
-public protocol _ExpressibleByBuiltinConstStringLiteral
-  : _ExpressibleByBuiltinExtendedGraphemeClusterLiteral {
-
-  init(_builtinConstStringLiteral constantString: Builtin.RawPointer)
-}
-
-public protocol _ExpressibleByBuiltinConstUTF16StringLiteral
-  : _ExpressibleByBuiltinConstStringLiteral {
-
-  init(_builtinConstUTF16StringLiteral constantUTF16String: Builtin.RawPointer)
 }
 
 /// A type that can be initialized with a string literal.

@@ -10,6 +10,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "swift/SIL/BasicBlockUtils.h"
 #include "swift/SIL/Dominance.h"
 #include "swift/SIL/LoopInfo.h"
 #include "swift/SIL/SILArgument.h"
@@ -405,7 +406,11 @@ bool swift::isCriticalEdge(TermInst *T, unsigned EdgeIdx) {
   assert(T->getSuccessors().size() > EdgeIdx && "Not enough successors");
 
   auto SrcSuccs = T->getSuccessors();
-  if (SrcSuccs.size() <= 1)
+  
+  if (SrcSuccs.size() <= 1 &&
+      // Also consider non-branch instructions with a single successor for
+      // critical edges, for example: a switch_enum of a single-case enum.
+      (isa<BranchInst>(T) || isa<CondBranchInst>(T)))
     return false;
 
   SILBasicBlock *DestBB = SrcSuccs[EdgeIdx];
@@ -459,7 +464,7 @@ static void getEdgeArgs(TermInst *T, unsigned EdgeIdx, SILBasicBlock *NewEdgeBB,
     assert(SuccBB->getNumArguments() < 2 && "Can take at most one argument");
     if (!SuccBB->getNumArguments())
       return;
-    Args.push_back(NewEdgeBB->createPHIArgument(
+    Args.push_back(NewEdgeBB->createPhiArgument(
         SuccBB->getArgument(0)->getType(), ValueOwnershipKind::Owned));
     return;
   }
@@ -471,7 +476,7 @@ static void getEdgeArgs(TermInst *T, unsigned EdgeIdx, SILBasicBlock *NewEdgeBB,
         (EdgeIdx == 0) ? DMBI->getHasMethodBB() : DMBI->getNoMethodBB();
     if (!SuccBB->getNumArguments())
       return;
-    Args.push_back(NewEdgeBB->createPHIArgument(
+    Args.push_back(NewEdgeBB->createPhiArgument(
         SuccBB->getArgument(0)->getType(), ValueOwnershipKind::Owned));
     return;
   }
@@ -482,7 +487,7 @@ static void getEdgeArgs(TermInst *T, unsigned EdgeIdx, SILBasicBlock *NewEdgeBB,
     auto SuccBB = EdgeIdx == 0 ? CBI->getSuccessBB() : CBI->getFailureBB();
     if (!SuccBB->getNumArguments())
       return;
-    Args.push_back(NewEdgeBB->createPHIArgument(
+    Args.push_back(NewEdgeBB->createPhiArgument(
         SuccBB->getArgument(0)->getType(), ValueOwnershipKind::Owned));
     return;
   }
@@ -491,7 +496,7 @@ static void getEdgeArgs(TermInst *T, unsigned EdgeIdx, SILBasicBlock *NewEdgeBB,
     auto SuccBB = EdgeIdx == 0 ? CBI->getSuccessBB() : CBI->getFailureBB();
     if (!SuccBB->getNumArguments())
       return;
-    Args.push_back(NewEdgeBB->createPHIArgument(
+    Args.push_back(NewEdgeBB->createPhiArgument(
         SuccBB->getArgument(0)->getType(), ValueOwnershipKind::Owned));
     return;
   }
@@ -500,7 +505,7 @@ static void getEdgeArgs(TermInst *T, unsigned EdgeIdx, SILBasicBlock *NewEdgeBB,
     auto SuccBB = EdgeIdx == 0 ? CBI->getSuccessBB() : CBI->getFailureBB();
     if (!SuccBB->getNumArguments())
       return;
-    Args.push_back(NewEdgeBB->createPHIArgument(
+    Args.push_back(NewEdgeBB->createPhiArgument(
         SuccBB->getArgument(0)->getType(), ValueOwnershipKind::Owned));
     return;
   }
@@ -510,7 +515,7 @@ static void getEdgeArgs(TermInst *T, unsigned EdgeIdx, SILBasicBlock *NewEdgeBB,
     auto *SuccBB = EdgeIdx == 0 ? TAI->getNormalBB() : TAI->getErrorBB();
     if (!SuccBB->getNumArguments())
       return;
-    Args.push_back(NewEdgeBB->createPHIArgument(
+    Args.push_back(NewEdgeBB->createPhiArgument(
         SuccBB->getArgument(0)->getType(), ValueOwnershipKind::Owned));
     return;
   }
@@ -736,16 +741,6 @@ bool swift::mergeBasicBlockWithSuccessor(SILBasicBlock *BB, DominanceInfo *DT,
   if (BB == SuccBB || !SuccBB->getSinglePredecessorBlock())
     return false;
 
-  // If there are any BB arguments in the destination, replace them with the
-  // branch operands, since they must dominate the dest block.
-  for (unsigned i = 0, e = Branch->getArgs().size(); i != e; ++i)
-    SuccBB->getArgument(i)->replaceAllUsesWith(Branch->getArg(i));
-
-  Branch->eraseFromParent();
-
-  // Move the instruction from the successor block to the current block.
-  BB->spliceAtEnd(SuccBB);
-
   if (DT)
     if (auto *SuccBBNode = DT->getNode(SuccBB)) {
       // Change the immediate dominator for children of the successor to be the
@@ -753,7 +748,7 @@ bool swift::mergeBasicBlockWithSuccessor(SILBasicBlock *BB, DominanceInfo *DT,
       auto *BBNode = DT->getNode(BB);
       SmallVector<DominanceInfoNode *, 8> Children(SuccBBNode->begin(),
                                                    SuccBBNode->end());
-      for (auto *ChildNode : *SuccBBNode)
+      for (auto *ChildNode : Children)
         DT->changeImmediateDominator(ChildNode, BBNode);
 
       DT->eraseNode(SuccBB);
@@ -762,7 +757,7 @@ bool swift::mergeBasicBlockWithSuccessor(SILBasicBlock *BB, DominanceInfo *DT,
   if (LI)
     LI->removeBlock(SuccBB);
 
-  SuccBB->eraseFromParent();
+  mergeBasicBlockWithSingleSuccessor(BB, SuccBB);
 
   return true;
 }

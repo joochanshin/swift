@@ -379,7 +379,7 @@ class SILVerifier : public SILVerifierBase<SILVerifier> {
   SmallVector<StringRef, 16> DebugVars;
   const SILInstruction *CurInstruction = nullptr;
   const SILArgument *CurArgument = nullptr;
-  DominanceInfo *Dominance = nullptr;
+  std::unique_ptr<DominanceInfo> Dominance;
 
   // Used for dominance checking within a basic block.
   llvm::DenseMap<const SILInstruction *, unsigned> InstNumbers;
@@ -590,17 +590,12 @@ public:
         InstNumbers[&I] = InstIdx++;
     }
 
-    Dominance = new DominanceInfo(const_cast<SILFunction *>(&F));
+    Dominance.reset(new DominanceInfo(const_cast<SILFunction *>(&F)));
 
     auto *DebugScope = F.getDebugScope();
     require(DebugScope, "All SIL functions must have a debug scope");
     require(DebugScope->Parent.get<SILFunction *>() == &F,
             "Scope of SIL function points to different function");
-  }
-
-  ~SILVerifier() {
-    if (Dominance)
-      delete Dominance;
   }
 
   // Checks dominance between two instructions.
@@ -638,7 +633,7 @@ public:
     return M.getStage() == SILStage::Raw;
   }
 
-  void visitSILPHIArgument(SILPHIArgument *arg) {
+  void visitSILPhiArgument(SILPhiArgument *arg) {
     // Verify that the `isPhiArgument` property is sound:
     // - Phi arguments come from branches.
     // - Non-phi arguments have a single predecessor.
@@ -668,9 +663,9 @@ public:
     CurArgument = arg;
     checkLegalType(arg->getFunction(), arg, nullptr);
     checkValueBaseOwnership(arg);
-    if (auto *phiArg = dyn_cast<SILPHIArgument>(arg)) {
+    if (auto *phiArg = dyn_cast<SILPhiArgument>(arg)) {
       if (phiArg->isPhiArgument())
-        visitSILPHIArgument(phiArg);
+        visitSILPhiArgument(phiArg);
       else {
         // A non-phi BlockArgument must have a single predecessor unless it is
         // unreachable.
@@ -1531,13 +1526,6 @@ public:
     require(
         F.hasQualifiedOwnership(),
         "Inst with qualified ownership in a function that is not qualified");
-    // We allow for end_borrow to express relationships in between addresses and
-    // values, but we require that the types are the same ignoring value
-    // category.
-    require(EBI->getBorrowedValue()->getType().getObjectType() ==
-                EBI->getOriginalValue()->getType().getObjectType(),
-            "end_borrow can only relate the same types ignoring value "
-            "category");
   }
 
   template <class AI>
@@ -2522,6 +2510,9 @@ public:
       require(AMI->getModule().lookUpWitnessTable(conformance, false),
               "Could not find witness table for conformance");
     }
+
+    require(AMI->getMember().requiresNewWitnessTableEntry(),
+            "method does not have a witness table entry");
   }
 
   // Get the expected type of a dynamic method reference.
@@ -2536,7 +2527,7 @@ public:
     assert(!methodTy->isCoroutine());
 
     // Map interface types to archetypes.
-    if (auto *env = constantInfo.GenericEnv) {
+    if (auto *env = F.getModule().Types.getConstantGenericEnvironment(method)) {
       auto subs = env->getForwardingSubstitutionMap();
       methodTy = methodTy->substGenericArgs(F.getModule(), subs);
     }
@@ -2847,12 +2838,6 @@ public:
         case SILInstructionKind::DestroyAddrInst:
           return true;
         case SILInstructionKind::UncheckedAddrCastInst: {
-          // Don't be too conservative here, we have a new case:
-          // sil-combine producing a new code pattern for devirtualizer
-          // open_existential_addr immutable_access -> witness_method
-          // witness_method gets transformed into unchecked_addr_cast
-          // we are "OK" If one of the new users is an non-consuming apply
-          // we are also "OK" if we have a single non-consuming user
           auto isCastToNonConsuming = [=](UncheckedAddrCastInst *I) -> bool {
             for (auto *use : I->getUses()) {
               auto *inst = use->getUser();
@@ -2860,30 +2845,30 @@ public:
               case SILInstructionKind::ApplyInst:
               case SILInstructionKind::TryApplyInst:
               case SILInstructionKind::PartialApplyInst:
-                if (!isConsumingOrMutatingApplyUse(use))
-                  return true;
-                break;
-              case SILInstructionKind::StructElementAddrInst:
-              case SILInstructionKind::LoadInst:
-              case SILInstructionKind::DebugValueAddrInst:
-                if (I->hasOneUse())
-                  return true;
-                break;
+                if (isConsumingOrMutatingApplyUse(use))
+                  return false;
+                continue;
               default:
-                break;
+                continue;
               }
             }
-            return false;
+            return true;
           };
-          if (isCastToNonConsuming(dyn_cast<UncheckedAddrCastInst>(inst))) {
+          if (isCastToNonConsuming(cast<UncheckedAddrCastInst>(inst))) {
             break;
           }
           return true;
         }
         case SILInstructionKind::CheckedCastAddrBranchInst:
-          if (cast<CheckedCastAddrBranchInst>(inst)->getConsumptionKind() !=
-              CastConsumptionKind::CopyOnSuccess)
+          switch (cast<CheckedCastAddrBranchInst>(inst)->getConsumptionKind()) {
+          case CastConsumptionKind::BorrowAlways:
+            llvm_unreachable("checked_cast_addr_br cannot have BorrowAlways");
+          case CastConsumptionKind::CopyOnSuccess:
+            break;
+          case CastConsumptionKind::TakeAlways:
+          case CastConsumptionKind::TakeOnSuccess:
             return true;
+          }
           break;
         case SILInstructionKind::LoadInst:
           // A 'non-taking' value load is harmless.
@@ -4440,12 +4425,7 @@ public:
             "have at least one argument for self.");
   }
 
-  /// Verify the various control-flow-sensitive rules of SIL:
-  ///
-  /// - stack allocations and deallocations must obey a stack discipline
-  /// - accesses must be uniquely ended
-  /// - flow-sensitive states must be equivalent on all paths into a block
-  void verifyFlowSensitiveRules(SILFunction *F) {
+  struct VerifyFlowSensitiveRulesDetails {
     enum CFGState {
       /// No special rules are in play.
       Normal,
@@ -4454,6 +4434,7 @@ public:
       /// We've followed the unwind edge of a yield.
       YieldUnwind
     };
+
     struct BBState {
       std::vector<SingleValueInstruction*> Stack;
 
@@ -4462,17 +4443,24 @@ public:
 
       CFGState CFG = Normal;
     };
+  };
 
+  /// Verify the various control-flow-sensitive rules of SIL:
+  ///
+  /// - stack allocations and deallocations must obey a stack discipline
+  /// - accesses must be uniquely ended
+  /// - flow-sensitive states must be equivalent on all paths into a block
+  void verifyFlowSensitiveRules(SILFunction *F) {
     // Do a breath-first search through the basic blocks.
     // Note that we intentionally don't verify these properties in blocks
     // that can't be reached from the entry block.
-    llvm::DenseMap<SILBasicBlock*, BBState> visitedBBs;
+    llvm::DenseMap<SILBasicBlock*, VerifyFlowSensitiveRulesDetails::BBState> visitedBBs;
     SmallVector<SILBasicBlock*, 16> Worklist;
     visitedBBs.try_emplace(&*F->begin());
     Worklist.push_back(&*F->begin());
     while (!Worklist.empty()) {
       SILBasicBlock *BB = Worklist.pop_back_val();
-      BBState state = visitedBBs[BB];
+      VerifyFlowSensitiveRulesDetails::BBState state = visitedBBs[BB];
       for (SILInstruction &i : *BB) {
         CurInstruction = &i;
 
@@ -4507,16 +4495,16 @@ public:
                     "return with operations still active");
 
             if (isa<UnwindInst>(term)) {
-              require(state.CFG == YieldUnwind,
+              require(state.CFG == VerifyFlowSensitiveRulesDetails::YieldUnwind,
                       "encountered 'unwind' when not on unwind path");
             } else {
-              require(state.CFG != YieldUnwind,
+              require(state.CFG != VerifyFlowSensitiveRulesDetails::YieldUnwind,
                       "encountered 'return' or 'throw' when on unwind path");
               if (isa<ReturnInst>(term) &&
                   F->getLoweredFunctionType()->getCoroutineKind() ==
                     SILCoroutineKind::YieldOnce &&
                   F->getModule().getStage() != SILStage::Raw) {
-                require(state.CFG == YieldOnceResume,
+                require(state.CFG == VerifyFlowSensitiveRulesDetails::YieldOnceResume,
                         "encountered 'return' before yielding a value in "
                         "yield_once coroutine");
               }
@@ -4524,9 +4512,9 @@ public:
           }
 
           if (isa<YieldInst>(term)) {
-            require(state.CFG != YieldOnceResume,
+            require(state.CFG != VerifyFlowSensitiveRulesDetails::YieldOnceResume,
                     "encountered multiple 'yield's along single path");
-            require(state.CFG == Normal,
+            require(state.CFG == VerifyFlowSensitiveRulesDetails::Normal,
                     "encountered 'yield' on abnormal CFG path");
           }
 
@@ -4553,14 +4541,14 @@ public:
               if (isa<YieldInst>(term)) {
                 // Enforce that the unwind logic is segregated in all stages.
                 if (i == 1) {
-                  insertResult.first->second.CFG = YieldUnwind;
+                  insertResult.first->second.CFG = VerifyFlowSensitiveRulesDetails::YieldUnwind;
 
                 // We check the yield_once rule in the mandatory analyses,
                 // so we can't assert it yet in the raw stage.
                 } else if (F->getLoweredFunctionType()->getCoroutineKind()
                              == SILCoroutineKind::YieldOnce && 
                            F->getModule().getStage() != SILStage::Raw) {
-                  insertResult.first->second.CFG = YieldOnceResume;
+                  insertResult.first->second.CFG = VerifyFlowSensitiveRulesDetails::YieldOnceResume;
                 }
               }
 
@@ -5024,10 +5012,11 @@ void SILWitnessTable::verify(const SILModule &M) const {
 void SILDefaultWitnessTable::verify(const SILModule &M) const {
 #ifndef NDEBUG
   for (const Entry &E : getEntries()) {
-    if (!E.isValid())
+    // FIXME: associated type witnesses.
+    if (!E.isValid() || E.getKind() != SILWitnessTable::Method)
       continue;
 
-    SILFunction *F = E.getWitness();
+    SILFunction *F = E.getMethodWitness().Witness;
 
 #if 0
     // FIXME: For now, all default witnesses are private.
@@ -5081,7 +5070,7 @@ void SILModule::verify() const {
     return;
 #endif
   // Uniquing set to catch symbol name collisions.
-  llvm::StringSet<> symbolNames;
+  llvm::DenseSet<StringRef> symbolNames;
 
   // When merging partial modules, we only link functions from the current
   // module, without enabling "LinkAll" mode or running the SILLinker pass;

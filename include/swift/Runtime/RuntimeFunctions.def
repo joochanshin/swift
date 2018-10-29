@@ -130,9 +130,9 @@ FUNCTION(SlowDealloc, swift_slowDealloc, C_CC,
          ATTRS(NoUnwind))
 
 // void swift_willThrow(error *ptr);
-FUNCTION(WillThrow, swift_willThrow, C_CC,
+FUNCTION(WillThrow, swift_willThrow, SwiftCC,
          RETURNS(VoidTy),
-         ARGS(ErrorPtrTy),
+         ARGS(Int8PtrTy, ErrorPtrTy->getPointerTo()),
          ATTRS(NoUnwind))
 
 // void swift_errorInMain(error *ptr);
@@ -585,16 +585,6 @@ FUNCTION(GetForeignTypeMetadata, swift_getForeignTypeMetadata, SwiftCC,
          ARGS(SizeTy, TypeMetadataPtrTy),
          ATTRS(NoUnwind, ReadNone)) // only writes to runtime-private fields
 
-// WitnessTable *swift_getForeignWitnessTable(
-//                                  const WitnessTable *candidate,
-//                                  const TypeContextDescriptor *forType,
-//                                  const ProtocolDescriptor *forProtocol);
-FUNCTION(GetForeignWitnessTable, swift_getForeignWitnessTable, C_CC,
-         RETURNS(WitnessTablePtrTy),
-         ARGS(WitnessTablePtrTy, TypeContextDescriptorPtrTy,
-              ProtocolDescriptorPtrTy),
-         ATTRS(NoUnwind, ReadNone))
-
 // MetadataResponse swift_getSingletonMetadata(MetadataRequest request,
 //                                             TypeContextDescriptor *type);
 FUNCTION(GetSingletonMetadata, swift_getSingletonMetadata, SwiftCC,
@@ -635,15 +625,30 @@ FUNCTION(CheckMetadataState, swift_checkMetadataState, SwiftCC,
          ATTRS(NoUnwind, ReadOnly))
 
 // const ProtocolWitnessTable *
-// swift_getGenericWitnessTable(GenericProtocolWitnessTable *genericTable,
-//                              const Metadata *type,
-//                              void ** const *instantiationArgs);
-FUNCTION(GetGenericWitnessTable, swift_getGenericWitnessTable, C_CC,
+// swift_getWitnessTable(const ProtocolConformanceDescriptor *conf,
+//                       const Metadata *type,
+//                       const void * const *instantiationArgs);
+FUNCTION(GetWitnessTable, swift_getWitnessTable, C_CC,
          RETURNS(WitnessTablePtrTy),
-         ARGS(getGenericWitnessTableCacheTy()->getPointerTo(),
+         ARGS(ProtocolConformanceDescriptorPtrTy,
               TypeMetadataPtrTy,
               WitnessTablePtrPtrTy),
          ATTRS(NoUnwind, ReadOnly))
+
+// MetadataResponse swift_getAssociatedTypeWitness(
+//                                            MetadataRequest request,
+//                                            WitnessTable *wtable,
+//                                            const Metadata *conformingType,
+//                                            ProtocolRequirement *reqBase,
+//                                            ProtocolRequirement *assocType);
+FUNCTION(GetAssociatedTypeWitness, swift_getAssociatedTypeWitness, C_CC,
+         RETURNS(TypeMetadataResponseTy),
+         ARGS(SizeTy,
+              WitnessTablePtrTy,
+              TypeMetadataPtrTy,
+              ProtocolRequirementStructTy->getPointerTo(),
+              ProtocolRequirementStructTy->getPointerTo()),
+         ATTRS(NoUnwind, ReadNone))
 
 // Metadata *swift_getMetatypeMetadata(Metadata *instanceTy);
 FUNCTION(GetMetatypeMetadata, swift_getMetatypeMetadata, C_CC,
@@ -760,7 +765,6 @@ FUNCTION(RelocateClassMetadata,
 
 // struct FieldInfo { size_t Size; size_t AlignMask; };
 // void swift_initClassMetadata(Metadata *self,
-//                              Metadata *super,
 //                              ClassLayoutFlags flags,
 //                              size_t numFields,
 //                              TypeLayout * const *fieldTypes,
@@ -768,9 +772,34 @@ FUNCTION(RelocateClassMetadata,
 FUNCTION(InitClassMetadata,
          swift_initClassMetadata, C_CC,
          RETURNS(VoidTy),
-         ARGS(TypeMetadataPtrTy, TypeMetadataPtrTy, SizeTy, SizeTy,
+         ARGS(TypeMetadataPtrTy, SizeTy, SizeTy,
               Int8PtrPtrTy->getPointerTo(),
               SizeTy->getPointerTo()),
+         ATTRS(NoUnwind))
+
+// struct FieldInfo { size_t Size; size_t AlignMask; };
+// void swift_updateClassMetadata(Metadata *self,
+//                                ClassLayoutFlags flags,
+//                                size_t numFields,
+//                                TypeLayout * const *fieldTypes,
+//                                size_t *fieldOffsets);
+FUNCTION(UpdateClassMetadata,
+         swift_updateClassMetadata, C_CC,
+         RETURNS(VoidTy),
+         ARGS(TypeMetadataPtrTy, SizeTy, SizeTy,
+              Int8PtrPtrTy->getPointerTo(),
+              SizeTy->getPointerTo()),
+         ATTRS(NoUnwind))
+
+// void *swift_lookUpClassMethod(Metadata *metadata,
+//                               ClassDescriptor *description,
+//                               MethodDescriptor *method);
+FUNCTION(LookUpClassMethod,
+         swift_lookUpClassMethod, C_CC,
+         RETURNS(Int8PtrTy),
+         ARGS(TypeMetadataPtrTy,
+              MethodDescriptorStructTy->getPointerTo(),
+              TypeContextDescriptorPtrTy),
          ATTRS(NoUnwind))
 
 // void swift_initStructMetadata(Metadata *structType,

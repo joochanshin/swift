@@ -37,6 +37,7 @@
 #include "llvm/ADT/SetOperations.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
@@ -52,8 +53,6 @@ namespace constraints {
 class ConstraintGraph;
 class ConstraintGraphNode;
 class ConstraintSystem;
-class Disjunction;
-class TypeVarBindingGenerator;
 
 } // end namespace constraints
 
@@ -280,8 +279,8 @@ public:
     return locator;
   }
 
-  /// \brief Retrieve the archetype opened by this type variable.
-  ArchetypeType *getArchetype() const;
+  /// \brief Retrieve the generic parameter opened by this type variable.
+  GenericTypeParamType *getGenericParameter() const;
 
   /// \brief Retrieve the representative of the equivalence class to which this
   /// type variable belongs.
@@ -948,7 +947,13 @@ public:
   friend class DisjunctionChoice;
   friend class Component;
   friend class FailureDiagnostic;
-  friend class TypeVarBindingGenerator;
+  friend class TypeVarBindingProducer;
+  friend class TypeVariableBinding;
+  friend class StepScope;
+  friend class SolverStep;
+  friend class SplitterStep;
+  friend class ComponentStep;
+  friend class TypeVariableStep;
 
   class SolverScope;
 
@@ -1188,12 +1193,6 @@ private:
     /// \brief Maximum depth reached so far in exploring solutions.
     unsigned maxDepth = 0;
 
-    /// \brief Count of the number of leaf scopes we've created. These
-    /// either result in a failure to solve, or in a solution, unlike
-    /// all the intermediate scopes. They are interesting to track as
-    /// part of a metric of whether an expression is too complex.
-    unsigned leafScopes = 0;
-
     /// \brief Whether to record failures or not.
     bool recordFixes = false;
 
@@ -1290,7 +1289,7 @@ private:
 
       unsigned countScopesExplored = NumStatesExplored - scope->scopeNumber;
       if (countScopesExplored == 1)
-        ++leafScopes;
+        CS.incrementLeafScopes();
 
       SolverScope *savedScope;
       // The position of last retired constraint before given scope.
@@ -1329,6 +1328,10 @@ private:
     /// current path, this list is used in LIFO fashion when constraints
     /// are added back to the circulation.
     ConstraintList retiredConstraints;
+
+    /// The set of constraints which were active at the time of this state
+    /// creating, it's used to re-activate them on destruction.
+    SmallVector<Constraint *, 4> activeConstraints;
 
     /// The current set of generated constraints.
     SmallVector<Constraint *, 4> generatedConstraints;
@@ -1456,6 +1459,7 @@ private:
   }
 
   void incrementScopeCounter();
+  void incrementLeafScopes();
 
 public:
   /// \brief Introduces a new solver scope, which any changes to the
@@ -2028,9 +2032,6 @@ public:
 
     /// Indicates that we are applying a fix.
     TMF_ApplyingFix = 0x02,
-
-    /// Indicates we're matching an operator parameter.
-    TMF_ApplyingOperatorParameter = 0x4,
   };
 
   /// Options that govern how type matching should proceed.
@@ -2050,12 +2051,9 @@ public:
   ///
   /// \param wantRValue Whether this routine should look through
   /// lvalues at each step.
-  ///
-  /// param retainParens Whether to retain parentheses.
-  Type getFixedTypeRecursive(Type type, bool wantRValue,
-                             bool retainParens = false) {
+  Type getFixedTypeRecursive(Type type, bool wantRValue) {
     TypeMatchOptions flags = None;
-    return getFixedTypeRecursive(type, flags, wantRValue, retainParens);
+    return getFixedTypeRecursive(type, flags, wantRValue);
   }
 
   /// Retrieve the fixed type corresponding to a given type variable,
@@ -2070,11 +2068,8 @@ public:
   ///
   /// \param wantRValue Whether this routine should look through
   /// lvalues at each step.
-  ///
-  /// param retainParens Whether to retain parentheses.
   Type getFixedTypeRecursive(Type type, TypeMatchOptions &flags,
-                             bool wantRValue,
-                             bool retainParens = false);
+                             bool wantRValue);
 
   /// Determine whether the given type variable occurs within the given type.
   ///
@@ -2983,11 +2978,6 @@ private:
       bool &addOptionalSupertypeBindings);
   PotentialBindings getPotentialBindings(TypeVariableType *typeVar);
 
-  bool
-  tryTypeVariableBindings(TypeVariableType *typeVar,
-                          ArrayRef<ConstraintSystem::PotentialBinding> bindings,
-                          SmallVectorImpl<Solution> &solutions);
-
 private:
   /// \brief Add a constraint to the constraint system.
   SolutionKind addConstraintImpl(ConstraintKind kind, Type first, Type second,
@@ -2996,22 +2986,6 @@ private:
 
   /// \brief Collect the current inactive disjunction constraints.
   void collectDisjunctions(SmallVectorImpl<Constraint *> &disjunctions);
-
-  /// \brief Attempt find a solution involving the options in a
-  ///        disjunction.
-  ///
-  /// \returns true if we failed to find any solutions, false otherwise.
-  bool solveForDisjunction(Constraint *disjunction,
-                           SmallVectorImpl<Solution> &solutions);
-
-  /// \brief Attempt to solve for some subset of the constraints in a
-  ///        disjunction, skipping constraints that we decide do not
-  ///        need to be solved for because they would not result in
-  ///        the best solution to the constraint system.
-  ///
-  /// \returns true if we failed to find any solutions, false otherwise.
-  bool solveForDisjunctionChoices(Disjunction &disjunction,
-                                  SmallVectorImpl<Solution> &solutions);
 
   /// \brief Solve the system of constraints after it has already been
   /// simplified.
@@ -3034,6 +3008,8 @@ private:
   ///
   /// \returns The selected disjunction.
   Constraint *selectDisjunction();
+
+  Constraint *selectApplyDisjunction();
 
   bool simplifyForConstraintPropagation();
   void collectNeighboringBindOverloadDisjunctions(
@@ -3101,22 +3077,26 @@ public:
 
   /// \brief Solve the system of constraints.
   ///
-  /// \param solutions The set of solutions to this system of constraints.
-  ///
-  /// \returns true if there are no solutions
-  bool solveRec(SmallVectorImpl<Solution> &solutions);
-
-  /// \brief Solve the system of constraints.
-  ///
   /// \param allowFreeTypeVariables How to bind free type variables in
   /// the solution.
+  ///
+  /// \param allowFixes Whether to allow fixes in the solution.
   ///
   /// \returns a solution if a single unambiguous one could be found, or None if
   /// ambiguous or unsolvable.
   Optional<Solution> solveSingle(FreeTypeVariableBinding allowFreeTypeVariables
-                                    = FreeTypeVariableBinding::Disallow);
+                                 = FreeTypeVariableBinding::Disallow,
+                                 bool allowFixes = false);
 
 private:
+  /// \brief Solve the system of constraints.
+  ///
+  /// This method responsible for running search/solver algorithm.
+  /// It doesn't filter solutions, that's the job of top-level `solve` methods.
+  ///
+  /// \param solutions The set of solutions to this system of constraints.
+  void solve(SmallVectorImpl<Solution> &solutions);
+
   /// \brief Compare two solutions to the same set of constraints.
   ///
   /// \param cs The constraint system.
@@ -3214,7 +3194,89 @@ public:
 
     return false;
   }
-  
+
+  // Utility class that can collect information about the type of an
+  // argument in an apply.
+  //
+  // For example, when given a type variable type that represents the
+  // argument of a function call, it will walk the constraint graph
+  // finding any concrete types that are reachable through various
+  // subtype constraints and will also collect all the literal types
+  // conformed to by the types it finds on the walk.
+  //
+  // This makes it possible to get an idea of the kinds of literals
+  // and types of arguments that are used in the subexpression rooted
+  // in this argument, which we can then use to make better choices
+  // for how we partition the operators in a disjunction (in order to
+  // avoid visiting all the options).
+  class ArgumentInfoCollector {
+    ConstraintSystem &CS;
+    llvm::SetVector<Type> Types;
+    llvm::SetVector<ProtocolDecl *> LiteralProtocols;
+
+    void addType(Type ty) {
+      assert(!ty->is<TypeVariableType>());
+      Types.insert(ty);
+    }
+
+    void addLiteralProtocol(ProtocolDecl *proto) {
+      LiteralProtocols.insert(proto);
+    }
+
+    void walk(Type argType);
+    void minimizeLiteralProtocols();
+
+  public:
+    ArgumentInfoCollector(ConstraintSystem &cs, FunctionType *fnTy) : CS(cs) {
+      for (auto &param : fnTy->getParams())
+        walk(param.getPlainType());
+
+      minimizeLiteralProtocols();
+    }
+
+    ArgumentInfoCollector(ConstraintSystem &cs, AnyFunctionType::Param param)
+        : CS(cs) {
+      walk(param.getPlainType());
+      minimizeLiteralProtocols();
+    }
+
+    const llvm::SetVector<Type> &getTypes() const { return Types; }
+    const llvm::SetVector<ProtocolDecl *> &getLiteralProtocols() const {
+      return LiteralProtocols;
+    }
+
+    LLVM_ATTRIBUTE_DEPRECATED(void dump() const LLVM_ATTRIBUTE_USED,
+                              "only for use within the debugger");
+  };
+
+  bool haveTypeInformationForAllArguments(FunctionType *fnType);
+
+  typedef std::function<bool(unsigned index, Constraint *)> ConstraintMatcher;
+  typedef std::function<void(ArrayRef<Constraint *>, ConstraintMatcher)>
+      ConstraintMatchLoop;
+  typedef std::function<void(SmallVectorImpl<unsigned> &options)>
+      PartitionAppendCallback;
+
+  // Attempt to sort nominalTypes based on what we can discover about
+  // calls into the overloads in the disjunction that bindOverload is
+  // a part of.
+  void sortDesignatedTypes(SmallVectorImpl<NominalTypeDecl *> &nominalTypes,
+                           Constraint *bindOverload);
+
+  // Partition the choices in a disjunction based on those that match
+  // the designated types for the operator that the disjunction was
+  // formed for.
+  void partitionForDesignatedTypes(ArrayRef<Constraint *> Choices,
+                                   ConstraintMatchLoop forEachChoice,
+                                   PartitionAppendCallback appendPartition);
+
+  // Partition the choices in the disjunction into groups that we will
+  // iterate over in an order appropriate to attempt to stop before we
+  // have to visit all of the options.
+  void partitionDisjunction(ArrayRef<Constraint *> Choices,
+                            SmallVectorImpl<unsigned> &Ordering,
+                            SmallVectorImpl<unsigned> &PartitionBeginning);
+
   LLVM_ATTRIBUTE_DEPRECATED(
       void dump() LLVM_ATTRIBUTE_USED,
       "only for use within the debugger");
@@ -3336,7 +3398,7 @@ public:
 /// \returns true if the call arguments could not be matched to the parameters.
 bool matchCallArguments(ArrayRef<AnyFunctionType::Param> args,
                         ArrayRef<AnyFunctionType::Param> params,
-                        const llvm::SmallBitVector &defaultMap,
+                        const SmallBitVector &defaultMap,
                         bool hasTrailingClosure,
                         bool allowFixes,
                         MatchCallArgumentListener &listener,
@@ -3344,7 +3406,6 @@ bool matchCallArguments(ArrayRef<AnyFunctionType::Param> args,
 
 ConstraintSystem::TypeMatchResult
 matchCallArguments(ConstraintSystem &cs,
-                   bool isOperator,
                    ArrayRef<AnyFunctionType::Param> args,
                    ArrayRef<AnyFunctionType::Param> params,
                    ConstraintLocatorBuilder locator);
@@ -3353,7 +3414,7 @@ matchCallArguments(ConstraintSystem &cs,
 /// given parameter depth cannot be used with the given value.
 /// If this cannot be proven, conservatively returns true.
 bool areConservativelyCompatibleArgumentLabels(ValueDecl *decl,
-                                               unsigned parameterDepth,
+                                               bool hasCurriedSelf,
                                                ArrayRef<Identifier> labels,
                                                bool hasTrailingClosure);
 
@@ -3394,22 +3455,20 @@ void simplifyLocator(Expr *&anchor,
 Expr *simplifyLocatorToAnchor(ConstraintSystem &cs, ConstraintLocator *locator);
 
 class DisjunctionChoice {
-  ConstraintSystem *CS;
   unsigned Index;
   Constraint *Choice;
   bool ExplicitConversion;
+  bool IsBeginningOfPartition;
 
 public:
-  DisjunctionChoice(ConstraintSystem *const cs, unsigned index,
-                    Constraint *choice, bool explicitConversion)
-      : CS(cs), Index(index), Choice(choice),
-        ExplicitConversion(explicitConversion) {}
-
-  ConstraintSystem &getCS() const { return *CS; }
-
-  Constraint *operator->() const { return Choice; }
+  DisjunctionChoice(unsigned index, Constraint *choice, bool explicitConversion,
+                    bool isBeginningOfPartition)
+      : Index(index), Choice(choice), ExplicitConversion(explicitConversion),
+        IsBeginningOfPartition(isBeginningOfPartition) {}
 
   unsigned getIndex() const { return Index; }
+
+  bool attempt(ConstraintSystem &cs) const;
 
   bool isDisabled() const { return Choice->isDisabled(); }
 
@@ -3419,24 +3478,29 @@ public:
     return false;
   }
 
+  bool isBeginningOfPartition() const { return IsBeginningOfPartition; }
+
   // FIXME: Both of the accessors below are required to support
   //        performance optimization hacks in constraint solver.
 
   bool isGenericOperator() const;
   bool isSymmetricOperator() const;
 
-  /// \brief Apply given choice to the system and try to solve it.
-  Optional<Score> solve(SmallVectorImpl<Solution> &solutions);
+  void print(llvm::raw_ostream &Out, SourceManager *SM) const {
+    Out << "disjunction choice ";
+    Choice->print(Out, SM);
+  }
 
   operator Constraint *() { return Choice; }
+  operator Constraint *() const { return Choice; }
 
 private:
   /// \brief If associated disjunction is an explicit conversion,
   /// let's try to propagate its type early to prune search space.
-  void propagateConversionInfo() const;
+  void propagateConversionInfo(ConstraintSystem &cs) const;
 
-  ValueDecl *getOperatorDecl() const {
-    auto *decl = getDecl(Choice);
+  static ValueDecl *getOperatorDecl(Constraint *choice) {
+    auto *decl = getDecl(choice);
     if (!decl)
       return nullptr;
 
@@ -3455,13 +3519,56 @@ private:
   }
 };
 
-class TypeVarBindingGenerator {
+class TypeVariableBinding {
+  TypeVariableType *TypeVar;
+  ConstraintSystem::PotentialBinding Binding;
+
+public:
+  TypeVariableBinding(TypeVariableType *typeVar,
+                      ConstraintSystem::PotentialBinding &binding)
+      : TypeVar(typeVar), Binding(binding) {}
+
+  bool isDefaultable() const { return Binding.isDefaultableBinding(); }
+
+  bool hasDefaultedProtocol() const { return Binding.DefaultedProtocol; }
+
+  bool attempt(ConstraintSystem &cs) const;
+
+  void print(llvm::raw_ostream &Out, SourceManager *) const {
+    Out << "type variable " << TypeVar->getString()
+        << " := " << Binding.BindingType->getString();
+  }
+};
+
+template<typename Choice>
+class BindingProducer {
+  ConstraintLocator *Locator;
+
+protected:
+  ConstraintSystem &CS;
+
+public:
+  BindingProducer(ConstraintSystem &cs, ConstraintLocator *locator)
+      : Locator(locator), CS(cs) {}
+
+  virtual ~BindingProducer() {}
+  virtual Optional<Choice> operator()() = 0;
+
+  ConstraintLocator *getLocator() const { return Locator; }
+
+  /// Check whether generator would have to compute next
+  /// batch of bindings because it freshly ran out of current one.
+  /// This is useful to be able to exhaustively attempt bindings
+  /// for type variables found at one level, before proceeding to
+  /// supertypes or literal defaults etc.
+  virtual bool needsToComputeNext() const { return false; }
+};
+
+class TypeVarBindingProducer : public BindingProducer<TypeVariableBinding> {
   using BindingKind = ConstraintSystem::AllowedBindingKind;
   using Binding = ConstraintSystem::PotentialBinding;
 
-  ConstraintSystem &CS;
   TypeVariableType *TypeVar;
-
   llvm::SmallVector<Binding, 8> Bindings;
 
   // The index pointing to the offset in the bindings
@@ -3473,27 +3580,25 @@ class TypeVarBindingGenerator {
   llvm::SmallPtrSet<TypeBase *, 4> BoundTypes;
 
 public:
-  TypeVarBindingGenerator(ConstraintSystem &cs, TypeVariableType *typeVar,
-                          ArrayRef<Binding> initialBindings)
-      : CS(cs), TypeVar(typeVar),
-        Bindings(initialBindings.begin(), initialBindings.end()) {}
+  using Element = TypeVariableBinding;
 
-  Optional<Binding> operator()() {
+  TypeVarBindingProducer(ConstraintSystem &cs,
+                         ConstraintSystem::PotentialBindings &bindings)
+      : BindingProducer(cs, bindings.TypeVar->getImpl().getLocator()),
+        TypeVar(bindings.TypeVar),
+        Bindings(bindings.Bindings.begin(), bindings.Bindings.end()) {}
+
+  Optional<Element> operator()() override {
     // Once we reach the end of the current bindings
     // let's try to compute new ones, e.g. supertypes,
     // literal defaults, if that fails, we are done.
     if (needsToComputeNext() && !computeNext())
       return None;
 
-    return Bindings[Index++];
+    return TypeVariableBinding(TypeVar, Bindings[Index++]);
   }
 
-  /// Check whether generator would have to compute next
-  /// batch of bindings because it freshly ran out of current one.
-  /// This is useful to be able to exhaustively attempt bindings
-  /// found at one level, before proceeding to supertypes or
-  /// literal defaults etc.
-  bool needsToComputeNext() const { return Index >= Bindings.size(); }
+  bool needsToComputeNext() const override { return Index >= Bindings.size(); }
 
 private:
   /// Compute next batch of bindings if possible, this could
@@ -3508,84 +3613,73 @@ private:
 /// Iterator over disjunction choices, makes it
 /// easy to work with disjunction and encapsulates
 /// some other important information such as locator.
-class Disjunction {
-  ConstraintSystem &CS;
+class DisjunctionChoiceProducer : public BindingProducer<DisjunctionChoice> {
+  // The disjunciton choices that this producer will iterate through.
   ArrayRef<Constraint *> Choices;
-  ConstraintLocator *Locator;
+
+  // The ordering of disjunction choices. We index into Choices
+  // through this vector in order to visit the disjunction choices in
+  // the order we want to visit them.
+  SmallVector<unsigned, 8> Ordering;
+
+  // The index of the first element in a partition of the disjunction
+  // choices. The choices are split into partitions where we will
+  // visit all elements within a single partition before moving to the
+  // elements of the next partition. If we visit all choices within a
+  // single partition and have found a successful solution with one of
+  // the choices in that partition, we stop looking for other
+  // solutions.
+  SmallVector<unsigned, 4> PartitionBeginning;
+
+  // The index in the current partition of disjunction choices that we
+  // are iterating over.
+  unsigned PartitionIndex = 0;
+
   bool IsExplicitConversion;
 
   unsigned Index = 0;
 
 public:
-  Disjunction(ConstraintSystem &cs, ArrayRef<Constraint *> choices,
-              ConstraintLocator *locator, bool explicitConversion)
-      : CS(cs), Choices(choices), Locator(locator),
-        IsExplicitConversion(explicitConversion) {}
+  using Element = DisjunctionChoice;
 
-  const Disjunction &begin() const { return *this; }
-  const Disjunction &end() const { return *this; }
+  DisjunctionChoiceProducer(ConstraintSystem &cs, Constraint *disjunction)
+      : BindingProducer(cs, disjunction->shouldRememberChoice()
+                                ? disjunction->getLocator()
+                                : nullptr),
+        Choices(disjunction->getNestedConstraints()),
+        IsExplicitConversion(disjunction->isExplicitConversion()) {
+    assert(disjunction->getKind() == ConstraintKind::Disjunction);
+    assert(!disjunction->shouldRememberChoice() || disjunction->getLocator());
 
-  bool operator!=(const Disjunction &) const { return Index < Choices.size(); }
-
-  void operator++() { ++Index; }
-
-  DisjunctionChoice operator*() const {
-    return {&CS, Index, Choices[Index], IsExplicitConversion};
+    // Order and partition the disjunction choices.
+    CS.partitionDisjunction(Choices, Ordering, PartitionBeginning);
   }
 
-  ConstraintLocator *getLocator() const { return Locator; }
-};
+  DisjunctionChoiceProducer(ConstraintSystem &cs,
+                            ArrayRef<Constraint *> choices,
+                            ConstraintLocator *locator, bool explicitConversion)
+      : BindingProducer(cs, locator), Choices(choices),
+        IsExplicitConversion(explicitConversion) {
 
-/// \brief Constraint System "component" represents
-/// a single solvable unit, but the process of assigning
-/// types in some cases allows it to be further split into
-/// multiple smaller parts.
-///
-/// This helps to abstract away logic of holding and
-/// returning sub-set of the constraints in the system,
-/// as well as its partial solving and result tracking.
-class Component {
-  ConstraintList Constraints;
-  SmallVector<Constraint *, 8> Disjunctions;
-
-public:
-  void reinstateTo(ConstraintList &workList) {
-    workList.splice(workList.end(), Constraints);
+    // Order and partition the disjunction choices.
+    CS.partitionDisjunction(Choices, Ordering, PartitionBeginning);
   }
 
-  void record(Constraint *constraint) {
-    Constraints.push_back(constraint);
-    if (constraint->getKind() == ConstraintKind::Disjunction)
-      Disjunctions.push_back(constraint);
+  Optional<Element> operator()() override {
+    unsigned currIndex = Index;
+    if (currIndex >= Choices.size())
+      return None;
+
+    bool isBeginningOfPartition = PartitionIndex < PartitionBeginning.size() &&
+                                  PartitionBeginning[PartitionIndex] == Index;
+    if (isBeginningOfPartition)
+      ++PartitionIndex;
+
+    ++Index;
+
+    return DisjunctionChoice(currIndex, Choices[Ordering[currIndex]],
+                             IsExplicitConversion, isBeginningOfPartition);
   }
-
-  bool solve(ConstraintSystem &cs, SmallVectorImpl<Solution> &solutions) {
-    // Return constraints from the bucket back into circulation.
-    reinstateTo(cs.InactiveConstraints);
-
-    // Solve for this component. If it fails, we're done.
-    bool failed;
-
-    {
-      // Introduce a scope for this partial solution.
-      ConstraintSystem::SolverScope scope(cs);
-      llvm::SaveAndRestore<ConstraintSystem::SolverScope *>
-          partialSolutionScope(cs.solverState->PartialSolutionScope, &scope);
-
-      failed = cs.solveSimplified(solutions);
-    }
-
-    // Put the constraints back into their original bucket.
-    Constraints.splice(Constraints.end(), cs.InactiveConstraints);
-    return failed;
-  }
-
-  bool operator<(const Component &other) const {
-    return disjunctionCount() < other.disjunctionCount();
-  }
-
-private:
-  unsigned disjunctionCount() const { return Disjunctions.size(); }
 };
 } // end namespace constraints
 
@@ -3650,7 +3744,7 @@ public:
 /// in the custom function when necessary.
 class InputMatcher {
   size_t NumSkippedParameters;
-  const llvm::SmallBitVector DefaultValueMap;
+  const SmallBitVector DefaultValueMap;
   const ArrayRef<AnyFunctionType::Param> Params;
 
 public:
@@ -3666,7 +3760,7 @@ public:
   };
 
   InputMatcher(const ArrayRef<AnyFunctionType::Param> params,
-               const llvm::SmallBitVector &defaultValueMap);
+               const SmallBitVector &defaultValueMap);
 
   /// Matching a given array of inputs.
   ///

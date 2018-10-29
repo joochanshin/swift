@@ -216,8 +216,9 @@ static void getStringPartTokens(const Token &Tok, const LangOptions &LangOpts,
                                 const SourceManager &SM,
                                 int BufID, std::vector<Token> &Toks) {
   assert(Tok.is(tok::string_literal));
-  bool IsMultiline = Tok.IsMultilineString();
-  unsigned QuoteLen = IsMultiline ? 3 : 1;
+  bool IsMultiline = Tok.isMultilineString();
+  unsigned CustomDelimiterLen = Tok.getCustomDelimiterLen();
+  unsigned QuoteLen = (IsMultiline ? 3 : 1) + CustomDelimiterLen;
   SmallVector<Lexer::StringSegment, 4> Segments;
   Lexer::getStringLiteralSegments(Tok, Segments, /*Diags=*/nullptr);
   for (unsigned i = 0, e = Segments.size(); i != e; ++i) {
@@ -239,7 +240,8 @@ static void getStringPartTokens(const Token &Tok, const LangOptions &LangOpts,
 
       StringRef Text = SM.extractText({ Loc, Len });
       Token NewTok;
-      NewTok.setToken(tok::string_literal, Text, IsMultiline);
+      NewTok.setToken(tok::string_literal, Text);
+      NewTok.setStringLiteral(IsMultiline, CustomDelimiterLen);
       Toks.push_back(NewTok);
 
     } else {
@@ -329,12 +331,18 @@ swift::tokenizeWithTrivia(const LangOptions &LangOpts, const SourceManager &SM,
 // Setup and Helper Methods
 //===----------------------------------------------------------------------===//
 
+
 Parser::Parser(unsigned BufferID, SourceFile &SF, SILParserTUStateBase *SIL,
+               PersistentParserState *PersistentState)
+    : Parser(BufferID, SF, &SF.getASTContext().Diags, SIL, PersistentState) {}
+
+Parser::Parser(unsigned BufferID, SourceFile &SF, DiagnosticEngine* LexerDiags,
+               SILParserTUStateBase *SIL,
                PersistentParserState *PersistentState)
     : Parser(
           std::unique_ptr<Lexer>(new Lexer(
               SF.getASTContext().LangOpts, SF.getASTContext().SourceMgr,
-              BufferID, &SF.getASTContext().Diags,
+              BufferID, LexerDiags,
               /*InSILMode=*/SIL != nullptr,
               SF.Kind == SourceFileKind::Main
                   ? HashbangMode::Allowed
@@ -372,7 +380,7 @@ class TokenRecorder: public ConsumeTokenReceiver {
   }
 
   void relexComment(CharSourceRange CommentRange,
-                    llvm::SmallVectorImpl<Token> &Scracth) {
+                    llvm::SmallVectorImpl<Token> &Scratch) {
     Lexer L(Ctx.LangOpts, Ctx.SourceMgr, BufferID, nullptr, /*InSILMode=*/false,
             HashbangMode::Disallowed,
             CommentRetentionMode::ReturnAsTokens,
@@ -385,7 +393,7 @@ class TokenRecorder: public ConsumeTokenReceiver {
       if (Result.is(tok::eof))
         break;
       assert(Result.is(tok::comment));
-      Scracth.push_back(Result);
+      Scratch.push_back(Result);
     }
   }
 
@@ -479,7 +487,7 @@ Parser::Parser(std::unique_ptr<Lexer> Lex, SourceFile &SF,
                                            L->getBufferID())) {
   State = PersistentState;
   if (!State) {
-    OwnedState.reset(new PersistentParserState());
+    OwnedState.reset(new PersistentParserState(Context));
     State = OwnedState.get();
   }
 
@@ -749,39 +757,42 @@ bool Parser::parseEndIfDirective(SourceLoc &Loc) {
   return false;
 }
 
-Parser::StructureMarkerRAII::StructureMarkerRAII(Parser &parser,
-                                                 const Token &tok)
-  : P(parser)
-{
+static Parser::StructureMarkerKind
+getStructureMarkerKindForToken(const Token &tok) {
   switch (tok.getKind()) {
   case tok::l_brace:
-    P.StructureMarkers.push_back({tok.getLoc(),
-                                  StructureMarkerKind::OpenBrace,
-                                  None});
-    break;
-
+    return Parser::StructureMarkerKind::OpenBrace;
   case tok::l_paren:
-    P.StructureMarkers.push_back({tok.getLoc(),
-                                  StructureMarkerKind::OpenParen,
-                                  None});
-    break;
-
+    return Parser::StructureMarkerKind::OpenParen;
   case tok::l_square:
-    P.StructureMarkers.push_back({tok.getLoc(),
-                                  StructureMarkerKind::OpenSquare,
-                                  None});
-    break;
-
+    return Parser::StructureMarkerKind::OpenSquare;
   default:
     llvm_unreachable("Not a matched token");
   }
 }
 
-void Parser::StructureMarkerRAII::diagnoseOverflow() {
-  auto Loc = P.StructureMarkers.back().Loc;
-  P.diagnose(Loc, diag::structure_overflow, MaxDepth);
-}
+Parser::StructureMarkerRAII::StructureMarkerRAII(Parser &parser,
+                                                 const Token &tok)
+    : StructureMarkerRAII(parser, tok.getLoc(),
+                          getStructureMarkerKindForToken(tok)) {}
 
+bool Parser::StructureMarkerRAII::pushStructureMarker(
+                                      Parser &parser, SourceLoc loc,    
+                                      StructureMarkerKind kind) {
+  
+  if (parser.StructureMarkers.size() < MaxDepth) {
+    parser.StructureMarkers.push_back({loc, kind, None});
+    return true;
+  } else {
+    parser.diagnose(loc, diag::structure_overflow, MaxDepth);
+    // We need to cut off parsing or we will stack-overflow.
+    // But `cutOffParsing` changes the current token to eof, and we may be in
+    // a place where `consumeToken()` will be expecting e.g. '[',
+    // since we need that to get to the callsite, so this can cause an assert.
+    parser.cutOffParsing();
+    return false;
+  }
+}
 //===----------------------------------------------------------------------===//
 // Primitive Parsing
 //===----------------------------------------------------------------------===//
@@ -1003,14 +1014,14 @@ struct ParserUnit::Implementation {
   SourceFile *SF;
   std::unique_ptr<Parser> TheParser;
 
-  Implementation(SourceManager &SM, unsigned BufferID,
+  Implementation(SourceManager &SM, SourceFileKind SFKind, unsigned BufferID,
                  const LangOptions &Opts, StringRef ModuleName)
     : LangOpts(Opts),
       Diags(SM),
       Ctx(*ASTContext::get(LangOpts, SearchPathOpts, SM, Diags)),
       SF(new (Ctx) SourceFile(
             *ModuleDecl::create(Ctx.getIdentifier(ModuleName), Ctx),
-            SourceFileKind::Main, BufferID,
+            SFKind, BufferID,
             SourceFile::ImplicitModuleImportKind::None,
             Opts.CollectParsedToken,
             Opts.BuildSyntaxTree)) {
@@ -1024,22 +1035,22 @@ struct ParserUnit::Implementation {
   }
 };
 
-ParserUnit::ParserUnit(SourceManager &SM, unsigned BufferID)
-  : ParserUnit(SM, BufferID, LangOptions(), "input") {
+ParserUnit::ParserUnit(SourceManager &SM, SourceFileKind SFKind, unsigned BufferID)
+  : ParserUnit(SM, SFKind, BufferID, LangOptions(), "input") {
 }
 
-ParserUnit::ParserUnit(SourceManager &SM, unsigned BufferID,
+ParserUnit::ParserUnit(SourceManager &SM, SourceFileKind SFKind, unsigned BufferID,
                        const LangOptions &LangOpts, StringRef ModuleName,
                        SyntaxParsingCache *SyntaxCache)
-    : Impl(*new Implementation(SM, BufferID, LangOpts, ModuleName)) {
+    : Impl(*new Implementation(SM, SFKind, BufferID, LangOpts, ModuleName)) {
 
   Impl.SF->SyntaxParsingCache = SyntaxCache;
   Impl.TheParser.reset(new Parser(BufferID, *Impl.SF, nullptr));
 }
 
-ParserUnit::ParserUnit(SourceManager &SM, unsigned BufferID,
+ParserUnit::ParserUnit(SourceManager &SM, SourceFileKind SFKind, unsigned BufferID,
                        unsigned Offset, unsigned EndOffset)
-  : Impl(*new Implementation(SM, BufferID, LangOptions(), "input")) {
+  : Impl(*new Implementation(SM, SFKind, BufferID, LangOptions(), "input")) {
 
   std::unique_ptr<Lexer> Lex;
   Lex.reset(new Lexer(Impl.LangOpts, SM,

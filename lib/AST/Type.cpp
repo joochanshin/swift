@@ -42,6 +42,11 @@
 #include <iterator>
 using namespace swift;
 
+#define TYPE(Id, _) \
+  static_assert(IsTriviallyDestructible<Id##Type>::value, \
+                "Types are BumpPtrAllocated; the destructor is never called");
+#include "swift/AST/TypeNodes.def"
+
 Type QueryTypeSubstitutionMap::operator()(SubstitutableType *type) const {
   auto key = type->getCanonicalType()->castTo<SubstitutableType>();
   auto known = substitutions.find(key);
@@ -742,68 +747,10 @@ Type TypeBase::replaceCovariantResultType(Type newResultType,
   return FunctionType::get(inputType, resultType, fnType->getExtInfo());
 }
 
-SmallVector<AnyFunctionType::Param, 4>
-swift::decomposeArgType(Type type, ArrayRef<Identifier> argumentLabels) {
-  SmallVector<AnyFunctionType::Param, 4> result;
-  switch (type->getKind()) {
-  case TypeKind::Tuple: {
-    auto tupleTy = cast<TupleType>(type.getPointer());
-    
-    // If we have one argument label but a tuple argument with > 1 element,
-    // put the whole tuple into the argument.
-    // FIXME: This horribleness is due to the mis-modeling of arguments as
-    // ParenType or TupleType.
-    if (argumentLabels.size() == 1 && tupleTy->getNumElements() > 1) {
-      // Break out to do the default thing below.
-      break;
-    }
-    
-    for (auto i : range(0, tupleTy->getNumElements())) {
-      const auto &elt = tupleTy->getElement(i);
-      assert(!(elt.getParameterFlags().isAutoClosure() ||
-              elt.getParameterFlags().isVariadic()) &&
-             "Vararg or autoclosure argument tuple doesn't make sense");
-      result.push_back(AnyFunctionType::Param(elt.getRawType(),
-                                              argumentLabels[i],
-                                              elt.getParameterFlags()));
-    }
-    return result;
-  }
-    
-  case TypeKind::Paren: {
-    auto parenTy = cast<ParenType>(type.getPointer());
-    result.push_back(AnyFunctionType::Param(parenTy->getUnderlyingType()->getInOutObjectType(),
-                                            Identifier(),
-                                            parenTy->getParameterFlags()));
-    return result;
-  }
-
-  // If `Void` has been explicitly specified, resulting decomposition
-  // should be empty, just like empty tuple would be.
-  case TypeKind::NameAlias: {
-    auto &ctx = type->getASTContext();
-    auto *typealias = cast<NameAliasType>(type.getPointer());
-    if (typealias->getDecl() == ctx.getVoidDecl())
-      return result;
-    break;
-  }
-
-  default:
-    // Default behavior below; inject the argument as the sole parameter.
-    break;
-  }
-  
-  // Just inject this parameter.
-  assert(result.empty() && (argumentLabels.size() == 1));
-  result.push_back(AnyFunctionType::Param(type->getInOutObjectType(), argumentLabels[0],
-                                          ParameterTypeFlags().withInOut(type->is<InOutType>())));
-  return result;
-}
-
-llvm::SmallBitVector
+SmallBitVector
 swift::computeDefaultMap(ArrayRef<AnyFunctionType::Param> params,
-                         const ValueDecl *paramOwner, unsigned level) {
-  llvm::SmallBitVector resultVector(params.size());
+                         const ValueDecl *paramOwner, bool skipCurriedSelf) {
+  SmallBitVector resultVector(params.size());
   // No parameter owner means no parameter list means no default arguments
   // - hand back the zeroed bitvector.
   //
@@ -815,15 +762,15 @@ swift::computeDefaultMap(ArrayRef<AnyFunctionType::Param> params,
   const ParameterList *paramList = nullptr;
   if (auto *func = dyn_cast<AbstractFunctionDecl>(paramOwner)) {
     if (func->hasImplicitSelfDecl()) {
-      if (level == 1)
+      if (skipCurriedSelf)
         paramList = func->getParameters();
-    } else if (level == 0)
+    } else if (!skipCurriedSelf)
       paramList = func->getParameters();
   } else if (auto *subscript = dyn_cast<SubscriptDecl>(paramOwner)) {
-    if (level == 1)
+    if (skipCurriedSelf)
       paramList = subscript->getIndices();
   } else if (auto *enumElement = dyn_cast<EnumElementDecl>(paramOwner)) {
-    if (level == 1)
+    if (skipCurriedSelf)
       paramList = enumElement->getParameterList();
   }
 
@@ -1177,12 +1124,10 @@ CanType TypeBase::computeCanonicalType() {
 
     if (genericSig) {
       Result = GenericFunctionType::get(genericSig, canParams, resultTy,
-                                        funcTy->getExtInfo(),
-                                        /*canonicalVararg=*/true);
+                                        funcTy->getExtInfo());
     } else {
       Result = FunctionType::get(canParams, resultTy,
-                                 funcTy->getExtInfo(),
-                                 /*canonicalVararg=*/true);
+                                 funcTy->getExtInfo());
     }
     assert(Result->isCanonical());
     break;
@@ -1478,16 +1423,20 @@ Type TypeBase::getSuperclass(bool useArchetypes) {
 }
 
 bool TypeBase::isExactSuperclassOf(Type ty) {
-  // For there to be a superclass relationship, we must be a superclass, and
-  // the potential subtype must be a class or superclass-bounded archetype.
-  if (!getClassOrBoundGenericClass() || !ty->mayHaveSuperclass())
+  // For there to be a superclass relationship, we must be a class, and
+  // the potential subtype must be a class, superclass-bounded archetype,
+  // or subclass existential involving an imported class and @objc
+  // protocol.
+  if (!getClassOrBoundGenericClass() ||
+      !(ty->mayHaveSuperclass() ||
+        (ty->isObjCExistentialType() &&
+         ty->getSuperclass() &&
+         ty->getSuperclass()->getAnyNominal()->hasClangNode())))
     return false;
 
   do {
     if (ty->isEqual(this))
       return true;
-    if (ty->getAnyNominal() && ty->getAnyNominal()->isInvalid())
-      return false;
   } while ((ty = ty->getSuperclass()));
   return false;
 }
@@ -1598,8 +1547,8 @@ bool TypeBase::isBindableTo(Type b) {
           return false;
         
         for (unsigned i : indices(func->getParams())) {
-          if (!visit(func->getParams()[i].getType(),
-                     substFunc.getParams()[i].getType()))
+          if (!visit(func->getParams()[i].getOldType(),
+                     substFunc.getParams()[i].getOldType()))
             return false;
         }
         
@@ -1976,7 +1925,7 @@ getForeignRepresentable(Type type, ForeignLanguage language,
     for (const auto &param : functionType->getParams()) {
       if (param.isVariadic())
         return failure();
-      if (recurse(param.getType()))
+      if (recurse(param.getOldType()))
         return failure();
     }
 
@@ -2337,7 +2286,7 @@ static bool matches(CanType t1, CanType t2, TypeMatchOptions matchMode,
 
       // Inputs are contravariant.
       for (auto i : indices(fn2.getParams())) {
-        if (!matches(fn2Params[i].getType(), fn1Params[i].getType(),
+        if (!matches(fn2Params[i].getOldType(), fn1Params[i].getOldType(),
                      matchMode, ParameterPosition::ParameterTupleElement,
                      OptionalUnwrapping::None)) {
           return false;
@@ -2736,17 +2685,6 @@ Type ProtocolCompositionType::get(const ASTContext &C,
   // TODO: Canonicalize away HasExplicitAnyObject if it is implied
   // by one of our member protocols.
   return build(C, CanTypes, HasExplicitAnyObject);
-}
-
-bool AnyFunctionType::isCanonicalFunctionInputType(Type input) {
-  // Canonically, we should have a tuple type or parenthesized type.
-  if (auto tupleTy = dyn_cast<TupleType>(input.getPointer()))
-    return tupleTy->isCanonical();
-  if (auto parenTy = dyn_cast<ParenType>(input.getPointer()))
-    return parenTy->getUnderlyingType()->isCanonical();
-
-  // FIXME: Still required for the constraint solver.
-  return isa<TypeVariableType>(input.getPointer());
 }
 
 FunctionType *
@@ -3349,7 +3287,8 @@ Type TypeBase::adjustSuperclassMemberDeclType(const ValueDecl *baseDecl,
 
   auto type = memberType.subst(subs, SubstFlags::UseErrorType);
 
-  if (isa<AbstractFunctionDecl>(baseDecl)) {
+  if (isa<AbstractFunctionDecl>(baseDecl) &&
+      !baseDecl->getDeclContext()->getSelfProtocolDecl()) {
     type = type->replaceSelfParameterType(this);
     if (auto func = dyn_cast<FuncDecl>(baseDecl)) {
       if (func->hasDynamicSelf()) {
@@ -3808,15 +3747,13 @@ case TypeKind::Id:
 
       auto genericSig = genericFnType->getGenericSignature();
       return GenericFunctionType::get(genericSig, substParams, resultTy,
-                                      function->getExtInfo(),
-                                   /*canonicalVararg=*/function->isCanonical());
+                                      function->getExtInfo());
     }
 
     if (isUnchanged) return *this;
 
     return FunctionType::get(substParams, resultTy,
-                             function->getExtInfo(),
-                             /*canonicalVararg=*/function->isCanonical());
+                             function->getExtInfo());
   }
 
   case TypeKind::ArraySlice: {

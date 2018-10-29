@@ -214,14 +214,8 @@ public:
     // 'final' only makes sense in the context of a class declaration.
     // Reject it on global functions, protocols, structs, enums, etc.
     if (!D->getDeclContext()->getSelfClassDecl()) {
-      if (TC.Context.isSwiftVersion3() && 
-          D->getDeclContext()->getExtendedProtocolDecl())
-        TC.diagnose(attr->getLocation(), 
-          diag::protocol_extension_cannot_be_final)
-          .fixItRemove(attr->getRange());
-      else
-        TC.diagnose(attr->getLocation(), diag::member_cannot_be_final)
-          .fixItRemove(attr->getRange());
+      TC.diagnose(attr->getLocation(), diag::member_cannot_be_final)
+        .fixItRemove(attr->getRange());
 
       // Remove the attribute so child declarations are not flagged as final
       // and duplicate the error message.
@@ -259,6 +253,7 @@ public:
   void visitLLDBDebuggerFunctionAttr(LLDBDebuggerFunctionAttr *attr);
   void visitNSManagedAttr(NSManagedAttr *attr);
   void visitOverrideAttr(OverrideAttr *attr);
+  void visitNonOverrideAttr(NonOverrideAttr *attr);
   void visitAccessControlAttr(AccessControlAttr *attr);
   void visitSetterAccessAttr(SetterAccessAttr *attr);
   bool visitAbstractAccessControlAttr(AbstractAccessControlAttr *attr);
@@ -570,8 +565,16 @@ visitLLDBDebuggerFunctionAttr(LLDBDebuggerFunctionAttr *attr) {
 
 void AttributeEarlyChecker::visitOverrideAttr(OverrideAttr *attr) {
   if (!isa<ClassDecl>(D->getDeclContext()) &&
+      !isa<ProtocolDecl>(D->getDeclContext()) &&
       !isa<ExtensionDecl>(D->getDeclContext()))
     diagnoseAndRemoveAttr(attr, diag::override_nonclass_decl);
+}
+
+void AttributeEarlyChecker::visitNonOverrideAttr(NonOverrideAttr *attr) {
+  if (!isa<ClassDecl>(D->getDeclContext()) &&
+      !isa<ProtocolDecl>(D->getDeclContext()) &&
+      !isa<ExtensionDecl>(D->getDeclContext()))
+    diagnoseAndRemoveAttr(attr, diag::nonoverride_wrong_decl_context);
 }
 
 void AttributeEarlyChecker::visitLazyAttr(LazyAttr *attr) {
@@ -864,6 +867,8 @@ public:
   void visitImplementsAttr(ImplementsAttr *attr);
 
   void visitFrozenAttr(FrozenAttr *attr);
+
+  void visitNonOverrideAttr(NonOverrideAttr *attr);
 };
 } // end anonymous namespace
 
@@ -1616,17 +1621,23 @@ void AttributeChecker::visitAccessControlAttr(AccessControlAttr *attr) {
 
     if (auto extAttr =
         extension->getAttrs().getAttribute<AccessControlAttr>()) {
-      // Extensions are top level declarations, for which the literally lowest
-      // access level `private` is equivalent to `fileprivate`.
-      AccessLevel extAccess = std::max(extAttr->getAccess(),
-                                       AccessLevel::FilePrivate);
-      if (attr->getAccess() > extAccess) {
+      AccessLevel defaultAccess = extension->getDefaultAccessLevel();
+      if (attr->getAccess() > defaultAccess) {
         auto diag = TC.diagnose(attr->getLocation(),
                                 diag::access_control_ext_member_more,
                                 attr->getAccess(),
                                 D->getDescriptiveKind(),
                                 extAttr->getAccess());
-        swift::fixItAccess(diag, cast<ValueDecl>(D), extAccess);
+        swift::fixItAccess(diag, cast<ValueDecl>(D), defaultAccess, false,
+                           true);
+        return;
+      } else if (attr->getAccess() == defaultAccess) {
+        TC.diagnose(attr->getLocation(),
+                    diag::access_control_ext_member_redundant,
+                    attr->getAccess(),
+                    D->getDescriptiveKind(),
+                    extAttr->getAccess())
+          .fixItRemove(attr->getRange());
         return;
       }
     }
@@ -1661,6 +1672,15 @@ AttributeChecker::visitSetterAccessAttr(SetterAccessAttr *attr) {
     TC.diagnose(attr->getLocation(), diag::access_control_setter_more,
                 getterAccess, storageKind, attr->getAccess());
     attr->setInvalid();
+    return;
+
+  } else if (attr->getAccess() == getterAccess) {
+    TC.diagnose(attr->getLocation(),
+                diag::access_control_setter_redundant,
+                attr->getAccess(),
+                D->getDescriptiveKind(),
+                getterAccess)
+      .fixItRemove(attr->getRange());
     return;
   }
 }
@@ -1730,6 +1750,7 @@ static Requirement getCanonicalRequirement(const Requirement &req) {
     return Requirement(req.getKind(), req.getFirstType()->getCanonicalType(),
                        req.getLayoutConstraint());
   }
+  llvm_unreachable("unhandled kind");
 }
 
 /// Require that the given type either not involve type parameters or be
@@ -1924,16 +1945,6 @@ void AttributeChecker::visitUsableFromInlineAttr(UsableFromInlineAttr *attr) {
     return;
   }
 
-  // Symbols of dynamically-dispatched declarations are never referenced
-  // directly, so marking them as @usableFromInline does not make sense.
-  if (VD->isDynamic()) {
-    if (attr->isImplicit())
-      attr->setInvalid();
-    else
-      diagnoseAndRemoveAttr(attr, diag::usable_from_inline_dynamic_not_supported);
-    return;
-  }
-
   // On internal declarations, @inlinable implies @usableFromInline.
   if (VD->getAttrs().hasAttribute<InlinableAttr>()) {
     if (TC.Context.isSwiftVersionAtLeast(4,2))
@@ -2060,6 +2071,12 @@ void AttributeChecker::visitFrozenAttr(FrozenAttr *attr) {
   if (ED->getFormalAccess() < AccessLevel::Public &&
       !ED->getAttrs().hasAttribute<UsableFromInlineAttr>()) {
     diagnoseAndRemoveAttr(attr, diag::enum_frozen_nonpublic, attr);
+  }
+}
+
+void AttributeChecker::visitNonOverrideAttr(NonOverrideAttr *attr) {
+  if (auto overrideAttr = D->getAttrs().getAttribute<OverrideAttr>()) {
+    diagnoseAndRemoveAttr(overrideAttr, diag::nonoverride_and_override_attr);
   }
 }
 

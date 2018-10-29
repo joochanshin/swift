@@ -1,5 +1,6 @@
 silopt_register_sources(
   ARCCodeMotion.cpp
+  AccessEnforcementDom.cpp
   AccessEnforcementOpts.cpp
   AccessEnforcementWMO.cpp
   AllocBoxToStack.cpp
@@ -9,6 +10,7 @@ silopt_register_sources(
   CSE.cpp
   ConditionForwarding.cpp
   CopyForwarding.cpp
+  CopyPropagation.cpp
   DeadCodeElimination.cpp
   DeadObjectElimination.cpp
   DeadStoreElimination.cpp

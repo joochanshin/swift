@@ -241,8 +241,12 @@ function(_compile_swift_files
     list(APPEND swift_flags "-Xfrontend" "-assume-single-threaded")
   endif()
 
-  if(SWIFT_STDLIB_ENABLE_SIL_OWNERSHIP AND SWIFTFILE_IS_STDLIB)
+  if(SWIFTFILE_IS_STDLIB)
     list(APPEND swift_flags "-Xfrontend" "-enable-sil-ownership")
+  endif()
+
+  if(SWIFT_ENABLE_STDLIBCORE_EXCLUSIVITY_CHECKING AND SWIFTFILE_IS_STDLIB)
+    list(APPEND swift_flags "-Xfrontend" "-enforce-exclusivity=checked")
   endif()
 
   if(SWIFT_EMIT_SORTED_SIL_OUTPUT)
@@ -333,12 +337,9 @@ function(_compile_swift_files
     endif()
   endif()
 
-  # If we want to build a single overlay, don't install the swiftmodule and swiftdoc files.
-  if(NOT BUILD_STANDALONE)
-    swift_install_in_component("${SWIFTFILE_INSTALL_IN_COMPONENT}"
-        FILES "${module_file}" "${module_doc_file}"
-        DESTINATION "lib${LLVM_LIBDIR_SUFFIX}/swift/${library_subdir}")
-  endif()
+  swift_install_in_component("${SWIFTFILE_INSTALL_IN_COMPONENT}"
+    FILES "${module_file}" "${module_doc_file}" "${interface_file}"
+    DESTINATION "lib${LLVM_LIBDIR_SUFFIX}/swift/${library_subdir}")
 
   set(line_directive_tool "${SWIFT_SOURCE_DIR}/utils/line-directive")
   set(swift_compiler_tool "${SWIFT_NATIVE_SWIFT_TOOLS_PATH}/swiftc")
@@ -354,16 +355,14 @@ function(_compile_swift_files
   set(apinote_files)
 
   foreach(apinote_module ${SWIFTFILE_API_NOTES})
-    set(apinote_file "${module_dir}/${apinote_module}.apinotesc")
+    set(apinote_file "${module_dir}/${apinote_module}.apinotes")
     set(apinote_input_file
       "${SWIFT_API_NOTES_PATH}/${apinote_module}.apinotes")
 
     list(APPEND command_create_apinotes
       COMMAND
-      "${swift_compiler_tool}" "-apinotes" "-yaml-to-binary"
-      "-o" "${apinote_file}"
-      "-target" "${SWIFT_SDK_${SWIFTFILE_SDK}_ARCH_${SWIFTFILE_ARCHITECTURE}_TRIPLE}"
-      "${apinote_input_file}")
+      "${CMAKE_COMMAND}" "-E" "copy_if_different"
+      "${apinote_input_file}" "${apinote_file}")
     list(APPEND depends_create_apinotes "${apinote_input_file}")
 
     list(APPEND apinote_files "${apinote_file}")
@@ -447,22 +446,22 @@ function(_compile_swift_files
         COMMAND ""
         OUTPUT ${apinotes_outputs}
         DEPENDS
-          ${swift_compiler_tool_dep}
           ${depends_create_apinotes}
           ${obj_dirs_dependency_target}
-        COMMENT "Generating API notes ${first_output}")
+        COMMENT "Copying API notes for ${first_output}")
   endif()
 
   # Then we can compile both the object files and the swiftmodule files
   # in parallel in this target for the object file, and ...
 
-  # Windows doesn't support long command line paths, of 8191 chars or over.
-  # We need to work around this by avoiding long command line arguments. This can be
-  # achieved by writing the list of file paths to a file, then reading that list
-  # in the Python script.
+  # Windows doesn't support long command line paths, of 8191 chars or over. We
+  # need to work around this by avoiding long command line arguments. This can
+  # be achieved by writing the list of file paths to a file, then reading that
+  # list in the Python script.
   string(RANDOM file_name)
   set(file_path "${CMAKE_CURRENT_BINARY_DIR}/${file_name}.txt")
-  file(WRITE "${file_path}" "${source_files}")
+  string(REPLACE ";" "'\n'" source_files_quoted "${source_files}")
+  file(WRITE "${file_path}" "'${source_files_quoted}'")
   
   add_custom_command_target(
       dependency_target
@@ -507,7 +506,7 @@ function(_compile_swift_files
         COMMAND
           "${PYTHON_EXECUTABLE}" "${line_directive_tool}" "@${file_path}" --
           "${swift_compiler_tool}" "-emit-module" "-o" "${module_file}"
-          "-experimental-emit-interface" ${swift_flags} "@${file_path}"
+          "-emit-parseable-module-interface" ${swift_flags} "@${file_path}"
         ${command_touch_module_outputs}
         OUTPUT ${module_outputs}
         DEPENDS

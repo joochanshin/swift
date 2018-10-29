@@ -258,10 +258,6 @@ public:
   /// Get the substitutions associated with this conformance.
   SubstitutionMap getSubstitutions(ModuleDecl *M) const;
 
-  /// Determine whether the witness table access function for this conformance
-  /// needs to be passed information when called, or if it stands alone.
-  bool witnessTableAccessorRequiresArguments() const;
-
   /// Get the underlying normal conformance.
   const NormalProtocolConformance *getRootNormalConformance() const;
 
@@ -415,7 +411,6 @@ class NormalProtocolConformance : public ProtocolConformance,
   {
     assert(!conformingType->hasArchetype() &&
            "ProtocolConformances should store interface types");
-    differenceAndStoreConditionalRequirements();
   }
 
   NormalProtocolConformance(Type conformingType,
@@ -428,7 +423,6 @@ class NormalProtocolConformance : public ProtocolConformance,
   {
     assert(!conformingType->hasArchetype() &&
            "ProtocolConformances should store interface types");
-    differenceAndStoreConditionalRequirements();
   }
 
   void resolveLazyInfo() const;

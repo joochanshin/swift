@@ -222,7 +222,7 @@ public:
   void emitAbstractFuncDecl(AbstractFunctionDecl *AFD);
   
   /// Generate code for a source file of the module.
-  void emitSourceFile(SourceFile *sf, unsigned startElem);
+  void emitSourceFile(SourceFile *sf);
   
   /// Generates code for the given FuncDecl and adds the
   /// SILFunction to the current SILModule under the name SILDeclRef(decl). For
@@ -441,6 +441,13 @@ public:
   /// property.
   SubstitutionMap
   getNonMemberVarDeclSubstitutions(VarDecl *var);
+
+  /// Map the substitutions for the original declaration to substitutions for
+  /// the overridden declaration.
+  static SubstitutionMap mapSubstitutionsForWitnessOverride(
+                                               AbstractFunctionDecl *original,
+                                               AbstractFunctionDecl *overridden,
+                                               SubstitutionMap subs);
 
   /// Emit a property descriptor for the given storage decl if it needs one.
   void tryEmitPropertyDescriptor(AbstractStorageDecl *decl);

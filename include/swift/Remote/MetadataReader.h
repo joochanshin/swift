@@ -265,12 +265,12 @@ public:
     return start;
   }
 
-  /// Given a pointer to an address, attemp to read the pointed value.
-  Optional<StoredPointer> readPointedValue(StoredPointer Address) {
-    StoredPointer PointedVal;
-    if (!Reader->readInteger(RemoteAddress(Address), &PointedVal))
+  /// Given a pointer to an address, attemp to read the pointer value.
+  Optional<StoredPointer> readPointerValue(StoredPointer Address) {
+    StoredPointer PointerVal;
+    if (!Reader->readInteger(RemoteAddress(Address), &PointerVal))
       return None;
-    return Optional<StoredPointer>(PointedVal);
+    return Optional<StoredPointer>(PointerVal);
   }
 
   /// Given a pointer to the metadata, attempt to read the value
@@ -309,7 +309,7 @@ public:
     // error existential with NSError-compatible layout.
     std::string ObjCClassName;
     if (readObjCClassName(*MetadataAddress, ObjCClassName)) {
-      if (ObjCClassName == "_SwiftNativeNSError")
+      if (ObjCClassName == "__SwiftNativeNSError")
         isObjC = true;
     } else {
       // Otherwise, we can check to see if this is a class metadata with the
@@ -573,8 +573,8 @@ public:
 
       // Build the demangling tree from the context tree.
       Demangle::NodeFactory nodeFactory;
-      auto node = buildNominalTypeMangling(descriptor, nodeFactory);
-      if (!node)
+      auto node = buildContextMangling(descriptor, nodeFactory);
+      if (!node || node->getKind() != Node::Kind::Type)
         return BuiltType();
 
       auto name = Demangle::mangleNode(node);
@@ -614,7 +614,7 @@ public:
     auto context = readContextDescriptor(contextAddress);
     if (!context)
       return nullptr;
-    return buildNominalTypeMangling(context, Dem);
+    return buildContextMangling(context, Dem);
   }
 
   /// Read the isa pointer of a class or closure context instance and apply
@@ -728,15 +728,18 @@ public:
   Optional<ClassMetadataBounds>
   readMetadataBoundsOfSuperclass(ContextDescriptorRef subclassRef) {
     auto subclass = cast<TargetClassDescriptor<Runtime>>(subclassRef);
+    if (!subclass->hasResilientSuperclass())
+      return ClassMetadataBounds::forSwiftRootClass();
 
     auto rawSuperclass =
-      resolveNullableRelativeField(subclassRef, subclass->Superclass);
+      resolveNullableRelativeField(subclassRef,
+                                   subclass->getResilientSuperclass());
     if (!rawSuperclass) {
       return ClassMetadataBounds::forSwiftRootClass();
     }
 
     return forTypeReference<ClassMetadataBounds>(
-      subclass->getSuperclassReferenceKind(), *rawSuperclass,
+      subclass->getResilientSuperclassReferenceKind(), *rawSuperclass,
       [&](ContextDescriptorRef superclass)
             -> Optional<ClassMetadataBounds> {
         if (!isa<TargetClassDescriptor<Runtime>>(superclass))
@@ -1087,8 +1090,8 @@ protected:
         return _readMetadata<TargetStructMetadata>(address);
       case MetadataKind::Tuple: {
         auto numElementsAddress = address +
-          TargetTupleTypeMetadata<Runtime>::OffsetToNumElements;
-        StoredSize numElements;
+          TargetTupleTypeMetadata<Runtime>::getOffsetToNumElements();
+        uint32_t numElements;
         if (!Reader->readInteger(RemoteAddress(numElementsAddress),
                                  &numElements))
           return nullptr;
@@ -1241,7 +1244,7 @@ private:
       metadataInitSize = readMetadataInitSize();
       break;
     case ContextDescriptorKind::Protocol:
-      baseSize = sizeof(TargetProtocolDescriptorRef<Runtime>);
+      baseSize = sizeof(TargetProtocolDescriptor<Runtime>);
       break;
     default:
       // We don't know about this kind of context.
@@ -1424,9 +1427,21 @@ private:
       // TODO: Remangle something about the extension context here.
       return nullptr;
       
-    case ContextDescriptorKind::Anonymous:
-      // TODO: Remangle something about the anonymous context here.
-      return nullptr;
+    case ContextDescriptorKind::Anonymous: {
+      // Use the remote address to identify the anonymous context.
+      char addressBuf[18];
+      snprintf(addressBuf, sizeof(addressBuf), "$%" PRIx64,
+               (uint64_t)descriptor.getAddress());
+      auto anonNode = nodeFactory.createNode(Node::Kind::AnonymousContext);
+      CharVector addressStr;
+      addressStr.append(addressBuf, nodeFactory);
+      auto name = nodeFactory.createNode(Node::Kind::Identifier, addressStr);
+      anonNode->addChild(name, nodeFactory);
+      if (parentDemangling)
+        anonNode->addChild(parentDemangling, nodeFactory);
+      
+      return anonNode;
+    }
 
     case ContextDescriptorKind::Module: {
       // Modules shouldn't have a parent.
@@ -1478,6 +1493,18 @@ private:
 
     auto nameNode = nodeFactory.createNode(Node::Kind::Identifier,
                                            std::move(nodeName));
+
+    // Use private declaration names for anonymous context references.
+    if (parentDemangling->getKind() == Node::Kind::AnonymousContext) {
+      auto privateDeclName =
+        nodeFactory.createNode(Node::Kind::PrivateDeclName);
+      privateDeclName->addChild(parentDemangling->getChild(0), nodeFactory);
+      privateDeclName->addChild(nameNode, nodeFactory);
+
+      nameNode = privateDeclName;
+      parentDemangling = parentDemangling->getChild(1);
+    }
+
     if (importInfo && !importInfo->RelatedEntityName.empty()) {
       auto relatedNode =
         nodeFactory.createNode(Node::Kind::RelatedEntityDeclName,
@@ -1492,17 +1519,25 @@ private:
     return demangling;
   }
 
-  /// Given a read nominal type descriptor, attempt to build a demangling tree
+  /// Given a read context descriptor, attempt to build a demangling tree
   /// for it.
   Demangle::NodePointer
-  buildNominalTypeMangling(ContextDescriptorRef descriptor,
-                           Demangle::NodeFactory &nodeFactory) {
+  buildContextMangling(ContextDescriptorRef descriptor,
+                       Demangle::NodeFactory &nodeFactory) {
     auto demangling = buildContextDescriptorMangling(descriptor, nodeFactory);
     if (!demangling)
       return nullptr;
 
-    auto top = nodeFactory.createNode(Node::Kind::Type);
-    top->addChild(demangling, nodeFactory);
+    Demangle::NodePointer top;
+    // References to type nodes behave as types in the mangling.
+    if (isa<TargetTypeContextDescriptor<Runtime>>(descriptor.getLocalBuffer()) ||
+        isa<TargetProtocolDescriptor<Runtime>>(descriptor.getLocalBuffer())) {
+      top = nodeFactory.createNode(Node::Kind::Type);
+      top->addChild(demangling, nodeFactory);
+    } else {
+      top = demangling;
+    }
+    
     return top;
   }
 
@@ -1512,8 +1547,8 @@ private:
   buildNominalTypeDecl(ContextDescriptorRef descriptor) {
     // Build the demangling tree from the context tree.
     Demangle::NodeFactory nodeFactory;
-    auto node = buildNominalTypeMangling(descriptor, nodeFactory);
-    if (!node)
+    auto node = buildContextMangling(descriptor, nodeFactory);
+    if (!node || node->getKind() != Node::Kind::Type)
       return BuiltNominalTypeDecl();
     BuiltNominalTypeDecl decl = Builder.createNominalTypeDecl(node);
     return decl;

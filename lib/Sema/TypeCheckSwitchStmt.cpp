@@ -18,6 +18,7 @@
 #include "swift/AST/ASTPrinter.h"
 #include "swift/AST/DiagnosticsSema.h"
 #include "swift/AST/Pattern.h"
+#include "swift/Basic/STLExtras.h"
 
 #include <llvm/ADT/APInt.h>
 #include <llvm/ADT/APFloat.h>
@@ -184,6 +185,7 @@ namespace {
           return acc;
         }
         }
+        llvm_unreachable("unhandled kind");
       }
 
       explicit Space(Type T, Identifier NameForPrinting)
@@ -683,11 +685,9 @@ namespace {
             llvm_unreachable("Attempted to display disjunct to user!");
           } else {
             buffer << "DISJOIN(";
-            for (auto &sp : Spaces) {
-              buffer << "\n";
+            interleave(Spaces, [&](const Space &sp) {
               sp.show(buffer, forDisplay);
-              buffer << " |";
-            }
+            }, [&buffer]() { buffer << " |\n"; });
             buffer << ")";
           }
         }
@@ -706,16 +706,9 @@ namespace {
           }
 
           buffer << "(";
-          bool first = true;
-          for (auto &param : Spaces) {
-            if (!first) {
-              buffer << ", ";
-            }
+          interleave(Spaces, [&](const Space &param) {
             param.show(buffer, forDisplay);
-            if (first) {
-              first = false;
-            }
-          }
+          }, [&buffer]() { buffer << ", "; });
           buffer << ")";
         }
           break;
@@ -858,6 +851,7 @@ namespace {
           return result;
         }
         }
+        llvm_unreachable("unhandled kind");
       }
     };
 
@@ -1595,6 +1589,7 @@ namespace {
                                      conArgSpace);
       }
       }
+      llvm_unreachable("unhandled kind");
     }
   };
 } // end anonymous namespace

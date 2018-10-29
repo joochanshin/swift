@@ -411,7 +411,7 @@ DictionaryTestSuite.test("COW.Fast.UpdateValueForKeyDoesNotReallocate") {
   }
 }
 
-DictionaryTestSuite.test("COW.Slow.AddDoesNotReallocate") {
+DictionaryTestSuite.test("COW.Slow.UpdateValueForKeyDoesNotReallocate") {
   do {
     var d1 = getCOWSlowDictionary()
     let identity1 = d1._rawIdentifier()
@@ -731,6 +731,30 @@ DictionaryTestSuite.test("COW.Fast.MergeDictionaryDoesNotReallocate")
     // Keep variables alive.
     _fixLifetime(d1)
     _fixLifetime(d2)
+  }
+}
+
+
+DictionaryTestSuite.test("Merge.ThrowingIsSafe") {
+  var d: [TestKeyTy: TestValueTy] = [
+    TestKeyTy(10): TestValueTy(1),
+    TestKeyTy(20): TestValueTy(2),
+    TestKeyTy(30): TestValueTy(3),
+  ]
+
+  let d2: [TestKeyTy: TestValueTy] = [
+    TestKeyTy(40): TestValueTy(4),
+    TestKeyTy(50): TestValueTy(5),
+    TestKeyTy(10): TestValueTy(1),
+  ]
+
+  struct TE: Error {}
+  do {
+    // Throwing must not leave the dictionary in an inconsistent state.
+    try d.merge(d2) { v1, v2 in throw TE() }
+    expectTrue(false, "merge did not throw")
+  } catch {
+    expectTrue(error is TE)
   }
 }
 
@@ -1374,7 +1398,7 @@ DictionaryTestSuite.test("COW.Fast.KeysAccessDoesNotReallocate") {
   { $0 == $1 }
   
   do {
-    let d2: [MinimalHashableValue : Int] = [
+    var d2: [MinimalHashableValue : Int] = [
       MinimalHashableValue(10): 1010,
       MinimalHashableValue(20): 1020,
       MinimalHashableValue(30): 1030,
@@ -1385,6 +1409,8 @@ DictionaryTestSuite.test("COW.Fast.KeysAccessDoesNotReallocate") {
       MinimalHashableValue(80): 1080,
       MinimalHashableValue(90): 1090,
     ]
+    // Make collisions less likely
+    d2.reserveCapacity(1000)
     
     // Find the last key in the dictionary
     var lastKey: MinimalHashableValue = d2.first!.key
@@ -1409,6 +1435,91 @@ DictionaryTestSuite.test("COW.Fast.KeysAccessDoesNotReallocate") {
     expectEqual(k, l)
   }
 }
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Insertion") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(40)] = TestEquatableValueTy(1040)
+  expectEqual(TestEquatableValueTy(1040), d[TestKeyTy(40)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Mutation") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(10)] = TestEquatableValueTy(2010)
+  expectEqual(TestEquatableValueTy(2010), d[TestKeyTy(10)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Removal") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(10)] = nil
+  expectNil(d[TestKeyTy(10)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Noop") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(40)] = nil
+  expectNil(d[TestKeyTy(40)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+extension Optional {
+  @inline(never)
+  mutating func setWrapped(to value: Wrapped) {
+    self = .some(value)
+  }
+
+  @inline(never)
+  mutating func clear() {
+    self = .none
+  }
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Insertion_modify") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(40)].setWrapped(to: TestEquatableValueTy(1040))
+  expectEqual(TestEquatableValueTy(1040), d[TestKeyTy(40)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Mutation_modify") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(10)].setWrapped(to: TestEquatableValueTy(2010))
+  expectEqual(TestEquatableValueTy(2010), d[TestKeyTy(10)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Removal_modify") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(10)].clear()
+  expectNil(d[TestKeyTy(10)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
+DictionaryTestSuite.test("COW.Slow.SubscriptWithKeys_Noop_modify") {
+  var d = getCOWSlowEquatableDictionary()
+
+  d[TestKeyTy(40)].clear()
+  expectNil(d[TestKeyTy(40)])
+
+  // Note: Leak tests are done in tearDown.
+}
+
 
 //===---
 // Native dictionary tests.
@@ -2591,12 +2702,14 @@ DictionaryTestSuite.test("BridgedFromObjC.Nonverbatim.RemoveValueForKey")
 DictionaryTestSuite.test("BridgedFromObjC.Verbatim.RemoveAll") {
   do {
     var d = getBridgedVerbatimDictionary([:])
-    let identity1 = d._rawIdentifier()
     assert(isCocoaDictionary(d))
     assert(d.count == 0)
 
+    let empty = Dictionary<Int, Int>()
+    expectNotEqual(empty._rawIdentifier(), d._rawIdentifier())
+
     d.removeAll()
-    assert(identity1 == d._rawIdentifier())
+    assert(empty._rawIdentifier() == d._rawIdentifier())
     assert(d.count == 0)
   }
 
@@ -2674,12 +2787,14 @@ DictionaryTestSuite.test("BridgedFromObjC.Verbatim.RemoveAll") {
 DictionaryTestSuite.test("BridgedFromObjC.Nonverbatim.RemoveAll") {
   do {
     var d = getBridgedNonverbatimDictionary([:])
-    let identity1 = d._rawIdentifier()
     assert(isNativeDictionary(d))
     assert(d.count == 0)
 
+    let empty = Dictionary<Int, Int>()
+    expectNotEqual(empty._rawIdentifier(), d._rawIdentifier())
+
     d.removeAll()
-    assert(identity1 == d._rawIdentifier())
+    assert(empty._rawIdentifier() == d._rawIdentifier())
     assert(d.count == 0)
   }
 
@@ -4425,7 +4540,7 @@ DictionaryTestSuite.test("mutationDoesNotAffectIterator/subscript/store") {
 DictionaryTestSuite.test("mutationDoesNotAffectIterator/removeValueForKey,1") {
   var dict = getDerivedAPIsDictionary()
   let iter = dict.makeIterator()
-  expectOptionalEqual(1010, dict.removeValue(forKey: 10))
+  expectEqual(1010, dict.removeValue(forKey: 10))
 
   expectEqualsUnordered(
     [ (10, 1010), (20, 1020), (30, 1030) ],
@@ -4435,9 +4550,9 @@ DictionaryTestSuite.test("mutationDoesNotAffectIterator/removeValueForKey,1") {
 DictionaryTestSuite.test("mutationDoesNotAffectIterator/removeValueForKey,all") {
   var dict = getDerivedAPIsDictionary()
   let iter = dict.makeIterator()
-  expectOptionalEqual(1010, dict.removeValue(forKey: 10))
-  expectOptionalEqual(1020, dict.removeValue(forKey: 20))
-  expectOptionalEqual(1030, dict.removeValue(forKey: 30))
+  expectEqual(1010, dict.removeValue(forKey: 10))
+  expectEqual(1020, dict.removeValue(forKey: 20))
+  expectEqual(1030, dict.removeValue(forKey: 30))
 
   expectEqualsUnordered(
     [ (10, 1010), (20, 1020), (30, 1030) ],
@@ -4479,16 +4594,16 @@ DictionaryTestSuite.test("misc") {
     dict["Swift"] = 3
 
     // Access
-    expectOptionalEqual(1, dict["Hello"])
-    expectOptionalEqual(2, dict["World"])
-    expectOptionalEqual(3, dict["Swift"])
+    expectEqual(1, dict["Hello"])
+    expectEqual(2, dict["World"])
+    expectEqual(3, dict["Swift"])
     expectNil(dict["Universe"])
 
     // Overwriting existing value
     dict["Hello"] = 0
-    expectOptionalEqual(0, dict["Hello"])
-    expectOptionalEqual(2, dict["World"])
-    expectOptionalEqual(3, dict["Swift"])
+    expectEqual(0, dict["Hello"])
+    expectEqual(2, dict["World"])
+    expectEqual(3, dict["Swift"])
     expectNil(dict["Universe"])
   }
 
@@ -4496,9 +4611,9 @@ DictionaryTestSuite.test("misc") {
     // Dictionaries with other types
     var d = [ 1.2: 1, 2.6: 2 ]
     d[3.3] = 3
-    expectOptionalEqual(1, d[1.2])
-    expectOptionalEqual(2, d[2.6])
-    expectOptionalEqual(3, d[3.3])
+    expectEqual(1, d[1.2])
+    expectEqual(2, d[2.6])
+    expectEqual(3, d[3.3])
   }
 
   do {
@@ -4508,11 +4623,11 @@ DictionaryTestSuite.test("misc") {
     d["three"] = 3
     d["four"] = 4
     d["five"] = 5
-    expectOptionalEqual(1, d["one"])
-    expectOptionalEqual(2, d["two"])
-    expectOptionalEqual(3, d["three"])
-    expectOptionalEqual(4, d["four"])
-    expectOptionalEqual(5, d["five"])
+    expectEqual(1, d["one"])
+    expectEqual(2, d["two"])
+    expectEqual(3, d["three"])
+    expectEqual(4, d["four"])
+    expectEqual(5, d["five"])
 
     // Iterate over (key, value) tuples as a silly copy
     var d3 = Dictionary<String,Int>(minimumCapacity: 13)
@@ -4520,11 +4635,11 @@ DictionaryTestSuite.test("misc") {
     for (k, v) in d {
       d3[k] = v
     }
-    expectOptionalEqual(1, d3["one"])
-    expectOptionalEqual(2, d3["two"])
-    expectOptionalEqual(3, d3["three"])
-    expectOptionalEqual(4, d3["four"])
-    expectOptionalEqual(5, d3["five"])
+    expectEqual(1, d3["one"])
+    expectEqual(2, d3["two"])
+    expectEqual(3, d3["three"])
+    expectEqual(4, d3["four"])
+    expectEqual(5, d3["five"])
 
     expectEqual(3, d.values[d.keys.firstIndex(of: "three")!])
     expectEqual(4, d.values[d.keys.firstIndex(of: "four")!])
@@ -4636,6 +4751,32 @@ DictionaryTestSuite.test("removeAt") {
   }
 }
 
+DictionaryTestSuite.test("updateValue") {
+  let key1 = TestKeyTy(42)
+  let key2 = TestKeyTy(42)
+  let value1 = TestValueTy(1)
+  let value2 = TestValueTy(2)
+
+  var d: [TestKeyTy: TestValueTy] = [:]
+
+  expectNil(d.updateValue(value1, forKey: key1))
+
+  expectEqual(d.count, 1)
+  let index1 = d.index(forKey: key2)
+  expectNotNil(index1)
+  expectTrue(d[index1!].key === key1)
+  expectTrue(d[index1!].value === value1)
+
+  expectTrue(d.updateValue(value2, forKey: key2) === value1)
+
+  expectEqual(d.count, 1)
+  let index2 = d.index(forKey: key2)
+  expectEqual(index1, index2)
+  // We expect updateValue to keep the original key in place.
+  expectTrue(d[index2!].key === key1) // Not key2
+  expectTrue(d[index2!].value === value2)
+}
+
 DictionaryTestSuite.test("localHashSeeds") {
   // With global hashing, copying elements in hash order between hash tables
   // can become quadratic. (See https://bugs.swift.org/browse/SR-3268)
@@ -4721,6 +4862,41 @@ DictionaryTestSuite.test("Hashable") {
   }
   checkHashable(variants, equalityOracle: { _, _ in true })
 }
+
+#if _runtime(_ObjC)
+DictionaryTestSuite.test("Values.MutationDoesNotInvalidateIndices") {
+  let objects: [NSNumber] = [1, 2, 3, 4]
+  let keys: [NSString] = ["Blanche", "Rose", "Dorothy", "Sophia"]
+  let ns = NSDictionary(objects: objects, forKeys: keys)
+  var d = ns as! Dictionary<NSString, NSNumber>
+
+  let i = d.index(forKey: "Rose")!
+  expectEqual(d[i].key, "Rose")
+  expectEqual(d[i].value, 2 as NSNumber)
+
+  // Mutating a value through the Values view will convert the bridged
+  // NSDictionary instance to native Dictionary storage. However, Values is a
+  // MutableCollection, so doing so must not invalidate existing indices.
+  d.values[i] = 20 as NSNumber
+
+  // The old Cocoa-based index must still work with the new dictionary.
+  expectEqual(d.values[i], 20 as NSNumber)
+
+  let i2 = d.index(forKey: "Rose")
+
+  // You should also be able to advance Cocoa indices.
+  let j = d.index(after: i)
+  expectLT(i, j)
+
+  // Unfortunately, Cocoa and Native indices aren't comparable, so the
+  // Collection conformance is not quite perfect.
+  expectCrash() {
+    print(i == i2)
+  }
+}
+#endif
+
+
 
 DictionaryTestSuite.setUp {
 #if _runtime(_ObjC)

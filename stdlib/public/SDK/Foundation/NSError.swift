@@ -359,7 +359,7 @@ extension CFError : Error {
 public protocol _ObjectiveCBridgeableError : Error {
   /// Produce a value of the error type corresponding to the given NSError,
   /// or return nil if it cannot be bridged.
-  init?(_bridgedNSError: NSError)
+  init?(_bridgedNSError: __shared NSError)
 }
 
 /// A hook for the runtime to use _ObjectiveCBridgeableError in order to
@@ -398,7 +398,7 @@ extension _BridgedNSError {
 extension _BridgedNSError where Self.RawValue: FixedWidthInteger {
   public var _code: Int { return Int(rawValue) }
 
-  public init?(_bridgedNSError: NSError) {
+  public init?(_bridgedNSError: __shared NSError) {
     if _bridgedNSError.domain != Self._nsErrorDomain {
       return nil
     }
@@ -428,16 +428,6 @@ public protocol _BridgedStoredNSError :
   init(_nsError error: NSError)
 }
 
-/// TODO: Better way to do this?
-internal func _stringDictToAnyHashableDict(_ input: [String : Any])
-    -> [AnyHashable : Any] {
-  var result = [AnyHashable : Any](minimumCapacity: input.count)
-  for (k, v) in input {
-    result[k] = v
-  }
-  return result
-}
-
 /// Various helper implementations for _BridgedStoredNSError
 extension _BridgedStoredNSError {
   public var code: Code {
@@ -449,7 +439,7 @@ extension _BridgedStoredNSError {
   public init(_ code: Code, userInfo: [String : Any] = [:]) {
     self.init(_nsError: NSError(domain: Self.errorDomain,
                                 code: unsafeBinaryIntegerToInt(code.rawValue),
-                                userInfo: _stringDictToAnyHashableDict(userInfo)))
+                                userInfo: userInfo))
   }
 
   /// The user-info dictionary for an error that was bridged from
@@ -458,7 +448,7 @@ extension _BridgedStoredNSError {
 }
 
 /// Implementation of _ObjectiveCBridgeableError for all _BridgedStoredNSErrors.
-public extension _BridgedStoredNSError {
+extension _BridgedStoredNSError {
   /// Default implementation of ``init(_bridgedNSError:)`` to provide
   /// bridging from NSError.
   public init?(_bridgedNSError error: NSError) {
@@ -483,8 +473,7 @@ public extension _BridgedStoredNSError {
   var errorUserInfo: [String : Any] {
     var result: [String : Any] = [:]
     for (key, value) in _nsError.userInfo {
-      guard let stringKey = key.base as? String else { continue }
-      result[stringKey] = value
+      result[key] = value
     }
     return result
   }
@@ -547,6 +536,7 @@ extension _SwiftNewtypeWrapper where Self.RawValue == Error {
   }
 
   @inlinable // FIXME(sil-serialize-all)
+  @_effects(readonly)
   public static func _unconditionallyBridgeFromObjectiveC(
     _ source: NSError?
   ) -> Self {
@@ -612,9 +602,9 @@ public extension CocoaError {
   }
 }
 
-public extension CocoaError {
+extension CocoaError {
     public static func error(_ code: CocoaError.Code, userInfo: [AnyHashable : Any]? = nil, url: URL? = nil) -> Error {
-        var info: [AnyHashable : Any] = userInfo ?? [:]
+        var info: [String : Any] = userInfo as? [String : Any] ?? [:]
         if let url = url {
             info[NSURLErrorKey] = url
         }
@@ -1816,7 +1806,7 @@ public struct URLError : _BridgedStoredNSError {
   }
 }
 
-public extension URLError.Code {
+extension URLError.Code {
   public static var unknown: URLError.Code {
     return URLError.Code(rawValue: -1)
   }
@@ -1979,7 +1969,7 @@ public extension URLError.Code {
   }
 }
 
-public extension URLError {
+extension URLError {
   private var _nsUserInfo: [AnyHashable : Any] {
     return (self as NSError).userInfo
   }
@@ -2004,7 +1994,7 @@ public extension URLError {
   }
 }
 
-public extension URLError {
+extension URLError {
   public static var unknown: URLError.Code {
     return .unknown
   }

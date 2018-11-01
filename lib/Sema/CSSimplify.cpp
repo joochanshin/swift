@@ -537,6 +537,7 @@ matchCallArguments(ArrayRef<AnyFunctionType::Param> args,
 
         if (argumentLabel != expectedLabel) {
           // - The parameter is unnamed, in which case we try to fix the
+          // NOTE: I think this is the problem.
           //   problem by removing the name.
           if (expectedLabel.empty()) {
             if (listener.extraneousLabel(toArgIdx))
@@ -766,7 +767,8 @@ public:
 // Match the argument of a call to the parameter.
 ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
     ConstraintSystem &cs, ArrayRef<AnyFunctionType::Param> args,
-    ArrayRef<AnyFunctionType::Param> params, ConstraintLocatorBuilder locator) {
+    ArrayRef<AnyFunctionType::Param> params, ConstraintLocatorBuilder locator,
+    bool isDynamicCall) {
   // Extract the parameters.
   ValueDecl *callee;
   bool hasCurriedSelf;
@@ -782,16 +784,24 @@ ConstraintSystem::TypeMatchResult constraints::matchCallArguments(
   // Apply labels to arguments.
   SmallVector<AnyFunctionType::Param, 8> argsWithLabels;
   argsWithLabels.append(args.begin(), args.end());
-  // llvm::errs() << "HELLO LABELS\n";
-  // callee->dump();
-  // for (auto arg : argsWithLabels) {
-  //   llvm::errs() << "'" << arg.getLabel() << "'\n";
-  //   arg.getType()->dump();
-  // }
-  // for (auto arg : argLabels) {
-  //   llvm::errs() << "'" << arg << "'\n";
-  // }
-  AnyFunctionType::relabelParams(argsWithLabels, argLabels);
+  llvm::errs() << "HELLO ARGSWITHLABELS\n";
+  if (auto c = callee)
+    c->dump();
+  for (auto arg : argsWithLabels) {
+    llvm::errs() << "'" << arg.getLabel() << "'\n";
+    arg.getPlainType()->dump();
+  }
+  llvm::errs() << "HELLO ARGLABELS\n";
+  for (auto arg : argLabels) {
+    llvm::errs() << "'" << arg << "'\n";
+  }
+  if (isDynamicCall) {
+    llvm::errs() << "DYNAMIC CALL DONE MATCH ARGUMENTS\n";
+    // TODO: Decide what to do with the rest of the code.
+    return cs.getTypeMatchSuccess();
+  } else {
+    AnyFunctionType::relabelParams(argsWithLabels, argLabels);
+  }
 
   // FIXME: Remove this. It's functionally identical to the real code
   // path below, except for some behavioral differences in solution ranking
@@ -929,6 +939,7 @@ ConstraintSystem::matchTupleTypes(TupleType *tuple1, TupleType *tuple2,
   case ConstraintKind::Equal:
   case ConstraintKind::Subtype:
   case ConstraintKind::ApplicableFunction:
+  case ConstraintKind::DynamicCallableApplicableFunction:
   case ConstraintKind::BindOverload:
   case ConstraintKind::CheckedCast:
   case ConstraintKind::ConformsTo:
@@ -1022,6 +1033,7 @@ static bool matchFunctionRepresentations(FunctionTypeRepresentation rep1,
   case ConstraintKind::ArgumentConversion:
   case ConstraintKind::OperatorArgumentConversion:
   case ConstraintKind::ApplicableFunction:
+  case ConstraintKind::DynamicCallableApplicableFunction:
   case ConstraintKind::BindOverload:
   case ConstraintKind::CheckedCast:
   case ConstraintKind::ConformsTo:
@@ -1099,6 +1111,7 @@ ConstraintSystem::matchFunctionTypes(FunctionType *func1, FunctionType *func2,
     break;
 
   case ConstraintKind::ApplicableFunction:
+  case ConstraintKind::DynamicCallableApplicableFunction:
   case ConstraintKind::BindOverload:
   case ConstraintKind::CheckedCast:
   case ConstraintKind::ConformsTo:
@@ -1783,6 +1796,7 @@ ConstraintSystem::matchTypes(Type type1, Type type2, ConstraintKind kind,
       break;
 
     case ConstraintKind::ApplicableFunction:
+    case ConstraintKind::DynamicCallableApplicableFunction:
     case ConstraintKind::BindOverload:
     case ConstraintKind::BridgingConversion:
     case ConstraintKind::CheckedCast:
@@ -4595,7 +4609,7 @@ getDynamicCallableMethods(Type type, ConstraintSystem &CS,
 // Simplify applicable function constraint for an application of a
 // @dynamicCallable type.
 static ConstraintSystem::SolutionKind
-simplifyDynamicCallableApplicableFnConstraint(
+simplifyDynamicCallableApplicableFnConstraint2(
     ConstraintSystem &CS, Type type1, Type type2,
     ConstraintLocatorBuilder locator,
     ConstraintSystem::TypeMatchOptions flags) {
@@ -4619,10 +4633,6 @@ simplifyDynamicCallableApplicableFnConstraint(
       }
     }
   }
-
-  llvm::errs() << "HELLO\n";
-  methods.dump();
-  CS.dump();
 
   auto loc = CS.getConstraintLocator(locator);
   auto tv = CS.createTypeVariable(loc, TVO_CanBindToLValue);
@@ -4650,33 +4660,41 @@ simplifyDynamicCallableApplicableFnConstraint(
   CS.dump();
 
   auto tvParam = CS.createTypeVariable(loc);
-  // auto tvResult = CS.createTypeVariable(loc);
-
-  auto arrayLitProto =
-    ctx.getProtocol(KnownProtocolKind::ExpressibleByArrayLiteral);
-  CS.addConstraint(ConstraintKind::ConformsTo, tvParam,
-                   arrayLitProto->getDeclaredType(), locator);
-
-  auto elementAssocTy = cast<AssociatedTypeDecl>(
-    arrayLitProto->lookupDirect(
-      ctx.getIdentifier("ArrayLiteralElement")).front());
-  Type arrayElementTy = DependentMemberType::get(tvParam, elementAssocTy);
-  CS.addConstraint(ConstraintKind::Defaultable, arrayElementTy,
-                   ctx.TheAnyType, locator);
-
-  for (auto i : indices(func1->getParams())) {
-    auto param = func1->getParams()[i];
-    auto paramType = param.getType();
-    auto locatorBuilder =
-      locator.withPathElement(LocatorPathElt::getTupleElement(i));
-
-    CS.addConstraint(ConstraintKind::ArgumentConversion, paramType,
-                     arrayElementTy, locatorBuilder);
-  }
 
   AnyFunctionType *funcType = FunctionType::get({ AnyFunctionType::Param(tvParam) }, func1->getResult());
   // funcType = FunctionType::get({ AnyFunctionType::Param(type2) }, funcType);
-  CS.addConstraint(ConstraintKind::ApplicableFunction, funcType, tv, locator);
+  CS.addConstraint(ConstraintKind::DynamicCallableApplicableFunction, funcType, tv, locator);
+
+  Type argumentType;
+  if (!useKwargsMethod) {
+    auto arrayLitProto =
+      ctx.getProtocol(KnownProtocolKind::ExpressibleByArrayLiteral);
+    CS.addConstraint(ConstraintKind::ConformsTo, tvParam,
+                     arrayLitProto->getDeclaredType(), locator);
+    auto elementAssocType = cast<AssociatedTypeDecl>(
+      arrayLitProto->lookupDirect(ctx.Id_ArrayLiteralElement).front());
+    argumentType = DependentMemberType::get(tvParam, elementAssocType);
+  } else {
+    auto dictLitProto =
+      ctx.getProtocol(KnownProtocolKind::ExpressibleByDictionaryLiteral);
+    CS.addConstraint(ConstraintKind::ConformsTo, tvParam,
+                     dictLitProto->getDeclaredType(), locator);
+    auto valueAssocType = cast<AssociatedTypeDecl>(
+      dictLitProto->lookupDirect(ctx.Id_Value).front());
+    argumentType = DependentMemberType::get(tvParam, valueAssocType);
+  }
+
+  CS.addConstraint(ConstraintKind::Defaultable, argumentType,
+                   ctx.TheAnyType, locator);
+  for (auto i : indices(func1->getParams())) {
+    auto param = func1->getParams()[i];
+    auto paramType = param.getPlainType();
+    auto locatorBuilder =
+    locator.withPathElement(LocatorPathElt::getTupleElement(i));
+
+    CS.addConstraint(ConstraintKind::ArgumentConversion, paramType,
+                     argumentType, locatorBuilder);
+  }
 
   llvm::errs() << "HELLO added various constraints\n";
   CS.dump();
@@ -4732,7 +4750,7 @@ simplifyDynamicCallableApplicableFnConstraint(
     // Constraint each dynamic call parameter to argument type.
     for (auto i : indices(func1->getParams())) {
       auto param = func1->getParams()[i];
-      auto paramType = param.getType();
+      auto paramType = param.getPlainType();
       auto locatorBuilder =
       locator.withPathElement(LocatorPathElt::getTupleElement(i));
 
@@ -4802,7 +4820,7 @@ simplifyDynamicCallableApplicableFnConstraint(
                                     FunctionRefKind::DoubleApply,
                                     locator).second;
       auto methodType = memberType->castTo<AnyFunctionType>();
-      auto argType = methodType->getParams()[0].getType();
+      auto argType = methodType->getParams()[0].getPlainType();
 
       // Attempts to solve an argument conversion constraint from each dynamic
       // call parameter to the specified type. Returns true if the constraint can
@@ -4814,7 +4832,7 @@ simplifyDynamicCallableApplicableFnConstraint(
         // Constraint each dynamic call parameter to argument type.
         for (auto i : indices(func1->getParams())) {
           auto param = func1->getParams()[i];
-          auto paramType = param.getType();
+          auto paramType = param.getPlainType();
           auto locatorBuilder =
             locator.withPathElement(LocatorPathElt::getTupleElement(i));
 
@@ -5022,9 +5040,136 @@ ConstraintSystem::simplifyApplicableFnConstraint(
   }
 
   // Handle @dynamicCallable applications.
-  return simplifyDynamicCallableApplicableFnConstraint(*this, type1, desugar2,
-                                                       locator, subflags);
+  return simplifyDynamicCallableApplicableFnConstraint2(*this, type1, desugar2,
+                                                        locator, subflags);
 }
+
+ConstraintSystem::SolutionKind
+ConstraintSystem::simplifyDynamicCallableApplicableFnConstraint(
+                                                 Type type1,
+                                                 Type type2,
+                                                 TypeMatchOptions flags,
+                                                 ConstraintLocatorBuilder locator) {
+  llvm::errs() << "ENTERING simplifyDynamicCallableApplicableFnConstraint\n";
+
+  // By construction, the left hand side is a type that looks like the
+  // following: $T1 -> $T2.
+  assert(type1->is<FunctionType>());
+
+  // Drill down to the concrete type on the right hand side.
+  type2 = getFixedTypeRecursive(type2, flags, /*wantRValue=*/true);
+  auto desugar2 = type2->getDesugaredType();
+  llvm::errs() << "DESUGAR2\n";
+  desugar2->dump();
+
+  TypeMatchOptions subflags = getDefaultDecompositionOptions(flags);
+
+  // If the types are obviously equivalent, we're done.
+  if (type1.getPointer() == desugar2)
+    return SolutionKind::Solved;
+
+  // Local function to form an unsolved result.
+  auto formUnsolved = [&] {
+    if (flags.contains(TMF_GenerateConstraints)) {
+      addUnsolvedConstraint(
+                            Constraint::create(*this, ConstraintKind::DynamicCallableApplicableFunction, type1,
+                                               type2, getConstraintLocator(locator)));
+      return SolutionKind::Solved;
+    }
+
+    return SolutionKind::Unsolved;
+
+  };
+
+  // NOTE: I think this is the problem.
+  // If right-hand side is a type variable, the constraint is unsolved.
+  if (desugar2->isTypeVariableOrMember()) {
+    llvm::errs() << "desugar2 is a type variable or member, UNSOLVED\n";
+    return formUnsolved();
+  }
+
+  // Strip the 'ApplyFunction' off the locator.
+  // FIXME: Perhaps ApplyFunction can go away entirely?
+  SmallVector<LocatorPathElt, 2> parts;
+  Expr *anchor = locator.getLocatorParts(parts);
+  assert(!parts.empty() && "Nonsensical applicable-function locator");
+  assert(parts.back().getKind() == ConstraintLocator::ApplyFunction);
+  assert(parts.back().getNewSummaryFlags() == 0);
+  parts.pop_back();
+  ConstraintLocatorBuilder outerLocator =
+  getConstraintLocator(anchor, parts, locator.getSummaryFlags());
+
+  unsigned unwrapCount = 0;
+  if (shouldAttemptFixes()) {
+    // If we have an optional type, try forcing it to see if that
+    // helps. Note that we only deal with function and metatype types
+    // below, so there is no reason not to attempt to strip these off
+    // immediately.
+    while (auto objectType2 = desugar2->getOptionalObjectType()) {
+      type2 = objectType2;
+      desugar2 = type2->getDesugaredType();
+
+      // Track how many times we do this so that we can record a fix for each.
+      ++unwrapCount;
+    }
+  }
+
+  // For a function, bind the output and convert the argument to the input.
+  auto func1 = type1->castTo<FunctionType>();
+  if (auto func2 = dyn_cast<FunctionType>(desugar2)) {
+    llvm::errs() << "SIMPLIFY APPLICABLE FUNCTION\n";
+    type1->dump();
+    type2->dump();
+    llvm::errs() << func1->getParams().size() << "\n";
+    llvm::errs() << func2->getParams().size() << "\n";
+
+    // The argument type must be convertible to the input type.
+    // if (::matchCallArguments(
+    //                          *this, func1->getParams(), func2->getParams(),
+    //                          outerLocator.withPathElement(ConstraintLocator::ApplyArgument),
+    //                          /*isDynamicCall*/ true)
+    //     .isFailure())
+    //   return SolutionKind::Error;
+    assert(func1->getParams().size() == 1 && func2->getParams().size() == 1 &&
+           "expected one argument in `dynamicallyCall` method");
+    func1->getParams()[0].getPlainType()->dump();
+    func2->getParams()[0].getPlainType()->dump();
+    if (matchTypes(func1->getParams()[0].getPlainType(),
+                   func2->getParams()[0].getPlainType(),
+                   ConstraintKind::ArgumentConversion,
+                   subflags,
+                   locator.withPathElement(ConstraintLocator::ApplyArgument)).isFailure()) {
+      return SolutionKind::Error;
+    }
+
+    // The result types are equivalent.
+    if (matchTypes(func1->getResult(),
+                   func2->getResult(),
+                   ConstraintKind::Bind,
+                   subflags,
+                   locator.withPathElement(
+                                           ConstraintLocator::FunctionResult)).isFailure())
+      return SolutionKind::Error;
+
+    // Record any fixes we attempted to get to the correct solution.
+    /*
+     auto *fix = ForceOptional::create(*this, getConstraintLocator(locator));
+     while (unwrapCount-- > 0) {
+     if (recordFix(fix))
+     return SolutionKind::Error;
+     }
+     */
+
+    return SolutionKind::Solved;
+  }
+
+  assert(false && "shouldn't reach this point");
+
+  // Handle @dynamicCallable applications.
+  return simplifyDynamicCallableApplicableFnConstraint2(*this, type1, desugar2,
+                                                        locator, subflags);
+}
+
 
 static Type getBaseTypeForPointer(ConstraintSystem &cs, TypeBase *type) {
   if (Type unwrapped = type->getOptionalObjectType())
@@ -5613,6 +5758,10 @@ ConstraintSystem::addConstraintImpl(ConstraintKind kind, Type first,
   case ConstraintKind::ApplicableFunction:
     return simplifyApplicableFnConstraint(first, second, subflags, locator);
 
+  case ConstraintKind::DynamicCallableApplicableFunction:
+    return simplifyDynamicCallableApplicableFnConstraint(first, second,
+                                                         subflags, locator);
+
   case ConstraintKind::DynamicTypeOf:
     return simplifyDynamicTypeOfConstraint(first, second, subflags, locator);
 
@@ -5889,6 +6038,11 @@ ConstraintSystem::simplifyConstraint(const Constraint &constraint) {
     return simplifyApplicableFnConstraint(constraint.getFirstType(),
                                           constraint.getSecondType(),
                                           None, constraint.getLocator());
+
+  case ConstraintKind::DynamicCallableApplicableFunction:
+    return simplifyDynamicCallableApplicableFnConstraint(
+      constraint.getFirstType(), constraint.getSecondType(), None,
+      constraint.getLocator());
 
   case ConstraintKind::DynamicTypeOf:
     return simplifyDynamicTypeOfConstraint(constraint.getFirstType(),

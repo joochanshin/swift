@@ -2706,6 +2706,13 @@ private:
                                       TypeMatchOptions flags,
                                       ConstraintLocatorBuilder locator);
 
+  /// \brief Attempt to simplify the DynamicCallableApplicableFunction constraint.
+  SolutionKind simplifyDynamicCallableApplicableFnConstraint(
+                                      Type type1,
+                                      Type type2,
+                                      TypeMatchOptions flags,
+                                      ConstraintLocatorBuilder locator);
+
   /// \brief Attempt to simplify the given DynamicTypeOf constraint.
   SolutionKind simplifyDynamicTypeOfConstraint(
                                          Type type1, Type type2,
@@ -3432,7 +3439,8 @@ ConstraintSystem::TypeMatchResult
 matchCallArguments(ConstraintSystem &cs,
                    ArrayRef<AnyFunctionType::Param> args,
                    ArrayRef<AnyFunctionType::Param> params,
-                   ConstraintLocatorBuilder locator);
+                   ConstraintLocatorBuilder locator,
+                   bool isDynamicCall = false);
 
 /// Attempt to prove that arguments with the given labels at the
 /// given parameter depth cannot be used with the given value.

@@ -7075,7 +7075,9 @@ Expr *ExprRewriter::convertLiteralInPlace(Expr *literal,
 }
 
 // Resolve @dynamicCallable applications.
-static Expr *finishApplyDynamicCallable(ConstraintSystem &cs, ApplyExpr *apply,
+static Expr *finishApplyDynamicCallable(ConstraintSystem &cs,
+                                        const Solution &solution,
+                                        ApplyExpr *apply,
                                         ConstraintLocatorBuilder locator) {
   auto fn = apply->getFn();
 
@@ -7120,17 +7122,26 @@ static Expr *finishApplyDynamicCallable(ConstraintSystem &cs, ApplyExpr *apply,
   llvm::errs() << "CS APPLY\n";
   cs.getType(fn)->dump();
 
-  auto method = useKwargsMethod
-    ? *methods.keywordArgumentsMethods.begin()
-    : *methods.argumentsMethods.begin();
-  assert(method && "Dynamic call method should exist");
+  auto loc = locator.withPathElement(ConstraintLocator::ApplyFunction);
+  auto selected = solution.getOverloadChoice(cs.getConstraintLocator(loc));
+  auto choice = selected.choice;
+  auto method = choice.getDecl();
+  selected.openedFullType->dump();
+  selected.openedType->dump();
+  auto methodType = selected.openedType->castTo<AnyFunctionType>();
 
-  auto memberType =
-    cs.getTypeOfMemberReference(cs.getType(fn), method, cs.DC,
-                                /*isDynamicResult*/ false,
-                                FunctionRefKind::DoubleApply,
-                                locator).second;
-  auto methodType = memberType->castTo<AnyFunctionType>();
+  // auto method2 = useKwargsMethod
+  //   ? *methods.keywordArgumentsMethods.begin()
+  //   : *methods.argumentsMethods.begin();
+  // assert(method2 && "Dynamic call method should exist");
+
+  // auto memberType =
+  //   cs.getTypeOfMemberReference(cs.getType(fn), method2, cs.DC,
+  //                               /*isDynamicResult*/ false,
+  //                               FunctionRefKind::DoubleApply,
+  //                               locator).second;
+  // auto methodType2 = memberType->castTo<AnyFunctionType>();
+  // methodType2->dump();
 
   // Construct expression referencing the `dynamicallyCall` method.
   Expr *member =
@@ -7530,7 +7541,7 @@ Expr *ExprRewriter::finishApply(ApplyExpr *apply, Type openedType,
 
   // Handle @dynamicCallable applications.
   // At this point, all other AppyExpr cases have been handled.
-  return finishApplyDynamicCallable(cs, apply, locator);
+  return finishApplyDynamicCallable(cs, solution, apply, locator);
 }
 
 

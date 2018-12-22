@@ -212,7 +212,7 @@ ATTRIBUTE_NODES = [
          ]),
 
     # differentiation-func-specifier ->
-    #     ('primal' | 'adjoint' | 'tangent') ':' decl-name
+    #     ('primal' | 'adjoint' | 'tangent' | 'jvp' | 'vjp') ':' decl-name
     # decl-name -> (identifier | operator) decl-name-arguments?
     Node('DifferentiableAttributeFuncSpecifier', kind='Syntax',
          description='''
@@ -223,7 +223,7 @@ ATTRIBUTE_NODES = [
              Child('LeadingComma', kind='CommaToken',
                    description='The leading comma of a function specifier.'),
              Child('Label', kind='IdentifierToken',
-                   text_choices=['primal', 'adjoint', 'tangent']),
+                   text_choices=['primal', 'adjoint', 'tangent', 'jvp', 'vjp']),
              Child('Colon', kind='ColonToken'),
              Child('DeclBaseName', kind='Syntax', description='''
                    The base name of the referenced function.

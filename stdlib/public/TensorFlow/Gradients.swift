@@ -10,32 +10,32 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file contains gradient definitions for Tensor ops.
+// This file contains vector-Jacobian product (VJP) definitions for Tensor ops.
 //
 // Terminology:
 // - originalValue (f): The function being differentiated, or the result of that
 //   function.
-// - Adjoint (f'): The function as the result of differentiation, computing
-//   the Jacobian-vector products or gradients with respect to all arguments,
-//   or the result of that function.
+// - VJP (f'): The function as the result of differentiation, computing
+//   the vector-Jacobian products with respect to all arguments, or the result
+//   of that function.
 // - Seed: The back-propagated adjoint, i.e. the adjoint of the caller of the
 //   function with respect to the result of the function.
 //
 // For more information, visit:
 // https://en.wikipedia.org/wiki/Automatic_differentiation
 //
-// Each function in this file is the adjoint of some corresponding function
-// defined in Ops.swift with respect to all of its parameters. The attribute
-// '@differentiable(reverse, adjoint: ...)' is used to define the adjoint for a
-// function. The automatic differentiation pass will pick up these adjoints
-// and chain them together for arbitrary differentiable programs.
+// Each function in this file is the VJP of some corresponding function
+// defined in Ops.swift with respect to all arguments. The attribute
+// '@differentiable(reverse, vjp: ...)' is used to define the VJP for a
+// function. The automatic differentiation pass will pick up these VJPs and
+// chain them together for arbitrary differentiable programs.
 //
 // NOTE:
-// - Currently, we do not want to expose adjoint functions to users. The name of
-//   each adjoint function should start with an underscore.
+// - Currently, we do not want to expose VJP functions to users. The name of
+//   each VJP function should start with an underscore.
 // TODO:
-// - Add gradients for more ops ('sum', 'mean', etc).
-// - Fix gradients for broadcasting ops (need to perform reduction).
+// - Add VJPs for more ops ('sum', 'mean', etc).
+// - Fix VJPs for broadcasting ops (need to perform reduction).
 // - When the trailing 'where' clause in @differentiable is properly
 //   type-checked, define constraints on BinaryFloatingPoint in original
 //   declarations and define adjoints on BinaryFloatingPoint.
@@ -50,6 +50,49 @@
 //===----------------------------------------------------------------------===//
 
 extension Tensor where Scalar : Numeric {
+  @inlinable
+  static func _vjpAdd(
+    lhs: Tensor, rhs: Tensor
+  ) -> (Tensor, (Tensor) -> (Tensor, Tensor)) {
+    let originalValue = lhs + rhs
+    return (originalValue, { seed in
+      let seed = seed.broadcast(like: originalValue)
+      return (seed.unbroadcast(like: x), seed.unbroadcast(like: y))
+    })
+  }
+
+  @inlinable
+  static func _vjpSubtract(
+    lhs: Tensor, rhs: Tensor
+  ) -> (Tensor, (Tensor) -> (Tensor, Tensor)) {
+    let originalValue = lhs - rhs
+    return (originalValue, { seed in
+      let seed = seed.broadcast(like: originalValue)
+      return (seed.unbroadcast(like: x), -seed.unbroadcast(like: y))
+    })
+  }
+
+  @inlinable
+  static func _vjpMultiply(
+    lhs: Tensor, rhs: Tensor
+  ) -> (Tensor, (Tensor) -> (Tensor, Tensor)) {
+    return (lhs * rhs, { seed in
+      ((y * seed).unbroadcast(like: x),
+       (x * seed).unbroadcast(like: y))
+    })
+  }
+
+  @inlinable
+  static func _vjpDivide(
+    lhs: Tensor, rhs: Tensor
+  ) -> (Tensor, (Tensor) -> (Tensor, Tensor)) {
+    return (lhs * rhs, { seed in
+      ((seed / y).unbroadcast(like: x),
+       ((-x) / y.squared() * seed).unbroadcast(like: y))
+    })
+  }
+
+  /*
   @inlinable
   static func _adjointAdd(
     _ seed: Tensor, _ originalValue: Tensor, _ x: Tensor, _ y: Tensor
@@ -81,6 +124,7 @@ extension Tensor where Scalar : Numeric {
     return ((seed / y).unbroadcast(like: x),
             ((0 - x) / y.squared() * seed).unbroadcast(like: y))
   }
+  */
 }
 
 @inlinable

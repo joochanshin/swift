@@ -72,7 +72,8 @@ extension Tensor : AdditiveArithmetic where Scalar : Numeric {
   /// Adds two tensors and produces their sum.
   /// - Note: `+` supports broadcasting.
   @inlinable @inline(__always)
-  @differentiable(reverse, adjoint: _adjointAdd(_:_:_:_:))
+  // @differentiable(reverse, adjoint: _adjointAdd(_:_:_:_:))
+  @differentiable(reverse, adjoint: _vjpAdd(_:_:_:_:))
   public static func + (lhs: Tensor, rhs: Tensor) -> Tensor {
     return Raw.add(lhs, rhs)
   }
@@ -80,7 +81,8 @@ extension Tensor : AdditiveArithmetic where Scalar : Numeric {
   /// Subtracts one tensor from another and produces their difference.
   /// - Note: `-` supports broadcasting.
   @inlinable @inline(__always)
-  @differentiable(reverse, adjoint: _adjointSubtract(_:_:_:_:))
+  // @differentiable(reverse, adjoint: _adjointSubtract(_:_:_:_:))
+  @differentiable(reverse, vjp: _vjpSubtract(_:_:_:_:))
   public static func - (lhs: Tensor, rhs: Tensor) -> Tensor {
     return Raw.sub(lhs, rhs)
   }
@@ -167,7 +169,8 @@ public extension Tensor where Scalar : Numeric {
   /// Multiplies two tensors and produces their product.
   /// - Note: `*` supports broadcasting.
   @inlinable @inline(__always)
-  @differentiable(reverse, adjoint: _adjointMultiply(_:_:_:_:))
+  // @differentiable(reverse, adjoint: _adjointMultiply(_:_:_:_:))
+  @differentiable(reverse, vjp: _vjpMultiply(_:_:_:_:))
   static func * (lhs: Tensor, rhs: Tensor) -> Tensor {
     return Raw.mul(lhs, rhs)
   }
@@ -195,7 +198,8 @@ public extension Tensor where Scalar : Numeric {
   /// Returns the quotient of dividing the first tensor by the second.
   /// - Note: `/` supports broadcasting.
   @inlinable @inline(__always)
-  @differentiable(reverse, adjoint: _adjointDivide(_:_:_:_:))
+  // @differentiable(reverse, adjoint: _adjointDivide(_:_:_:_:))
+  @differentiable(reverse, vjp: _vjpDivide(_:_:_:_:))
   static func / (lhs: Tensor, rhs: Tensor) -> Tensor {
     return Raw.div(lhs, rhs)
   }

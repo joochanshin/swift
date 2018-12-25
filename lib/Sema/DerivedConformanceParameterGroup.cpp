@@ -19,6 +19,7 @@
 #include "TypeChecker.h"
 #include "swift/AST/Decl.h"
 #include "swift/AST/Expr.h"
+#include "swift/AST/GenericSignature.h"
 #include "swift/AST/Module.h"
 #include "swift/AST/ParameterList.h"
 #include "swift/AST/Pattern.h"
@@ -64,9 +65,14 @@ static Type deriveParameterGroup_Parameter(NominalTypeDecl *nominal) {
   return sameMemberType;
 }
 
-bool
-DerivedConformance::canDeriveParameterGroup(NominalTypeDecl *nominal) {
-  return bool(deriveParameterGroup_Parameter(nominal));
+bool DerivedConformance::canDeriveParameterGroup(NominalTypeDecl *nominal) {
+  // return bool(deriveParameterGroup_Parameter(nominal));
+  // return !nominal->getMembers().empty();
+
+  // There must be at least one stored property.
+  // TODO: Could be improved.
+  // Can derive if `Parameter` and `update` are defined.
+  return !nominal->getStoredProperties().empty();
 }
 
 // Add @_fixed_layout attribute to type conforming to `ParameterGroup`, if
@@ -233,11 +239,277 @@ static ValueDecl *deriveParameterGroup_update(DerivedConformance &derived) {
   return updateDecl;
 }
 
-ValueDecl *
-DerivedConformance::deriveParameterGroup(ValueDecl *requirement) {
+// Synthesize body for the `keyPaths(to:)` function declaration.
+static void deriveBodyParameterGroup_keyPaths(AbstractFunctionDecl *funcDecl) {
+  auto *nominal = funcDecl->getDeclContext()->getSelfNominalTypeDecl();
+  auto &C = nominal->getASTContext();
+
+  auto *nominalTypeExpr = TypeExpr::createForDecl(SourceLoc(), nominal,
+                                                  funcDecl, /*Implicit*/ true);
+
+  // Get generic parameter <T>.
+  auto genericParamType = funcDecl->getGenericSignature()
+                              ->getGenericParams()
+                              .back()
+                              ->getCanonicalType();
+  auto *typeExpr = TypeExpr::createImplicit(
+      funcDecl->mapTypeIntoContext(genericParamType), C);
+  auto typeSelfExpr =
+      new (C) DotSelfExpr(typeExpr, SourceLoc(), SourceLoc(), genericParamType);
+  typeSelfExpr->setImplicit();
+
+  // Create map from parameter type to parameter key paths.
+  llvm::DenseMap<Type, llvm::SmallVector<Expr *, 2>> parameterTypes;
+  for (auto member : nominal->getStoredProperties()) {
+    auto *dotExpr = new (C)
+        UnresolvedDotExpr(nominalTypeExpr, SourceLoc(), member->getFullName(),
+                          DeclNameLoc(), /*Implicit*/ true);
+    auto *keyPathExpr =
+        new (C) KeyPathExpr(SourceLoc(), dotExpr, nullptr, /*Implicit*/ true);
+    parameterTypes[member->getType()].push_back(keyPathExpr);
+  }
+
+  // Create case statements. Example:
+  // `case is Float.self: return [\Parameters.w, \Parameters.b]`
+  SmallVector<ASTNode, 2> caseStmts;
+  auto resultType =
+      funcDecl->mapTypeIntoContext(funcDecl->getMethodInterfaceType()
+                                       ->getAs<AnyFunctionType>()
+                                       ->getResult());
+  auto resultTypeLoc = TypeLoc::withoutLoc(resultType);
+  for (auto &pair : parameterTypes) {
+    auto parameterType = pair.first;
+    auto keyPathExprs = pair.second;
+    auto parameterMetatype =
+        TypeLoc::withoutLoc(MetatypeType::get(parameterType, C));
+    auto *pattern = new (C) IsPattern(SourceLoc(), parameterMetatype, nullptr,
+                                      CheckedCastKind::ValueCast);
+    auto *arrayExpr =
+        ArrayExpr::create(C, SourceLoc(), keyPathExprs, {}, SourceLoc());
+    auto *castExpr = new (C) ForcedCheckedCastExpr(arrayExpr, SourceLoc(),
+                                                   SourceLoc(), resultTypeLoc);
+    auto *returnStmt = new (C) ReturnStmt(SourceLoc(), castExpr);
+    auto *body = BraceStmt::create(C, SourceLoc(), {returnStmt}, SourceLoc(),
+                                   /*Implicit*/ true);
+    auto caseItem = CaseLabelItem(pattern, SourceLoc(), /*guardExpr*/ nullptr);
+    auto *caseStmt =
+        CaseStmt::create(C, SourceLoc(), {caseItem}, /*HasBoundDecls*/ false,
+                         SourceLoc(), SourceLoc(), body, /*Implicit*/ true);
+    caseStmts.push_back(caseStmt);
+  }
+
+  // Create default case statement:
+  // `default: return []`
+  auto *returnStmt = new (C) ReturnStmt(
+      SourceLoc(), ArrayExpr::create(C, SourceLoc(), {}, {}, SourceLoc()));
+  auto *body = BraceStmt::create(C, SourceLoc(), {returnStmt}, SourceLoc(),
+                                 /*Implicit*/ true);
+  auto caseItem = CaseLabelItem::getDefault(
+      new (C) AnyPattern(SourceLoc(), /*Implicit*/ true));
+  auto *caseStmt =
+      CaseStmt::create(C, SourceLoc(), {caseItem}, /*HasBoundDecls*/ false,
+                       SourceLoc(), SourceLoc(), body, /*Implicit*/ true);
+  caseStmts.push_back(caseStmt);
+
+  // Create switch statement and set function body.
+  auto *switchStmt =
+      SwitchStmt::create(LabeledStmtInfo(), SourceLoc(), typeSelfExpr,
+                         SourceLoc(), caseStmts, SourceLoc(), C);
+  funcDecl->setBody(BraceStmt::create(C, SourceLoc(), {switchStmt}, SourceLoc(),
+                                      /*Implicit*/ true));
+}
+
+// Synthesize body for the `nestedKeyPaths(to:)` function declaration.
+static void
+deriveBodyParameterGroup_nestedKeyPaths(AbstractFunctionDecl *funcDecl) {
+  auto *nominal = funcDecl->getDeclContext()->getSelfNominalTypeDecl();
+  auto &C = nominal->getASTContext();
+  auto *nominalTypeExpr = TypeExpr::createForDecl(SourceLoc(), nominal,
+                                                  funcDecl, /*Implicit*/ true);
+  auto *selfDecl = funcDecl->getImplicitSelfDecl();
+  Expr *selfDRE =
+      new (C) DeclRefExpr(selfDecl, DeclNameLoc(), /*Implicit*/ true);
+
+  // Get generic parameter <T>.
+  auto genericParamType = funcDecl->getGenericSignature()
+                              ->getGenericParams()
+                              .back()
+                              ->getCanonicalType();
+  auto *typeExpr = TypeExpr::createImplicit(
+      funcDecl->mapTypeIntoContext(genericParamType), C);
+  auto typeSelfExpr =
+      new (C) DotSelfExpr(typeExpr, SourceLoc(), SourceLoc(), genericParamType);
+  typeSelfExpr->setImplicit();
+
+  // Get `ParameterGroup.allKeyPaths(to:)` function declaration.
+  auto *paramGroupProto = C.getProtocol(KnownProtocolKind::ParameterGroup);
+  auto lookup = paramGroupProto->lookupDirect(C.getIdentifier("allKeyPaths"));
+  assert(lookup.size() == 1 && "Broken 'ParameterGroup' protocol");
+  auto allKeyPathsDecl = lookup[0];
+
+  // Get `WritableKeyPath<Nominal, T>` type.
+  auto *writableKeyPathDecl = cast<ClassDecl>(C.getWritableKeyPathDecl());
+  auto resultKeyPathType = BoundGenericClassType::get(
+      writableKeyPathDecl, /*parent*/ Type(),
+      {nominal->getDeclaredInterfaceType(), genericParamType});
+
+  // Store expressions of the form:
+  // `x.allKeyPaths(to: T.self).map { (\Nominal.x).appending(path: $0) }`
+  llvm::SmallVector<Expr *, 2> keyPathsExprs;
+  unsigned discriminator = 0;
+  for (auto member : nominal->getStoredProperties()) {
+    auto module = nominal->getModuleContext();
+    auto confRef =
+        module->lookupConformance(member->getType(), paramGroupProto);
+    // If stored property does not conform to `ParameterGroup`, continue.
+    if (!confRef)
+      continue;
+
+    // `member.allKeyPaths(to: T.self)`
+    auto *memberExpr = new (C) MemberRefExpr(selfDRE, SourceLoc(), member,
+                                             DeclNameLoc(), /*Implicit*/ true);
+    auto allKeyPathsDRE =
+        new (C) DeclRefExpr(allKeyPathsDecl, DeclNameLoc(), /*Implicit*/ true);
+    auto allKeyPathsExpr =
+        new (C) DotSyntaxCallExpr(allKeyPathsDRE, SourceLoc(), memberExpr);
+    allKeyPathsExpr->setImplicit();
+    auto *allKeyPathsCallExpr =
+        CallExpr::createImplicit(C, allKeyPathsExpr, {typeSelfExpr}, {C.Id_to});
+
+    // `{ \Nominal.member.appending(path: $0) }`
+    auto closureParamDecl = new (C)
+        ParamDecl(VarDecl::Specifier::Default, SourceLoc(), SourceLoc(),
+                  Identifier(), SourceLoc(), C.getIdentifier("$0"), funcDecl);
+    auto params = ParameterList::create(C, {closureParamDecl});
+    auto *closure =
+        new (C) ClosureExpr(params, SourceLoc(), SourceLoc(), SourceLoc(),
+                            TypeLoc::withoutLoc(resultKeyPathType),
+                            /*discriminator*/ discriminator++, funcDecl);
+    closure->getCaptureInfo().setGenericParamCaptures(true);
+    auto *memberDotExpr = new (C)
+        UnresolvedDotExpr(nominalTypeExpr, SourceLoc(), member->getFullName(),
+                          DeclNameLoc(), /*Implicit*/ true);
+    auto *keyPathExpr = new (C)
+        KeyPathExpr(SourceLoc(), memberDotExpr, nullptr, /*Implicit*/ true);
+    auto appendingExpr = new (C) UnresolvedDotExpr(
+        keyPathExpr, SourceLoc(), DeclName(C.getIdentifier("appending")),
+        DeclNameLoc(), /*Implicit*/ true);
+    auto closureParamDRE =
+        new (C) DeclRefExpr(closureParamDecl, DeclNameLoc(), /*Implicit*/ true);
+    auto *callExpr = CallExpr::createImplicit(
+        C, appendingExpr, {closureParamDRE}, {C.getIdentifier("path")});
+    auto *returnStmt = new (C) ReturnStmt(SourceLoc(), callExpr);
+    auto *body = BraceStmt::create(C, SourceLoc(), {returnStmt}, SourceLoc(),
+                                   /*Implicit*/ true);
+    closure->setBody(body, /*isSingleExpression*/ true);
+
+    // `member.allKeyPaths(to: T.self).map
+    //    { (\Nominal.member).appending(path: $0) }`
+    auto mapExpr = new (C) UnresolvedDotExpr(allKeyPathsCallExpr, SourceLoc(),
+                                             DeclName(C.getIdentifier("map")),
+                                             DeclNameLoc(), /*Implicit*/ true);
+    auto mapCallExpr =
+        CallExpr::createImplicit(C, mapExpr, {closure}, {Identifier()});
+    keyPathsExprs.push_back(mapCallExpr);
+  }
+  // If no result exprs exist, return empty array.
+  if (keyPathsExprs.empty()) {
+    auto *returnStmt = new (C) ReturnStmt(
+        SourceLoc(), ArrayExpr::create(C, SourceLoc(), {}, {}, SourceLoc()));
+    auto *body = BraceStmt::create(C, SourceLoc(), {returnStmt}, SourceLoc(),
+                                   /*Implicit*/ true);
+    funcDecl->setBody(BraceStmt::create(C, SourceLoc(), {body}, SourceLoc(),
+                                        /*Implicit*/ true));
+    return;
+  }
+  // Otherwise, concatenate all result exprs and return.
+  Expr *resultExpr = keyPathsExprs[0];
+  for (auto keyPathsExpr : keyPathsExprs) {
+    if (keyPathsExpr == resultExpr)
+      continue;
+    auto plusFuncExpr = new (C)
+        UnresolvedDeclRefExpr(DeclName(C.getIdentifier("+")),
+                              DeclRefKind::BinaryOperator, DeclNameLoc());
+    auto plusArgs = TupleExpr::create(
+        C, SourceLoc(), {resultExpr, keyPathsExpr}, {}, {}, SourceLoc(),
+        /*HasTrailingClosure*/ false,
+        /*Implicit*/ true);
+    auto plusExpr = new (C) BinaryExpr(plusFuncExpr, plusArgs,
+                                       /*Implicit*/ true);
+    resultExpr = plusExpr;
+  }
+  auto *returnStmt = new (C) ReturnStmt(SourceLoc(), resultExpr);
+  auto *body = BraceStmt::create(C, SourceLoc(), {returnStmt}, SourceLoc(),
+                                 /*Implicit*/ true);
+  funcDecl->setBody(BraceStmt::create(C, SourceLoc(), {body}, SourceLoc(),
+                                      /*Implicit*/ true));
+}
+
+// Synthesize the `keyPaths(to:)` or `nestedKeyPaths(to:)` function declaration.
+static ValueDecl *deriveParameterGroup_keyPaths(DerivedConformance &derived,
+                                                bool isNested) {
+  auto nominal = derived.Nominal;
+  auto parentDC = derived.getConformanceContext();
+  auto &C = derived.TC.Context;
+
+  // Create generic parameter <T>.
+  int depth = 0;
+  if (auto genSig = nominal->getGenericSignature())
+    depth = genSig->getGenericParams().back()->getDepth() + 1;
+  auto genericParam = new (C) GenericTypeParamDecl(
+      parentDC, C.getIdentifier("T"), SourceLoc(), depth, /*index*/ 0);
+
+  // Create `to: T.Type` parameter.
+  auto toParamDecl =
+      new (C) ParamDecl(VarDecl::Specifier::Default, SourceLoc(), SourceLoc(),
+                        C.Id_to, SourceLoc(), C.Id_to, parentDC);
+  toParamDecl->setInterfaceType(genericParam->getInterfaceType());
+
+  auto *genericParams =
+      GenericParamList::create(C, SourceLoc(), {genericParam}, SourceLoc());
+  ParameterList *params = ParameterList::create(C, {toParamDecl});
+
+  // Create `keyPaths(to:)` function declaration.
+  auto keyPathsId = isNested ? C.Id_nestedKeyPaths : C.Id_keyPaths;
+  DeclName keyPathsDeclName(C, keyPathsId, params);
+  auto *writableKeyPathDecl = cast<ClassDecl>(C.getWritableKeyPathDecl());
+  auto writableKeyPathType =
+      BoundGenericClassType::get(writableKeyPathDecl, /*parent*/ Type(),
+                                 {nominal->getDeclaredInterfaceType(),
+                                  genericParam->getDeclaredInterfaceType()});
+  auto keyPathsType = ArraySliceType::get(writableKeyPathType);
+  auto keyPathsDecl = FuncDecl::create(
+      C, SourceLoc(), StaticSpellingKind::None, SourceLoc(), keyPathsDeclName,
+      SourceLoc(), /*Throws*/ false, SourceLoc(), genericParams, params,
+      TypeLoc::withoutLoc(keyPathsType), nominal);
+  keyPathsDecl->setImplicit();
+  // Compute function generic signature and type.
+  derived.TC.validateGenericFuncSignature(keyPathsDecl);
+  if (isNested)
+    keyPathsDecl->setBodySynthesizer(deriveBodyParameterGroup_nestedKeyPaths);
+  else
+    keyPathsDecl->setBodySynthesizer(deriveBodyParameterGroup_keyPaths);
+  keyPathsDecl->copyFormalAccessFrom(nominal, /*sourceIsParentContext*/ true);
+  keyPathsDecl->setValidationToChecked();
+
+  derived.addMembersToConformanceContext({keyPathsDecl});
+  C.addSynthesizedDecl(keyPathsDecl);
+
+  return keyPathsDecl;
+}
+
+ValueDecl *DerivedConformance::deriveParameterGroup(ValueDecl *requirement) {
   if (requirement->getBaseName() == TC.Context.getIdentifier("update")) {
     addFixedLayoutAttrIfNeeded(TC, Nominal);
     return deriveParameterGroup_update(*this);
+  }
+  if (requirement->getBaseName() == TC.Context.Id_keyPaths) {
+    addFixedLayoutAttrIfNeeded(TC, Nominal);
+    return deriveParameterGroup_keyPaths(*this, /*isNested*/ false);
+  }
+  if (requirement->getBaseName() == TC.Context.Id_nestedKeyPaths) {
+    addFixedLayoutAttrIfNeeded(TC, Nominal);
+    return deriveParameterGroup_keyPaths(*this, /*isNested*/ true);
   }
   TC.diagnose(requirement->getLoc(), diag::broken_parameter_group_requirement);
   return nullptr;

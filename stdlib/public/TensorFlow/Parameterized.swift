@@ -15,6 +15,70 @@
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
+// KeyPathIterable
+//===----------------------------------------------------------------------===//
+
+/// A type that provides key paths to all of its stored properties.
+public protocol KeyPathIterable {
+  /// An array of key paths to the stored properties of this type.
+  var keyPaths: [PartialKeyPath<Self>] { get }
+
+  /// An array of key paths to all stored properties of the stored properties of
+  /// this type that conform to `KeyPathIterable`.
+  var nestedKeyPaths: [PartialKeyPath<Self>] { get }
+}
+
+public extension KeyPathIterable {
+  /// An array of key paths to all stored properties contained within this type.
+  @inlinable
+  var allKeyPaths: [PartialKeyPath<Self>] {
+    return keyPaths + nestedKeyPaths
+  }
+
+  /// Returns an array of key paths to all stored properties contained within
+  /// this type, with the specified type.
+  @inlinable
+  func allKeyPaths<T>(to _: T.Type) -> [KeyPath<Self, T>] {
+    return keyPaths(to: T.self) + nestedKeyPaths(to: T.self)
+  }
+
+  /// Returns an array of key paths to all mutable stored properties contained
+  /// within this type, with the specified type.
+  @inlinable
+  func allWritableKeyPaths<T>(to _: T.Type) -> [WritableKeyPath<Self, T>] {
+    return writableKeyPaths(to: T.self) + writableNestedKeyPaths(to: T.self)
+  }
+
+  /// Returns an array of key paths to the stored properties of this type, with
+  /// the specified type.
+  @inlinable
+  func keyPaths<T>(to _: T.Type) -> [KeyPath<Self, T>] {
+    return keyPaths.compactMap { $0 as? KeyPath<Self, T> }
+  }
+
+  /// Returns an array of key paths to all nested stored properties of this
+  /// type, with the specified type.
+  @inlinable
+  func nestedKeyPaths<T>(to _: T.Type) -> [KeyPath<Self, T>] {
+    return nestedKeyPaths.compactMap { $0 as? KeyPath<Self, T> }
+  }
+
+  /// Returns an array of key paths to the mutable stored properties of this
+  /// type, with the specified type.
+  @inlinable
+  func writableKeyPaths<T>(to _: T.Type) -> [WritableKeyPath<Self, T>] {
+    return keyPaths.compactMap { $0 as? WritableKeyPath<Self, T> }
+  }
+
+  /// Returns an array of key paths to all nested, mutable stored properties of
+  /// this type, with the specified type.
+  @inlinable
+  func writableNestedKeyPaths<T>(to _: T.Type) -> [WritableKeyPath<Self, T>] {
+    return nestedKeyPaths.compactMap { $0 as? WritableKeyPath<Self, T> }
+  }
+}
+
+//===----------------------------------------------------------------------===//
 // ParameterGroup
 //===----------------------------------------------------------------------===//
 
@@ -67,35 +131,38 @@ public extension Parameterized where Parameters : ParameterGroup {
 }
 
 //===----------------------------------------------------------------------===//
-// Extend common types to conform to ParameterGroup and Parameterized
+// `Array` conformances
 //===----------------------------------------------------------------------===//
 
-// Tensors conform to the protocols by "identity".
-extension Tensor : Parameterized {
-  public typealias Parameters = Tensor<Scalar>
+extension Array : KeyPathIterable where Element : KeyPathIterable {
+  public var keyPaths: [PartialKeyPath<Self>] {
+    return indices.map { \Array.[$0] }
+  }
 
-  public var allParameters: Parameters {
-    get {
-      return self
-    }
-    set {
-      self = newValue
+  public var nestedKeyPaths: [PartialKeyPath<Self>] {
+    return indices.flatMap { index in
+      return self[index].allKeyPaths.map { kp in
+        let rootFullKeyPath: WritableKeyPath<Array, Element> = \Array.[index]
+        let rootKeyPath: PartialKeyPath<Array> = rootFullKeyPath
+        return rootKeyPath.appending(path: kp)!
+      }
     }
   }
 }
 
-extension Tensor : ParameterGroup {
-  public typealias Parameter = Tensor<Scalar>
+extension Array : ParameterGroup where Element : ParameterGroup {
+  public typealias Parameter = Element.Parameter
 
   public mutating func update(
-    withGradients gradients: Tensor<Scalar>,
+    withGradients gradients: [Element],
     _ updateParameter: (inout Parameter, Parameter) -> Void
   ) {
-    updateParameter(&self, gradients)
+    for idx in self.indices {
+      self[idx].update(withGradients: gradients[idx], updateParameter)
+    }
   }
 }
 
-// Arrays conform to the protocols if their elements conform to them.
 extension Array : Parameterized where Element : Parameterized {
   public typealias Parameters = [Element.Parameters]
 
@@ -107,19 +174,6 @@ extension Array : Parameterized where Element : Parameterized {
       for idx in self.indices {
         self[idx].allParameters = newParameters[idx]
       }
-    }
-  }
-}
-
-extension Array : ParameterGroup where Element : ParameterGroup  {
-  public typealias Parameter = Element.Parameter
-
-  public mutating func update(
-    withGradients gradients: [Element],
-    _ updateParameter: (inout Parameter, Parameter) -> Void
-  ) {
-    for idx in self.indices {
-      self[idx].update(withGradients: gradients[idx], updateParameter)
     }
   }
 }

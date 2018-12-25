@@ -234,6 +234,17 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
     }
 
     // SWIFT_ENABLE_TENSORFLOW
+    // ParameterGroup.keyPaths
+    // ParameterGroup.nestedKeyPaths
+    if (name.isCompoundName() &&
+        (name.getBaseName() == ctx.Id_keyPaths ||
+         name.getBaseName() == ctx.Id_nestedKeyPaths)) {
+      auto argumentNames = name.getArgumentNames();
+      if (argumentNames.size() == 1 && argumentNames[0] == ctx.Id_to)
+        return getRequirement(KnownProtocolKind::ParameterGroup);
+    }
+
+    // SWIFT_ENABLE_TENSORFLOW
     // ParameterGroup.update(withGradients:_:)
     if (name.isCompoundName() &&
         name.getBaseName() == ctx.getIdentifier("update")) {

@@ -47,7 +47,6 @@ IDENTIFIER(decode)
 IDENTIFIER(decodeIfPresent)
 IDENTIFIER(Decoder)
 IDENTIFIER(decoder)
-// SWIFT_ENABLE_TENSORFLOW
 IDENTIFIER(dynamicCallable)
 IDENTIFIER(dynamicMember)
 IDENTIFIER(Element)
@@ -119,6 +118,8 @@ IDENTIFIER(with)
 
 // SWIFT_ENABLE_TENSORFLOW
 IDENTIFIER(allParameters)
+IDENTIFIER(keyPaths)
+IDENTIFIER(nestedKeyPaths)
 IDENTIFIER(Parameter)
 IDENTIFIER(Parameters)
 IDENTIFIER(TensorFlow)

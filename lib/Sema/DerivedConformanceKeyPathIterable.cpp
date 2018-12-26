@@ -65,7 +65,8 @@ static Type deriveParameterGroup_Parameter(NominalTypeDecl *nominal) {
   return sameMemberType;
 }
 
-bool DerivedConformance::canDeriveParameterGroup(NominalTypeDecl *nominal) {
+/*
+bool DerivedConformance::canDeriveKeyPathIterable(NominalTypeDecl *nominal) {
   // return bool(deriveParameterGroup_Parameter(nominal));
   // return !nominal->getMembers().empty();
 
@@ -74,6 +75,7 @@ bool DerivedConformance::canDeriveParameterGroup(NominalTypeDecl *nominal) {
   // Can derive if `Parameter` and `update` are defined.
   return !nominal->getStoredProperties().empty();
 }
+*/
 
 // Add @_fixed_layout attribute to type conforming to `ParameterGroup`, if
 // necessary.
@@ -498,28 +500,28 @@ static ValueDecl *deriveParameterGroup_keyPaths(DerivedConformance &derived,
   return keyPathsDecl;
 }
 
-ValueDecl *DerivedConformance::deriveParameterGroup(ValueDecl *requirement) {
-  if (requirement->getBaseName() == TC.Context.getIdentifier("update")) {
-    addFixedLayoutAttrIfNeeded(TC, Nominal);
-    return deriveParameterGroup_update(*this);
-  }
-  if (requirement->getBaseName() == TC.Context.Id_keyPaths) {
-    addFixedLayoutAttrIfNeeded(TC, Nominal);
-    return deriveParameterGroup_keyPaths(*this, /*isNested*/ false);
-  }
-  if (requirement->getBaseName() == TC.Context.Id_nestedKeyPaths) {
-    addFixedLayoutAttrIfNeeded(TC, Nominal);
-    return deriveParameterGroup_keyPaths(*this, /*isNested*/ true);
-  }
-  TC.diagnose(requirement->getLoc(), diag::broken_parameter_group_requirement);
+ValueDecl *DerivedConformance::deriveKeyPathIterable(ValueDecl *requirement) {
+  // if (requirement->getBaseName() == TC.Context.Id_keyPaths) {
+  //   addFixedLayoutAttrIfNeeded(TC, Nominal);
+  //   return deriveParameterGroup_keyPaths(*this, /*isNested*/ false);
+  // }
+  // if (requirement->getBaseName() == TC.Context.Id_nestedKeyPaths) {
+  //   addFixedLayoutAttrIfNeeded(TC, Nominal);
+  //   return deriveParameterGroup_keyPaths(*this, /*isNested*/ true);
+  // }
+  TC.diagnose(requirement->getLoc(),
+              diag::broken_key_path_iterable_requirement);
   return nullptr;
 }
 
-Type DerivedConformance::deriveParameterGroup(AssociatedTypeDecl *requirement) {
+Type DerivedConformance::deriveKeyPathIterable(AssociatedTypeDecl *requirement) {
+  /*
   if (requirement->getBaseName() == TC.Context.Id_Parameter) {
     addFixedLayoutAttrIfNeeded(TC, Nominal);
     return deriveParameterGroup_Parameter(Nominal);
   }
-  TC.diagnose(requirement->getLoc(), diag::broken_parameter_group_requirement);
+  */
+  TC.diagnose(requirement->getLoc(),
+              diag::broken_key_path_iterable_requirement);
   return nullptr;
 }

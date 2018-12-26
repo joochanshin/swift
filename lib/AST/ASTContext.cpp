@@ -978,6 +978,7 @@ ProtocolDecl *ASTContext::getProtocol(KnownProtocolKind kind) const {
     M = getLoadedModule(Id_CoreFoundation);
     break;
   // SWIFT_ENABLE_TENSORFLOW
+  case KnownProtocolKind::KeyPathIterable:
   case KnownProtocolKind::ParameterGroup:
   case KnownProtocolKind::Parameterized:
   case KnownProtocolKind::TensorArrayProtocol:

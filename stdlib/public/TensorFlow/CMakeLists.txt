@@ -37,6 +37,7 @@ set(SOURCES
   Dataset.swift
   DataTypes.swift
   Gradients.swift
+  KeyPathIterable.swift
   Ops.swift
   Parameterized.swift
   Random.swift

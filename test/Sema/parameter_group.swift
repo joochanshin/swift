@@ -12,6 +12,10 @@ var params = Parameters(w: 1, b: 2)
 params.update(withGradients: params, -=)
 params.update(withGradients: params) { p, g in p -= g }
 params.update(withGradients: params) { $0 -= 0.1 * $1 }
+assert(params.keyPaths(to: Float.self).count == 2)
+for kp in params.keyPaths(to: Float.self) {
+  params[keyPath: kp] += 1
+}
 
 struct TensorParameters : ParameterGroup {
   var w: Tensor<Float>

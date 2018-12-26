@@ -63,6 +63,14 @@ bool DerivedConformance::derivesProtocolConformance(DeclContext *DC,
   }
 
   // SWIFT_ENABLE_TENSORFLOW
+  if (*knownProtocol == KnownProtocolKind::KeyPathIterable)
+    return canDeriveParameterGroup(Nominal);
+
+  // SWIFT_ENABLE_TENSORFLOW
+  if (*knownProtocol == KnownProtocolKind::ParameterGroup)
+    return canDeriveParameterGroup(Nominal);
+
+  // SWIFT_ENABLE_TENSORFLOW
   // The only requirement for deriving Parameterized is that there exist some
   // stored properties marked with @TFParameter. The `Parameters` struct can
   // always be derived, even if parameters have different types.
@@ -71,10 +79,6 @@ bool DerivedConformance::derivesProtocolConformance(DeclContext *DC,
     Nominal->getAllTFParameters(params);
     return !params.empty();
   }
-
-  // SWIFT_ENABLE_TENSORFLOW
-  if (*knownProtocol == KnownProtocolKind::ParameterGroup)
-    return canDeriveParameterGroup(Nominal);
 
   if (auto *enumDecl = dyn_cast<EnumDecl>(Nominal)) {
     switch (*knownProtocol) {
@@ -207,6 +211,16 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
       return getRequirement(KnownProtocolKind::CodingKey);
 
     // SWIFT_ENABLE_TENSORFLOW
+    // KeyPathIterable.keyPaths
+    if (name.isSimpleName(ctx.Id_keyPaths))
+      return getRequirement(KnownProtocolKind::KeyPathIterable);
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // KeyPathIterable.nestedKeyPaths
+    if (name.isSimpleName(ctx.Id_nestedKeyPaths))
+      return getRequirement(KnownProtocolKind::KeyPathIterable);
+
+    // SWIFT_ENABLE_TENSORFLOW
     // Parameterized.allParameters
     if (name.isSimpleName(ctx.Id_allParameters))
       return getRequirement(KnownProtocolKind::Parameterized);
@@ -232,6 +246,19 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
       if (argumentNames.size() == 1 && argumentNames[0] == ctx.Id_into)
         return getRequirement(KnownProtocolKind::Hashable);
     }
+
+    /*
+    // SWIFT_ENABLE_TENSORFLOW
+    // KeyPathIterable.keyPaths
+    // KeyPathIterable.nestedKeyPaths
+    if (name.isCompoundName() &&
+        (name.getBaseName() == ctx.Id_keyPaths ||
+         name.getBaseName() == ctx.Id_nestedKeyPaths)) {
+      auto argumentNames = name.getArgumentNames();
+      if (argumentNames.size() == 1 && argumentNames[0] == ctx.Id_to)
+        return getRequirement(KnownProtocolKind::ParameterGroup);
+    }
+     */
 
     // SWIFT_ENABLE_TENSORFLOW
     // ParameterGroup.update(withGradients:_:)

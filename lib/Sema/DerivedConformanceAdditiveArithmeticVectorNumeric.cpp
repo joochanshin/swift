@@ -151,8 +151,13 @@ bool DerivedConformance::canDeriveAdditiveArithmetic(NominalTypeDecl *nominal) {
     return false;
   // All stored properties must conform to `AdditiveArithmetic`.
   auto &C = nominal->getASTContext();
+  auto *lazyResolver = C.getLazyResolver();
   auto *addArithProto = C.getProtocol(KnownProtocolKind::AdditiveArithmetic);
   return llvm::all_of(structDecl->getStoredProperties(), [&](VarDecl *v) {
+    if (!v->hasType())
+      lazyResolver->resolveDeclSignature(v);
+    if (!v->hasType())
+      return false;
     auto conf = TypeChecker::conformsToProtocol(v->getType(), addArithProto,
                                                 v->getDeclContext(),
                                                 ConformanceCheckFlags::Used);

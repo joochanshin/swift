@@ -903,6 +903,10 @@ Type AssociatedTypeInference::computeDerivedTypeWitness(
 
   // Make sure that the derived type is sane.
   if (checkTypeWitness(tc, dc, proto, assocType, derivedType)) {
+    llvm::errs() << "CHECK TYPE WITNESS FAIL DERIVED TYPE\n";
+    derivedType->dump();
+    llvm::errs() << "FAILED REQUIREMENT\n";
+    checkTypeWitness(tc, dc, proto, assocType, derivedType).getRequirement()->dump();
     /// FIXME: Diagnose based on this.
     failedDerivedAssocType = assocType;
     failedDerivedWitness = derivedType;
@@ -916,6 +920,7 @@ Type
 AssociatedTypeInference::computeAbstractTypeWitness(
                                               AssociatedTypeDecl *assocType,
                                               bool allowDerived) {
+  llvm::errs() << "compute abstract type witness!\n";
   // We don't have a type witness for this associated type, so go
   // looking for more options.
   if (Type concreteType = computeFixedTypeWitness(assocType))
@@ -927,6 +932,7 @@ AssociatedTypeInference::computeAbstractTypeWitness(
 
   // If we can derive a type witness, do so.
   if (allowDerived) {
+    llvm::errs() << "DERIVED YESSS\n";
     if (Type derivedType = computeDerivedTypeWitness(assocType))
       return derivedType;
   }
@@ -956,21 +962,34 @@ Type AssociatedTypeInference::substCurrentTypeWitnesses(Type type) {
   foldDependentMemberTypes = [&](Type type) -> Type {
     if (auto depMemTy = type->getAs<DependentMemberType>()) {
       auto baseTy = depMemTy->getBase().transform(foldDependentMemberTypes);
+      llvm::errs() << "base type\n";
+      baseTy->dump();
       if (baseTy.isNull() || baseTy->hasTypeParameter())
         return nullptr;
 
       auto assocType = depMemTy->getAssocType();
+      llvm::errs() << "assoc type\n";
+      assocType->dump();
       if (!assocType)
         return nullptr;
 
+      bool hi = !recursionCheck.insert(assocType).second;
+      llvm::errs() << "recursion check: " << hi << "\n";
+      if (hi) return nullptr;
+      /*
       if (!recursionCheck.insert(assocType).second)
         return nullptr;
+       */
 
       SWIFT_DEFER { recursionCheck.erase(assocType); };
 
       // Try to substitute into the base type.
       if (Type result = depMemTy->substBaseType(dc->getParentModule(), baseTy)){
+        llvm::errs() << "substituted base type\n";
+        result->dump();
         return result;
+      } else {
+        llvm::errs() <<"substitute base type FAILED\n";
       }
 
       // If that failed, check whether it's because of the conformance we're
@@ -982,11 +1001,16 @@ Type AssociatedTypeInference::substCurrentTypeWitnesses(Type type) {
       if (!localConformance || localConformance->isAbstract() ||
           (localConformance->getConcrete()->getRootNormalConformance()
              != conformance)) {
+            llvm::errs() << "local conformance check failed\n";
         return nullptr;
-      }
+          } else {
+            llvm::errs() << "local conformance check passed\n";
+          }
 
       // Find the tentative type witness for this associated type.
       auto known = typeWitnesses.begin(assocType);
+      llvm::errs() << "known type witness for assoc type, is end? " << (known == typeWitnesses.end()) << "\n";
+      known->first.dump();
       if (known == typeWitnesses.end())
         return nullptr;
 
@@ -996,6 +1020,8 @@ Type AssociatedTypeInference::substCurrentTypeWitnesses(Type type) {
     // The presence of a generic type parameter indicates that we
     // cannot use this type binding.
     if (type->is<GenericTypeParamType>()) {
+      llvm::errs() << "generic type param type, fail\n";
+      type->dump();
       return nullptr;
     }
 
@@ -1218,20 +1244,32 @@ void AssociatedTypeInference::findSolutionsRec(
       };
 
       auto typeWitness = typeWitnesses.begin(assocType);
+      // TEMPORARILY DISABLE
+      llvm::errs() << "IS TYPE WITNESS NOT END? CRUCIAL " << (typeWitness != typeWitnesses.end()) << "\n";
+      llvm::errs() << "ASSOC TYPE\n";
+      assocType->dump();
+      if (typeWitness != typeWitnesses.end()) {
+        llvm::errs() << "TYPE WITNESS\n";
+        typeWitness->first->dump();
+      }
+
       if (typeWitness != typeWitnesses.end()) {
         // The solution contains an error.
         if (typeWitness->first->hasError()) {
-          recordMissing();
-          return;
+          // recordMissing();
+          // return;
         }
 
-        continue;
+        // continue;
       }
 
       // Try to compute the type without the aid of a specific potential
       // witness.
+      // THIS IS WHERE WE WANT TO BE
       if (Type type = computeAbstractTypeWitness(assocType,
                                                  /*allowDerived=*/true)) {
+        llvm::errs() << "DOES COMPUTED TYPE HAVE ERROR " << type->hasError() << "\n";
+        type->dump();
         if (type->hasError()) {
           recordMissing();
           return;
@@ -1257,11 +1295,19 @@ void AssociatedTypeInference::findSolutionsRec(
       // to do.
       auto known = typeWitnesses.begin(assocType);
       assert(known != typeWitnesses.end());
+      llvm::errs() << "KNOWN TYPE WITNESS FIRST\n";
+      known->first->dump();
       if (!known->first->hasTypeParameter() &&
           !known->first->hasDependentMember())
         continue;
 
+      // TEST OVERRIDE
+      // continue;
       Type replaced = substCurrentTypeWitnesses(known->first);
+      if (replaced.isNull())
+        llvm::errs() << "REPLACED NULL\n";
+      else
+        replaced->dump();
       if (replaced.isNull())
         return;
 
@@ -1350,6 +1396,11 @@ void AssociatedTypeInference::findSolutionsRec(
 
     // Record this value witness, popping it when we exit the current scope.
     valueWitnesses.push_back({inferredReq.first, witnessReq.Witness});
+
+    llvm::errs() << "inferredReq and witness\n";
+    inferredReq.first->dump();
+    witnessReq.Witness->dump();
+
     if (!isa<TypeDecl>(inferredReq.first) &&
         witnessReq.Witness->getDeclContext()->getExtendedProtocolDecl())
       ++numValueWitnessesInProtocolExtensions;
@@ -1936,6 +1987,8 @@ auto AssociatedTypeInference::solve(ConformanceChecker &checker)
   // Compute the set of solutions.
   SmallVector<InferredTypeWitnessesSolution, 4> solutions;
   findSolutions(unresolvedAssocTypes.getArrayRef(), solutions);
+  llvm::errs() << "unresolved assoc type count: " << unresolvedAssocTypes.size() << "\n";
+  llvm::errs() << "solutions count: " << solutions.size() << "\n";
 
   // Go make sure that type declarations that would act as witnesses
   // did not get injected while we were performing checks above. This
@@ -2009,6 +2062,9 @@ void ConformanceChecker::resolveTypeWitnesses() {
   AssociatedTypeInference inference(TC, Conformance);
   if (auto inferred = inference.solve(*this)) {
     for (const auto &inferredWitness : *inferred) {
+      llvm::errs() << "INFERRED WITNESS\n";
+      inferredWitness.first->dump();
+      inferredWitness.second->dump();
       recordTypeWitness(inferredWitness.first, inferredWitness.second,
                         /*typeDecl=*/nullptr);
     }
@@ -2024,6 +2080,8 @@ void ConformanceChecker::resolveTypeWitnesses() {
   // associated type witness as erroneous.
   for (auto assocType : Proto->getAssociatedTypeMembers()) {
     // If we already have a type witness, do nothing.
+    llvm::errs() << "HAVE TYPE WITNESS? " << (Conformance->hasTypeWitness(assocType)) << "\n";
+    assocType->dump();
     if (Conformance->hasTypeWitness(assocType))
       continue;
 

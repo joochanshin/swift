@@ -2411,6 +2411,8 @@ ERROR(broken_parameter_group_requirement,none,
       "ParameterGroup protocol is broken: unexpected requirement", ())
 ERROR(broken_parameterized_requirement,none,
       "Parameterized protocol is broken: unexpected requirement", ())
+ERROR(broken_differentiable_requirement,none,
+      "Differentiable protocol is broken: unexpected requirement", ())
 ERROR(parameterized_no_parameters_struct,none,
       "cannot automatically synthesize %0 because 'Parameters' struct does not "
       "exist", (Type))

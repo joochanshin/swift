@@ -1429,6 +1429,8 @@ void MultiConformanceChecker::checkAllConformances() {
   bool anyInvalid = false;
   for (unsigned I = 0, N = AllConformances.size(); I < N; I ++) {
     auto *conformance = AllConformances[I];
+    llvm::errs() << "DUMPING CONFORMANCE " << I << "\n";
+    conformance->dump();
     // Check this conformance and emit fixits if this is the last one in the pool.
     checkIndividualConformance(conformance, I == N - 1);
     anyInvalid |= conformance->isInvalid();
@@ -2853,6 +2855,8 @@ void ConformanceChecker::checkNonFinalClassWitness(ValueDecl *requirement,
 ResolveWitnessResult
 ConformanceChecker::resolveWitnessViaLookup(ValueDecl *requirement) {
   assert(!isa<AssociatedTypeDecl>(requirement) && "Use resolveTypeWitnessVia*");
+  llvm::errs() << "ATTEMPT RESOLVE WITNESS LOOKUP\n";
+  requirement->dump();
 
   auto *nominal = Adoptee->getAnyNominal();
 
@@ -3312,6 +3316,8 @@ ResolveWitnessResult ConformanceChecker::resolveTypeWitnessViaLookup(
   // Look for a member type with the same name as the associated type.
   auto candidates = TC.lookupMemberType(DC, Adoptee, assocType->getName(),
                                         NameLookupFlags::ProtocolMembers);
+  llvm::errs() << "HELLO resolveTypeWitnessViaLookup " << candidates.size() << "\n";
+  assocType->dump();
 
   // If there aren't any candidates, we're done.
   if (!candidates) {
@@ -3902,6 +3908,7 @@ static void diagnoseConformanceFailure(Type T,
     }
   }
 
+  llvm::errs() << "HELLO1\n";
   diags.diagnose(ComplainLoc, diag::type_does_not_conform,
                  T, Proto->getDeclaredType());
 }
@@ -5296,6 +5303,10 @@ ValueDecl *TypeChecker::deriveProtocolRequirement(DeclContext *DC,
   case KnownProtocolKind::VectorNumeric:
     return derived.deriveVectorNumeric(Requirement);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  case KnownProtocolKind::Differentiable:
+    return derived.deriveDifferentiable(Requirement);
+
   default:
     return nullptr;
   }
@@ -5328,6 +5339,8 @@ Type TypeChecker::deriveTypeWitness(DeclContext *DC,
     return derived.deriveParameterGroup(AssocType);
   case KnownProtocolKind::VectorNumeric:
     return derived.deriveVectorNumeric(AssocType);
+  case KnownProtocolKind::Differentiable:
+    return derived.deriveDifferentiable(AssocType);
   default:
     return nullptr;
   }

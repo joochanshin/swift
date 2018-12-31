@@ -75,6 +75,12 @@ bool DerivedConformance::derivesProtocolConformance(DeclContext *DC,
     return canDeriveVectorNumeric(Nominal);
 
   // SWIFT_ENABLE_TENSORFLOW
+  if (*knownProtocol == KnownProtocolKind::Differentiable) {
+    llvm::errs() << "HELLO CHECK DIFFERENTIABLE\n";
+    return canDeriveDifferentiable(Nominal);
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
   // The only requirement for deriving Parameterized is that there exist some
   // stored properties marked with @TFParameter. The `Parameters` struct can
   // always be derived, even if parameters have different types.
@@ -192,6 +198,13 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
     return results.empty() ? nullptr : results.front();
   };
 
+  /*
+  llvm::errs() << "DIFFERENTIABLE PROTOCOL\n";
+  auto diffProto = ctx.getProtocol(KnownProtocolKind::Differentiable);
+  diffProto->dump();
+  llvm::errs() << "CAN SYNTHESIZE? " << DerivedConformance::canDeriveDifferentiable(nominal) << "\n";
+   */
+
   // Properties.
   if (isa<VarDecl>(requirement)) {
     // RawRepresentable.rawValue
@@ -275,6 +288,28 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
     }
 
     // SWIFT_ENABLE_TENSORFLOW
+    // Differentiable.moved(along:)
+    if (name.isCompoundName() &&
+        name.getBaseName() == ctx.Id_moved) {
+      auto argumentNames = name.getArgumentNames();
+      if (argumentNames.size() == 1 &&
+          argumentNames[0] == ctx.getIdentifier("along")) {
+        return getRequirement(KnownProtocolKind::Differentiable);
+      }
+    }
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // Differentiable.tangentVector(from:)
+    if (name.isCompoundName() &&
+        name.getBaseName() == ctx.Id_tangentVector) {
+      auto argumentNames = name.getArgumentNames();
+      if (argumentNames.size() == 1 &&
+          argumentNames[0] == ctx.getIdentifier("from")) {
+        return getRequirement(KnownProtocolKind::Differentiable);
+      }
+    }
+
+    // SWIFT_ENABLE_TENSORFLOW
     // ParameterGroup.update(withGradients:_:)
     if (name.isCompoundName() &&
         name.getBaseName() == ctx.getIdentifier("update")) {
@@ -324,6 +359,15 @@ ValueDecl *DerivedConformance::getDerivableRequirement(TypeChecker &tc,
     // KeyPathIterable.AllKeyPaths
     if (name.isSimpleName(ctx.Id_AllKeyPaths))
       return getRequirement(KnownProtocolKind::KeyPathIterable);
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // Differentiable.TangentVector
+    // Differentiable.CotangentVector
+    if (name.isSimpleName(ctx.Id_TangentVector) ||
+        name.isSimpleName(ctx.Id_CotangentVector)) {
+      llvm::errs() << "HELLO ASSOC TYPE FOUND?\n";
+      return getRequirement(KnownProtocolKind::Differentiable);
+    }
 
     // SWIFT_ENABLE_TENSORFLOW
     // Parameterized.Parameters

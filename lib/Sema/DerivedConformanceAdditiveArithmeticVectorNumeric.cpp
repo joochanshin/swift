@@ -98,17 +98,29 @@ static ConstructorDecl *getMemberwiseInitializer(NominalTypeDecl *nominal) {
 static Type getVectorNumericScalarAssocType(ValueDecl *decl) {
   auto &C = decl->getASTContext();
   auto *vectorNumericProto = C.getProtocol(KnownProtocolKind::VectorNumeric);
-  auto declType =
-      decl->getDeclContext()->mapTypeIntoContext(decl->getInterfaceType());
+  // auto declType =
+  //     decl->getDeclContext()->mapTypeIntoContext(decl->getInterfaceType());
+  auto declType = decl->getInterfaceType();
+  llvm::errs() << "checking VN Scalar for decl\n";
+  decl->dump();
+  declType->dump();
+  if (auto varDecl = dyn_cast<VarDecl>(decl)) {
+    declType = varDecl->getType();
+    varDecl->getType()->dump();
+  }
   auto conf = TypeChecker::conformsToProtocol(declType, vectorNumericProto,
                                               decl->getDeclContext(),
                                               ConformanceCheckFlags::Used);
-  if (!conf)
+  if (!conf) {
+    llvm::errs() << "NO VN CONF OH NO\n";
     return Type();
+  }
   Type scalarType = ProtocolConformanceRef::getTypeWitnessByName(
-      decl->getInterfaceType(), *conf, C.Id_Scalar, C.getLazyResolver());
+      declType, *conf, C.Id_Scalar, C.getLazyResolver());
+      // declType, *conf, C.Id_Scalar, C.getLazyResolver());
   assert(scalarType && "'Scalar' associated type not found");
-  return scalarType;
+  // return scalarType;
+  return scalarType->mapTypeOutOfContext();
 }
 
 static Type deriveVectorNumeric_Scalar(NominalTypeDecl *nominal) {
@@ -125,6 +137,7 @@ static Type deriveVectorNumeric_Scalar(NominalTypeDecl *nominal) {
   Type sameScalarType;
   for (auto member : structDecl->getStoredProperties()) {
     auto scalarType = getVectorNumericScalarAssocType(member);
+    scalarType->dump();
     // If stored property does not conform to `VectorNumeric`, return null
     // `Type`.
     if (!scalarType)
@@ -151,8 +164,16 @@ bool DerivedConformance::canDeriveAdditiveArithmetic(NominalTypeDecl *nominal) {
     return false;
   // All stored properties must conform to `AdditiveArithmetic`.
   auto &C = nominal->getASTContext();
+  auto *lazyResolver = C.getLazyResolver();
   auto *addArithProto = C.getProtocol(KnownProtocolKind::AdditiveArithmetic);
   return llvm::all_of(structDecl->getStoredProperties(), [&](VarDecl *v) {
+    llvm::errs() << "check can derive additive arithmetic\n";
+    v->dump();
+    if (!v->hasType())
+      lazyResolver->resolveDeclSignature(v);
+    if (!v->hasType())
+      return false;
+    v->getType()->dump();
     auto conf = TypeChecker::conformsToProtocol(v->getType(), addArithProto,
                                                 v->getDeclContext(),
                                                 ConformanceCheckFlags::Used);

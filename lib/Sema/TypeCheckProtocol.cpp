@@ -2406,6 +2406,13 @@ void ConformanceChecker::recordTypeWitness(AssociatedTypeDecl *assocType,
     if (type->hasError())
       aliasDecl->setInvalid();
 
+    llvm::errs() << "HEY SYNTHESIZING NEW ALIAS\n";
+    aliasDecl->dump();
+    type->dump();
+    if (auto typeDecl2 = typeDecl)
+      typeDecl2->dump();
+    // assert(!aliasDecl->isInvalid());
+
     // Inject the typealias into the nominal decl that conforms to the protocol.
     if (auto nominal = DC->getSelfNominalTypeDecl()) {
       // FIXME: Ideally this would use the protocol's access too---that is,
@@ -3321,20 +3328,37 @@ ResolveWitnessResult ConformanceChecker::resolveTypeWitnessViaLookup(
   // Determine which of the candidates is viable.
   SmallVector<LookupTypeResultEntry, 2> viable;
   SmallVector<std::pair<TypeDecl *, CheckTypeWitnessResult>, 2> nonViable;
+  llvm::errs() << "ASSOC TYPE:\n";
+  assocType->dump();
+  llvm::errs() << "CANDIDATE COUNT: " << candidates.size() << "\n";
   for (auto candidate : candidates) {
+    llvm::errs() << "CANDIDATE!\n";
+    candidate.Member->dump();
+    candidate.MemberType->dump();
+    llvm::errs() << "CANDIDATE MEMBER TYPE HAS ERROR? " << candidate.MemberType->hasError() << "\n";
+
     // Skip nested generic types.
     if (auto *genericDecl = dyn_cast<GenericTypeDecl>(candidate.Member))
-      if (genericDecl->isGeneric())
+      if (genericDecl->isGeneric()) {
+        llvm::errs() << "OH NO SKIPPING NESTED GENERIC TYPE\n";
         continue;
+      }
 
     // Skip typealiases with an unbound generic type as their underlying type.
-    if (auto *typeAliasDecl = dyn_cast<TypeAliasDecl>(candidate.Member))
-      if (typeAliasDecl->getDeclaredInterfaceType()->is<UnboundGenericType>())
+    if (auto *typeAliasDecl = dyn_cast<TypeAliasDecl>(candidate.Member)) {
+      llvm::errs() << "TYPE ALIAS UNDERLYING TYPE\n";
+      typeAliasDecl->getUnderlyingTypeLoc().getType()->dump();
+      if (typeAliasDecl->getDeclaredInterfaceType()->is<UnboundGenericType>()) {
+        llvm::errs() << "OH NO SKIPPING UNBOUND GENERIC TYPE\n";
         continue;
+      }
+    }
 
     // Check this type against the protocol requirements.
     if (auto checkResult =
             checkTypeWitness(TC, DC, Proto, assocType, candidate.MemberType)) {
+      llvm::errs() << "OH NO NON VIABLE\n";
+      checkResult.getRequirement()->dump();
       nonViable.push_back({candidate.Member, checkResult});
     } else {
       viable.push_back(candidate);
@@ -5296,6 +5320,10 @@ ValueDecl *TypeChecker::deriveProtocolRequirement(DeclContext *DC,
   case KnownProtocolKind::VectorNumeric:
     return derived.deriveVectorNumeric(Requirement);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  case KnownProtocolKind::Differentiable:
+    return derived.deriveDifferentiable(Requirement);
+
   default:
     return nullptr;
   }
@@ -5328,6 +5356,8 @@ Type TypeChecker::deriveTypeWitness(DeclContext *DC,
     return derived.deriveParameterGroup(AssocType);
   case KnownProtocolKind::VectorNumeric:
     return derived.deriveVectorNumeric(AssocType);
+  case KnownProtocolKind::Differentiable:
+    return derived.deriveDifferentiable(AssocType);
   default:
     return nullptr;
   }

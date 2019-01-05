@@ -2193,6 +2193,17 @@ static FuncDecl *resolveAutoDiffAssociatedFunction(
   return candidate;
 }
 
+/// Visit the given generic parameter lists from the outermost to the innermost,
+/// calling the visitor function for each list.
+static void visitOuterToInner(
+                              GenericParamList *genericParams,
+                              llvm::function_ref<void(GenericParamList *)> visitor) {
+  if (auto outerGenericParams = genericParams->getOuterParameters())
+    visitOuterToInner(outerGenericParams, visitor);
+
+  visitor(genericParams);
+}
+
 void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   auto &ctx = TC.Context;
   auto lookupConformance =
@@ -2262,6 +2273,254 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     attr->setInvalid();
     return;
   }
+
+  // BEGIN NEW
+  // Type check 'where' clause.
+  GenericSignature *whereClauseGenSig = nullptr;
+  GenericEnvironment *whereClauseGenEnv = nullptr;
+  if (auto whereClause = attr->getWhereClause()) {
+    llvm::errs() << "HELLO WHERE CLAUSE\n";
+    if (whereClause->getRequirements().empty()) {
+      // Report an empty 'where' clause.
+      TC.diagnose(attr->getLocation(),
+                  diag::differentiable_attr_empty_where_clause);
+      attr->setInvalid();
+      return;
+    }
+
+    auto *genericSig = original->getGenericSignature();
+    if (!genericSig) {
+      // Only generic functions are permitted to have trailing where clauses.
+      TC.diagnose(attr->getLocation(),
+                  diag::differentiable_attr_nongeneric_trailing_where,
+                  original->getFullName())
+        .highlight(whereClause->getSourceRange());
+      attr->setInvalid();
+      return;
+    }
+    llvm::errs() << "ORIGINAL GEN SIG\n";
+    genericSig->dump();
+
+    /*
+    GenericParamList *params = nullptr;
+    if (auto nominal = original->getDeclContext()->getSelfNominalTypeDecl()) {
+      if (auto proto = dyn_cast<ProtocolDecl>(nominal)) {
+        // params = proto->createGenericParams(original->getDeclContext());
+        // params = proto->createGenericParams(proto);
+        params = proto->createGenericParams(original);
+      }
+    }
+    if (!params) {
+      // params = GenericParamList::create(<#const ASTContext &Context#>, <#SourceLoc LAngleLoc#>, <#ArrayRef<GenericTypeParamDecl *> Params#>, <#SourceLoc WhereLoc#>, <#ArrayRef<RequirementRepr> Requirements#>, <#SourceLoc RAngleLoc#>)
+      // params = GenericParamList::create(<#ASTContext &Context#>, <#SourceLoc LAngleLoc#>, <#ArrayRef<GenericTypeParamDecl *> Params#>, <#SourceLoc RAngleLoc#>)
+    }
+    // TC.prepareGenericParamList(params, original->getDeclContext());
+    TC.prepareGenericParamList(params, original);
+    params->addTrailingWhereClause(
+      ctx,
+      whereClause->getWhereLoc(),
+      whereClause->getRequirements());
+     */
+    Type selfInterfaceType;
+    if (auto nominal = original->getDeclContext()->getSelfNominalTypeDecl()) {
+      if (auto proto = dyn_cast<ProtocolDecl>(nominal)) {
+        selfInterfaceType = proto->getSelfInterfaceType();
+      }
+    }
+
+    // Form a new generic signature based on the old one.
+    GenericSignatureBuilder builder(ctx);
+
+    // First, add the old generic signature.
+    builder.addGenericSignature(genericSig);
+
+    // Set of generic parameters being constrained. It is used to
+    // determine if a full specialization misses requirements for
+    // some of the generic parameters.
+    SmallPtrSet<TypeBase *, 4> constrainedGenericParams;
+
+    // Go over the set of requirements, adding them to the builder.
+    SmallVector<Requirement, 4> convertedRequirements;
+
+    SubstitutionMap protocolSubMap;
+    if (auto nominal = original->getDeclContext()->getSelfNominalTypeDecl()) {
+      if (auto proto = dyn_cast<ProtocolDecl>(nominal)) {
+        // builder.get
+        llvm::errs() << "SET UP PROTOCOL SUB MAP\n";
+        original->getDeclContext()->getSelfTypeInContext()->dump();
+        protocolSubMap = SubstitutionMap::getProtocolSubstitutions(
+            proto, proto->getSelfInterfaceType(), ProtocolConformanceRef(proto));
+      }
+    }
+
+    if (auto genParamsContext = original->getGenericParamsOfContext()) {
+      llvm::errs() << "GENERIC PARAMS OF CONTEXT\n";
+      genParamsContext->dump();
+      for (auto param : *genParamsContext) {
+        param->dump();
+        // builder.addGenericParameter(param);
+        // builder.addGenericParameterRequirements(param);
+      }
+    }
+
+    using FloatingRequirementSource =
+      GenericSignatureBuilder::FloatingRequirementSource;
+    RequirementRequest::visitRequirements(
+      // WhereClauseOwner(original, attr), TypeResolutionStage::Interface,
+      WhereClauseOwner(original, attr), TypeResolutionStage::Structural,
+      // WhereClauseOwner(original->getDeclContext(), attr), TypeResolutionStage::Structural,
+      [&](const Requirement &req, RequirementRepr *reqRepr) {
+        // Collect all of the generic parameters used by these types.
+        switch (req.getKind()) {
+        case RequirementKind::Conformance:
+        case RequirementKind::SameType:
+        case RequirementKind::Superclass:
+          collectUsedGenericParameters(req.getSecondType(),
+                                       constrainedGenericParams);
+          LLVM_FALLTHROUGH;
+
+        case RequirementKind::Layout:
+          collectUsedGenericParameters(req.getFirstType(),
+                                       constrainedGenericParams);
+          break;
+        }
+
+        // Check additional constraints.
+        // FIXME: These likely aren't fundamental limitations.
+        switch (req.getKind()) {
+        case RequirementKind::SameType: {
+          /*
+          bool firstHasTypeParameter = req.getFirstType()->hasTypeParameter();
+          bool secondHasTypeParameter = req.getSecondType()->hasTypeParameter();
+
+          // Exactly one type can have a type parameter.
+          if (firstHasTypeParameter == secondHasTypeParameter) {
+            TC.diagnose(
+              attr->getLocation(),
+              firstHasTypeParameter
+              ? diag::specialize_attr_non_concrete_same_type_req
+              : diag::specialize_attr_only_one_concrete_same_type_req)
+              .highlight(reqRepr->getSourceRange());
+            return false;
+          }
+
+          // We either need a fully-concrete type or a generic type parameter.
+          if (diagnoseIndirectGenericTypeParam(attr->getLocation(),
+                                               req.getFirstType(),
+                                               reqRepr->getFirstTypeRepr()) ||
+              diagnoseIndirectGenericTypeParam(attr->getLocation(),
+                                               req.getSecondType(),
+                                               reqRepr->getSecondTypeRepr())) {
+            return false;
+          }
+           */
+          break;
+        }
+
+        case RequirementKind::Superclass:
+          TC.diagnose(attr->getLocation(),
+                      diag::specialize_attr_non_protocol_type_constraint_req)
+            .highlight(reqRepr->getSourceRange());
+          return false;
+
+        case RequirementKind::Conformance:
+          if (diagnoseIndirectGenericTypeParam(attr->getLocation(),
+                                               req.getFirstType(),
+                                               reqRepr->getSubjectRepr())) {
+            return false;
+          }
+          // req.subst(<#Args &&args...#>)
+
+          if (!req.getSecondType()->is<ProtocolType>()) {
+            TC.diagnose(attr->getLocation(),
+                        diag::specialize_attr_non_protocol_type_constraint_req)
+              .highlight(reqRepr->getSourceRange());
+            return false;
+          }
+          break;
+
+        case RequirementKind::Layout:
+          if (diagnoseIndirectGenericTypeParam(attr->getLocation(),
+                                               req.getFirstType(),
+                                               reqRepr->getSubjectRepr())) {
+            return false;
+          }
+          break;
+        }
+
+        // Add the requirement to the generic signature builder.
+        builder.addRequirement(req, reqRepr,
+                               FloatingRequirementSource::forExplicit(reqRepr),
+                               // protocolSubMap.empty() ? nullptr : &protocolSubMap, original->getDeclContext()->getParentModule());
+                               // nullptr, original->getDeclContext()->getParentModule());
+                               nullptr, original->getModuleContext());
+        llvm::errs() << "raw requirement\n";
+        req.dump();
+        req.getFirstType()->dump();
+        req.getSecondType()->dump();
+        convertedRequirements.push_back(getCanonicalRequirement(req));
+        return false;
+      });
+
+    /*
+    auto source =
+    GenericSignatureBuilder::FloatingRequirementSource::forInferred(nullptr);
+
+    if (selfInterfaceType)
+      builder.inferRequirements(*original->getModuleContext(),
+                                selfInterfaceType,
+                                nullptr,
+                                source);
+
+    RequirementRequest::visitRequirements(
+      WhereClauseOwner(original, attr), TypeResolutionStage::Interface,
+      // WhereClauseOwner(original->getDeclContext(), attr), TypeResolutionStage::Interface,
+        [&](const Requirement &req, RequirementRepr *reqRepr) {
+      auto source = FloatingRequirementSource::forExplicit(reqRepr);
+      // builder.addRequirement(req, reqRepr, source, nullptr,
+      // original->getModuleContext());
+      return false;
+    });
+    */
+
+
+
+    // Check the validity of provided requirements.
+    // checkSpecializeAttrRequirements(attr, original, constrainedGenericParams, TC);
+
+    // Store the converted requirements in the attribute so that
+    // they are serialized later.
+    llvm::errs() << "REQUIREMENTS WOW\n";
+    for (auto req : convertedRequirements) {
+      req.dump();
+
+      req.getFirstType()->dump();
+      req.getSecondType()->dump();
+    }
+    // attr->setRequirements(original->getASTContext(), convertedRequirements);
+
+    // Check the result.
+    // auto finalGenSig = std::move(builder).computeGenericSignature(
+    auto finalGenSig = std::move(builder).computeGenericSignature(
+      attr->getLocation(),
+      /*allowConcreteGenericParams=*/true);
+    llvm::errs() << "FINAL GENERAL SIGNATURE\n";
+    finalGenSig->dump();
+    // finalGenSig->requirementsNotSatisfiedBy(<#GenericSignature *otherSig#>)
+    // finalGenSig->isRequirementSatisfied(<#Requirement requirement#>)
+    whereClauseGenSig = finalGenSig;
+    whereClauseGenEnv = whereClauseGenSig->createGenericEnvironment();
+    // whereClauseGenSig->createGenericEnvironment()
+    // whereClauseGenSig->get
+    attr->setRequirements(ctx, convertedRequirements);
+  }
+  /*
+  GenericSignatureBuilder builder(ctx);
+  if (whereClauseGenSig)
+    builder.addGenericSignature(whereClauseGenSig);
+  */
+  llvm::errs() << "OKAY END GENERIC SIGNATURE STUFF\n";
+  // END NEW
 
   // Resolve the primal declaration, if it exists.
   FuncDecl *primal = nullptr;
@@ -2375,7 +2634,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   auto *checkedWrtParamIndices = autoDiffParameterIndicesBuilder.build(ctx);
 
   // This can happen when someone puts the attribute on an instance method with
-  // no paramters (other than the self parameter), and does not specify a wrt
+  // no parameters (other than the self parameter), and does not specify a wrt
   // list.
   if (checkedWrtParamIndices->isEmpty()) {
     TC.diagnose(attr->getLocation(), diag::differentiable_attr_wrt_nothing,
@@ -2416,7 +2675,65 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
 
     // We also require that all the wrt params have associated tangent/cotangent
     // spaces.
+    // wrtParamType->dump();
+    // llvm::errs() << "HAS ARCHETYPE? " << wrtParamType->hasArchetype() << "\n";
+    // llvm::errs() << "HAS TYPE PARAMETER? " << wrtParamType->hasTypeParameter() << "\n";
+    // llvm::errs() << "HAS TYPE VARIABLE? " << wrtParamType->hasTypeVariable() << "\n";
+    // llvm::errs() << "HAS UNBOUND GENERIC TYPE? " << wrtParamType->hasUnboundGenericType() << "\n";
+    // llvm::errs() << "WRT PARAM TYPE INFO\n";
+    // wrtParamType->dump();
+    // wrtParamType->getCanonicalType()->dump();
+    /*
+    if (auto archetype = wrtParamType->getAs<ArchetypeType>()) {
+      llvm::errs() << "WRT PARAM TYPE GENERIC TYPE\n";
+      // archetype->getInterfaceType()->dump();
+      whereClauseGenSig->createGenericEnvironment()->mapTypeIntoContext(archetype->getInterfaceType())->dump();
+      // whereClauseGenSig->getCanonicalTypeInContext(archetype->getInterfaceType())->dump();
+      // archetype->getConformsTo()
+      wrtParamType = whereClauseGenSig->createGenericEnvironment()->mapTypeIntoContext(archetype->getInterfaceType());
+    }
+    if (whereClauseGenSig) {
+      llvm::errs() << "WRT PARAM TYPE WHERE CLAUSE\n";
+      whereClauseGenSig->getCanonicalTypeInContext(wrtParamType)->dump();
+    }
+     */
+    llvm::errs() << "WRT PARAM TYPE\n";
+    wrtParamType->dump();
+    if (whereClauseGenEnv) {
+      /*
+      if (auto archetype = wrtParamType->getAs<ArchetypeType>()) {
+        llvm::errs() << "WRT PARAM TYPE WHERE CLAUSE\n";
+        // wrtParamType = whereClauseGenEnv->mapTypeIntoContext(wrtParamType);
+        auto wrtParamInterfaceType = archetype->getInterfaceType();
+        whereClauseGenEnv->mapTypeIntoContext(archetype)->dump();
+        wrtParamType = whereClauseGenEnv->mapTypeIntoContext(wrtParamInterfaceType);
+        wrtParamType->dump();
+      }
+      llvm::errs() << "HAIL MARY\n";
+      whereClauseGenEnv->mapTypeIntoContext(wrtParamType)->dump();
+       */
+      llvm::errs() << "WRT PARAM TYPE WHERE CLAUSE\n";
+      // wrtParamType = whereClauseGenEnv->mapTypeIntoContext(wrtParamType);
+      auto wrtParamInterfaceType = !wrtParamType->hasTypeParameter() ?
+      wrtParamType->mapTypeOutOfContext() :
+      wrtParamType;
+      wrtParamType = whereClauseGenEnv->mapTypeIntoContext(wrtParamInterfaceType);
+      wrtParamType->dump();
+    }
+    /*
+    if (wrtParamType->hasArchetype() || wrtParamType->hasTypeParameter()) {
+      llvm::errs() << "WRT PARAM HAS ARCHETYPE TYPE\n";
+      wrtParamType->dump();
+    }
+     */
     if (!hasAssociatedSpaces(wrtParamType)) {
+      /*
+      if (wrtParamType->hasArchetype() || wrtParamType->hasTypeParameter()) {
+        llvm::errs() << "ADD WRT PARM ARCHETYPE TYPE\n";
+        wrtParamArchetypes.push_back(std::make_pair(wrtParamType, i));
+        continue;
+      }
+       */
       TC.diagnose(loc, diag::differentiable_attr_wrt_not_differentiable,
                   wrtParamType);
       attr->setInvalid();
@@ -2431,8 +2748,25 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
       unwrapped = unwrapped->getResult()->castTo<AnyFunctionType>();
     Type originalResult = unwrapped->getResult();
     if (auto *resultTuple = originalResult->getAs<TupleType>()) {
-      for (auto &resultTupleElt : resultTuple->getElements()) {
-        if (!hasAssociatedSpaces(resultTupleElt.getType())) {
+      // for (auto &resultTupleElt : resultTuple->getElements()) {
+      for (unsigned i : range(resultTuple->getNumElements())) {
+        auto &resultTupleElt = resultTuple->getElement(i);
+        auto resultTupleEltType = resultTupleElt.getType();
+        if (whereClauseGenEnv) {
+          llvm::errs() << "RESULT TUPLE ELT TYPE WHERE CLAUSE\n";
+          // resultTupleEltType = whereClauseGenEnv->mapTypeIntoContext(resultTupleEltType);
+          resultTupleEltType = whereClauseGenEnv->mapTypeIntoContext(resultTupleEltType->mapTypeOutOfContext());
+          resultTupleEltType->dump();
+        }
+        if (!hasAssociatedSpaces(resultTupleEltType)) {
+          /*
+          if (resultTupleEltType->hasArchetype() ||
+              resultTupleEltType->hasTypeParameter()) {
+            llvm::errs() << "ADD RESULT PARAM ARCHETYPE TYPE\n";
+            wrtParamArchetypes.push_back(std::make_pair(resultTupleEltType, i));
+            continue;
+          }
+           */
           TC.diagnose(attr->getLocation(),
                       diag::differentiable_attr_result_not_differentiable,
                       resultTupleElt.getType());
@@ -2441,12 +2775,52 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
         }
       }
     } else {
+      /*
+      llvm::errs() << "ORIGINAL RESULT TYPE INFO\n";
+      originalResult->dump();
+      if (whereClauseGenSig) {
+        llvm::errs() << "ORIGINAL RESULT TYPE WHERE CLAUSE\n";
+        whereClauseGenSig->getCanonicalTypeInContext(originalResult)->dump();
+      }
+      llvm::errs() << "HAS ARCHETYPE? " << originalResult->hasArchetype() << "\n";
+      llvm::errs() << "HAS TYPE PARAMETER? " << originalResult->hasTypeParameter() << "\n";
+      llvm::errs() << "HAS TYPE VARIABLE? " << originalResult->hasTypeVariable() << "\n";
+      llvm::errs() << "HAS UNBOUND GENERIC TYPE? " << originalResult->hasUnboundGenericType() << "\n";
+      if (originalResult->hasArchetype() || originalResult->hasTypeParameter()) {
+        llvm::errs() << "RESULT HAS ARCHETYPE\n";
+        originalResult->dump();
+      }
+       */
+      llvm::errs() << "ORIGINAL RESULT TYPE INFO\n";
+      originalResult->dump();
+      if (whereClauseGenEnv) {
+        llvm::errs() << "RESULT TYPE WHERE CLAUSE\n";
+        // originalResult = whereClauseGenEnv->mapTypeIntoContext(originalResult);
+        auto originalResultInterfaceType = !originalResult->hasTypeParameter() ?
+        originalResult->mapTypeOutOfContext() :
+        originalResult;
+        originalResult = whereClauseGenEnv->mapTypeIntoContext(originalResultInterfaceType);
+        originalResult->dump();
+      }
       if (!hasAssociatedSpaces(originalResult)) {
         TC.diagnose(attr->getLocation(),
                     diag::differentiable_attr_result_not_differentiable,
                     originalResult);
         attr->setInvalid();
         return;
+        /*
+        if (!originalResult->hasArchetype() &&
+            !originalResult->hasTypeParameter()) {
+          TC.diagnose(attr->getLocation(),
+                      diag::differentiable_attr_result_not_differentiable,
+                      originalResult);
+          attr->setInvalid();
+          return;
+        } else {
+          llvm::errs() << "ADD RESULT PARAM ARCHETYPE TYPE\n";
+          wrtParamArchetypes.push_back(std::make_pair(originalResult, 0));
+        }
+         */
       }
     }
   }
@@ -2466,6 +2840,15 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     CanAnyFunctionType candidateFnTy = dyn_cast<AnyFunctionType>(candidate);
     if (!candidateFnTy)
       return false;
+
+    llvm::errs() << "REQUIRED FN TY\n";
+    required.dump();
+    if (auto genSig = required.getOptGenericSignature())
+      genSig->dump();
+    llvm::errs() << "CANDIDATE FN TY\n";
+    candidateFnTy.dump();
+    if (auto genSig = candidateFnTy.getOptGenericSignature())
+      genSig->dump();
 
     // Check that generic signatures match.
     if (candidateFnTy.getOptGenericSignature() !=
@@ -2499,7 +2882,8 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     AnyFunctionType *expectedAdjointFnTy =
         originalFnTy->getAutoDiffAdjointFunctionType(
             checkedWrtParamIndices, primalResultTy, lookupConformance,
-            isMethod);
+            // isMethod);
+            isMethod, whereClauseGenSig);
 
     auto isValidAdjoint = [&](FuncDecl *adjointCandidate) {
       TC.validateDeclForNameLookup(adjointCandidate);
@@ -2526,7 +2910,8 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
         originalFnTy->getAutoDiffAssociatedFunctionType(
             checkedWrtParamIndices, /*resultIndex*/ 0,
             /*differentiationOrder*/ 1, AutoDiffAssociatedFunctionKind::JVP,
-            lookupConformance);
+            // lookupConformance);
+            lookupConformance, whereClauseGenSig);
 
     auto isValidJVP = [&](FuncDecl *jvpCandidate) {
       TC.validateDeclForNameLookup(jvpCandidate);
@@ -2549,11 +2934,17 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
 
   // Resolve the VJP declaration, if it exists.
   if (attr->getVJP()) {
+    if (whereClauseGenSig) {
+      llvm::errs() << "WHERE CLAUSE\n";
+      whereClauseGenSig->dump();
+    }
     AnyFunctionType *expectedVJPFnTy =
         originalFnTy->getAutoDiffAssociatedFunctionType(
             checkedWrtParamIndices, /*resultIndex*/ 0,
             /*differentiationOrder*/ 1, AutoDiffAssociatedFunctionKind::VJP,
-            lookupConformance);
+            // lookupConformance);
+            lookupConformance, whereClauseGenSig);
+    expectedVJPFnTy->dump();
 
     auto isValidVJP = [&](FuncDecl *vjpCandidate) {
       TC.validateDeclForNameLookup(vjpCandidate);

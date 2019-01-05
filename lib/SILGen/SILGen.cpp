@@ -772,9 +772,14 @@ void SILGenModule::emitAbstractFuncDecl(AbstractFunctionDecl *AFD) {
   auto paramIndices = diffAttr->getCheckedParameterIndices()->getLowered(
       AFD->getInterfaceType()->castTo<AnyFunctionType>());
   SILAutoDiffIndices indices(/*source*/ 0, paramIndices);
+  llvm::errs() << "HI SIL GEN DIFF REQS" << diffAttr->getRequirements().size() << "\n";
+  for (auto req : diffAttr->getRequirements())
+    req.dump();
   silOriginalFn->addDifferentiableAttr(SILDifferentiableAttr::create(
       M, indices, primName, adjName,
-      /*primitive*/ hasPrimitiveAdjoint, jvpName, vjpName));
+      /*primitive*/ hasPrimitiveAdjoint, jvpName, vjpName,
+     // diffAttr->getRequirements()));
+     diffAttr->getRequirements()));
 }
 
 void SILGenModule::emitFunction(FuncDecl *fd) {

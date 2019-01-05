@@ -4109,7 +4109,7 @@ bool GenericSignatureBuilder::addGenericParameterRequirements(
                                            GenericTypeParamDecl *GenericParam) {
   GenericParamKey Key(GenericParam);
   auto PA = Impl->PotentialArchetypes[Key.findIndexIn(getGenericParams())];
-  
+
   // Add the requirements from the declaration.
   return isErrorResult(
            addInheritedRequirements(GenericParam, PA, nullptr,
@@ -4177,6 +4177,8 @@ static ConstraintResult visitInherited(
                             TypeResolutionStage::Structural},
                           Type());
     if (!inheritedType) continue;
+    llvm::errs() << "INHERITED TYPE:\n";
+    inheritedType->dump();
 
     const auto &inherited = inheritedTypes[index];
     visitInherited(inheritedType, inherited.getTypeRepr());
@@ -4192,6 +4194,8 @@ ConstraintResult GenericSignatureBuilder::expandConformanceRequirement(
                                             bool onlySameTypeConstraints) {
   auto protocolSubMap = SubstitutionMap::getProtocolSubstitutions(
       proto, selfType.getDependentType(*this), ProtocolConformanceRef(proto));
+  // llvm::errs() << "GenericSignatureBuilder::expandConformanceRequirement\n";
+  // selfType.getDependentType(*this)->dump();
 
   // Use the requirement signature to avoid rewalking the entire protocol.  This
   // cannot compute the requirement signature directly, because that may be
@@ -5279,8 +5283,10 @@ ConstraintResult GenericSignatureBuilder::addInheritedRequirements(
 
     // We are inferring requirements.
     if (forInferred) {
+      llvm::errs() << "FORINFERRED TYPE REPR\n";
       return FloatingRequirementSource::forInferred(typeRepr);
     }
+    llvm::errs() << "EXPLICIT TYPE REPR\n";
 
     // Explicit requirement.
     if (typeRepr)
@@ -5292,10 +5298,12 @@ ConstraintResult GenericSignatureBuilder::addInheritedRequirements(
 
   auto visitType = [&](Type inheritedType, const TypeRepr *typeRepr) {
     if (inferForModule) {
+      llvm::errs() << "INFER FOR MODULE\n";
       inferRequirements(*inferForModule, inheritedType, typeRepr,
                         getFloatingSource(typeRepr, /*forInferred=*/true));
     }
 
+    llvm::errs() << "NO INFER FOR MODULE, ADD TYPE REQUIREMENT\n";
     return addTypeRequirement(
         type, inheritedType, getFloatingSource(typeRepr,
                                                /*forInferred=*/false),

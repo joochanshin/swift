@@ -4864,12 +4864,20 @@ static std::pair<GenericEnvironment *, Type>
 checkExtensionGenericParams(TypeChecker &tc, ExtensionDecl *ext, Type type,
                             GenericParamList *genericParams) {
   assert(!ext->getGenericEnvironment());
+  llvm::errs() << "checkExtensionGenericParams\n";
+  ext->dump();
+  type->dump();
+  for (auto genParam : *genericParams) {
+    genParam->dump();
+  }
 
   // Form the interface type of the extension.
   bool mustInferRequirements = false;
   Type extInterfaceType =
     formExtensionInterfaceType(tc, ext, type, genericParams,
                                mustInferRequirements);
+  llvm::errs() << "checkExtensionGenericParams extension interface type\n";
+  extInterfaceType->dump();
 
   // Prepare all of the generic parameter lists for generic signature
   // validation.

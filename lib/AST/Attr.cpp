@@ -602,6 +602,39 @@ bool DeclAttribute::printImpl(ASTPrinter &Printer, const PrintOptions &Options,
       Printer << "vjp: " << vjp->Name;
     }
     // FIXME: Print 'where' clause, if any.
+    if (!attr->getRequirements().empty()) {
+      Printer << " where ";
+      std::function<Type(Type)> getInterfaceType;
+      auto *original = dyn_cast<AbstractFunctionDecl>(D);
+      if (auto varDecl = dyn_cast<VarDecl>(D)) {
+        original = varDecl->getGetter();
+      }
+      if (!original || !original->getGenericEnvironment())
+        getInterfaceType = [](Type Ty) -> Type { return Ty; };
+      else {
+        // Use GenericEnvironment to produce user-friendly
+        // names instead of something like t_0_0.
+        auto *genericEnv = original->getGenericEnvironment();
+        assert(genericEnv);
+        getInterfaceType = [=](Type Ty) -> Type {
+          return genericEnv->getSugaredType(Ty);
+        };
+      }
+      interleave(attr->getRequirements(),
+          [&](Requirement req) {
+        auto FirstTy = getInterfaceType(req.getFirstType());
+        if (req.getKind() != RequirementKind::Layout) {
+          auto SecondTy = getInterfaceType(req.getSecondType());
+          Requirement ReqWithDecls(req.getKind(), FirstTy, SecondTy);
+          ReqWithDecls.print(Printer, Options);
+        } else {
+          Requirement ReqWithDecls(req.getKind(), FirstTy,
+          req.getLayoutConstraint());
+          ReqWithDecls.print(Printer, Options);
+        }
+      },
+      [&] { Printer << ", "; });
+    }
     Printer << ")";
     break;
   }
@@ -1035,8 +1068,15 @@ DifferentiableAttr::create(ASTContext &context, SourceLoc atLoc,
                            Optional<DeclNameWithLoc> vjp,
                            TrailingWhereClause *clause) {
   unsigned numParams = parameters.size();
+  /*
   unsigned size = sizeof(DifferentiableAttr) +
     numParams * sizeof(AutoDiffParameter);
+  void *mem = context.Allocate(size, alignof(DifferentiableAttr));
+   */
+  unsigned size = sizeof(DifferentiableAttr) +
+    numParams * sizeof(AutoDiffParameter);
+  if (clause)
+    size += clause->getRequirements().size() * sizeof(Requirement);
   void *mem = context.Allocate(size, alignof(DifferentiableAttr));
   return new (mem) DifferentiableAttr(atLoc, baseRange, parameters,
                                       std::move(primal), std::move(adjoint),
@@ -1047,6 +1087,31 @@ ArrayRef<AutoDiffParameter>
 DifferentiableAttr::getParameters() const {
   return const_cast<DifferentiableAttr *>(this)->getParameters();
 }
+
+ArrayRef<Requirement>
+DifferentiableAttr::getRequirements() const {
+  return const_cast<DifferentiableAttr *>(this)->getRequirements();
+}
+void DifferentiableAttr::setRequirements(ASTContext &ctx,
+                                         ArrayRef<Requirement> requirements) {
+  /*
+  Requirement *reqBuf = reinterpret_cast<Requirement *>(ctx.Allocate(requirements.size() * sizeof(Requirement), alignof(DifferentiableAttr)));
+  Requirements = MutableArrayRef<Requirement>(
+                                              reqBuf, requirements.size());
+  std::uninitialized_copy(requirements.begin(), requirements.end(), Requirements.data());
+   */
+  unsigned numClauseRequirements =
+  (WhereClause) ? WhereClause->getRequirements().size() : 0;
+  assert(requirements.size() <= numClauseRequirements &&
+         "Requirements size must not exceed number of requirements used for "
+         "allocation");
+  if (!numClauseRequirements)
+    return;
+  NumRequirements = numClauseRequirements;
+  std::copy(requirements.begin(), requirements.end(), getRequirementsData());
+
+}
+
 
 ImplementsAttr::ImplementsAttr(SourceLoc atLoc, SourceRange range,
                                TypeLoc ProtocolType,

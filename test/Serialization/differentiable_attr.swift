@@ -98,3 +98,20 @@ func vjpSimple(x: Float) -> Float {
 func vjpSimpleVJP(x: Float) -> (Float, (Float) -> Float) {
   return (x, { v in v })
 }
+
+// CHECK-DAG: @differentiable(where T : Differentiable, T == T.CotangentVector)
+// CHECK-DAG: func testWhereClause<T : Numeric>(x: T) -> T {
+@differentiable(where T : Differentiable, T == T.CotangentVector)
+func testWhereClause<T : Numeric>(x: T) -> T {
+  return x
+}
+
+protocol P {}
+extension P {
+  // CHECK-DAG: @differentiable(wrt: (self) where Self == Self.TangentVector, Self : Differentiable)
+  // CHECK-DAG: func testWhereClause() -> Self {
+  @differentiable(wrt: (self) where Self == Self.TangentVector, Self : Differentiable)
+  func testWhereClause() -> Self {
+    return self
+  }
+}

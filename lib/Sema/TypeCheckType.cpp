@@ -188,6 +188,8 @@ Type TypeResolution::resolveDependentMemberType(
     if (!singleType) {
       Identifier name = ref->getIdentifier();
       SourceLoc nameLoc = ref->getIdLoc();
+      llvm::errs() << "BASE TYPE\n";
+      baseTy->dump();
       ctx.Diags.diagnose(nameLoc, diag::invalid_member_type, name, baseTy)
         .highlight(baseRange);
       corrections.noteAllCandidates();
@@ -1107,6 +1109,8 @@ static Type diagnoseUnknownType(TypeResolution resolution,
 
   // Qualified lookup case.
   if (!parentType->mayHaveMembers()) {
+    llvm::errs() << "BASE TYPE 2\n";
+    parentType->dump();
     diags.diagnose(comp->getIdLoc(), diag::invalid_member_type,
                    comp->getIdentifier(), parentType)
         .highlight(parentRange);
@@ -1164,6 +1168,8 @@ static Type diagnoseUnknownType(TypeResolution resolution,
                      parentType)
           .highlight(parentRange);
     } else {
+      llvm::errs() << "BASE TYPE 3\n";
+      parentType->dump();
       diags.diagnose(comp->getIdLoc(), diag::invalid_member_type,
                      comp->getIdentifier(), parentType)
         .highlight(parentRange);

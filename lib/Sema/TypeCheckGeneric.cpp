@@ -53,26 +53,37 @@ void checkGenericParamList(TypeChecker &tc,
   // Determine where and how to perform name lookup.
   DeclContext *lookupDC = genericParams->begin()[0]->getDeclContext();
   assert(lookupDC == resolution.getDeclContext());
+  llvm::errs() << "PERFORMING NAME LOOKUP HERE!\n";
+  lookupDC->dumpContext();
 
   // First, add the generic parameters to the generic signature builder.
   // Do this before checking the inheritance clause, since it may
   // itself be dependent on one of these parameters.
   if (builder) {
-    for (auto param : *genericParams)
+    for (auto param : *genericParams) {
+      llvm::errs() << "BUILDER ADD GENERIC PRAMETER\n";
       builder->addGenericParameter(param);
+    }
   }
 
   // Add the requirements for each of the generic parameters to the builder.
   // Now, check the inheritance clauses of each parameter.
   if (builder) {
-    for (auto param : *genericParams)
+    for (auto param : *genericParams) {
+      llvm::errs() << "BUILDER ADD GENERIC PRAMETER REQUIREMENTS\n";
       builder->addGenericParameterRequirements(param);
+    }
   }
-
 
   // Add the requirements clause to the builder.
   if (builder) {
     WhereClauseOwner owner(resolution.getDeclContext(), genericParams);
+    auto requirements = RequirementRequest::getRequirements(owner);
+    llvm::errs() << "REQ REPRS\n";
+    for (auto reqRepr : requirements)
+      reqRepr.dump();
+    simple_display(llvm::errs(), resolution.getStage());
+    llvm::errs() << "\n";
     using FloatingRequirementSource =
       GenericSignatureBuilder::FloatingRequirementSource;
     RequirementRequest::visitRequirements(owner, resolution.getStage(),
@@ -709,6 +720,8 @@ GenericEnvironment *TypeChecker::checkGenericEnvironment(
       visitOuterToInner(genericParams,
                         [&](GenericParamList *gpList) {
       auto genericParamsDC = gpList->begin()[0]->getDeclContext();
+                          llvm::errs() << "HELLO GEN PARAM DC 1\n";
+                          genericParamsDC->dumpContext();
       TypeResolution structuralResolution =
         TypeResolution::forStructural(genericParamsDC);
         checkGenericParamList(*this, &builder, gpList, nullptr,
@@ -716,6 +729,8 @@ GenericEnvironment *TypeChecker::checkGenericEnvironment(
       });
     } else {
       auto genericParamsDC = genericParams->begin()[0]->getDeclContext();
+      llvm::errs() << "HELLO GEN PARAM DC 2\n";
+      genericParamsDC->dumpContext();
       TypeResolution structuralResolution =
         TypeResolution::forStructural(genericParamsDC);
       checkGenericParamList(*this, &builder, genericParams, parentSig,
@@ -723,7 +738,7 @@ GenericEnvironment *TypeChecker::checkGenericEnvironment(
     }
 
     /// Perform any necessary requirement inference.
-    inferRequirements(builder);
+    // inferRequirements(builder);
 
     // Record the generic type parameter types and the requirements.
     sig = std::move(builder).computeGenericSignature(

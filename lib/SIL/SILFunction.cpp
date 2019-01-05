@@ -63,10 +63,13 @@ SILDifferentiableAttr(const SILAutoDiffIndices &indices,
                       StringRef adjointName,
                       bool adjointIsPrimitive,
                       StringRef jvpName,
-                      StringRef vjpName)
+                      StringRef vjpName,
+                      ArrayRef<Requirement> requirements)
   : indices(indices), PrimalName(primalName), AdjointName(adjointName),
-    AdjointIsPrimitive(adjointIsPrimitive), JVPName(jvpName), VJPName(vjpName)
-    {}
+    AdjointIsPrimitive(adjointIsPrimitive), JVPName(jvpName), VJPName(vjpName),
+    NumRequirements(requirements.size()) {
+  std::copy(requirements.begin(), requirements.end(), getRequirementsData());
+}
 
 SILDifferentiableAttr *
 SILDifferentiableAttr::create(SILModule &M,
@@ -75,12 +78,21 @@ SILDifferentiableAttr::create(SILModule &M,
                               StringRef adjointName,
                               bool adjointIsPrimitive,
                               StringRef jvpName,
-                              StringRef vjpName) {
-  void *mem = M.allocate(sizeof(SILDifferentiableAttr),
-                         alignof(SILDifferentiableAttr));
+                              StringRef vjpName,
+                              ArrayRef<Requirement> requirements) {
+  // void *mem = M.allocate(sizeof(SILDifferentiableAttr),
+  //                        alignof(SILDifferentiableAttr));
+  unsigned size =
+      sizeof(SILDifferentiableAttr) + requirements.size() * sizeof(Requirement);
+  void *mem = M.allocate(size, alignof(SILDifferentiableAttr));
   return ::new (mem)
       SILDifferentiableAttr(indices, primalName, adjointName,
-                            adjointIsPrimitive, jvpName, vjpName);
+                            adjointIsPrimitive, jvpName, vjpName, requirements);
+}
+
+void SILFunction::addDifferentiableAttr(SILDifferentiableAttr *attr) {
+  attr->Original = this;
+  DifferentiableAttrs.push_back(attr);
 }
 
 SILFunction *SILFunction::create(

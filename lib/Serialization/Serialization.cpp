@@ -2390,6 +2390,12 @@ void Serializer::writeDeclAttribute(const DeclAttribute *DA) {
     // TODO: Serialize trailing where clause.
     // Type-checking where clause should be done first (mimicking the
     // @_specialize attribute).
+    // ArrayRef<Requirement> requirements;
+    // if (auto whereClause = attr->getWhereClause()) {
+    //   requirements = whereClause->getRequirements();
+    // }
+    // writeGenericRequirements(requirements, DeclTypeAbbrCodes);
+    writeGenericRequirements(attr->getRequirements(), DeclTypeAbbrCodes);
     return;
   }
   }

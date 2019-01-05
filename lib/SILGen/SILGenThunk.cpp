@@ -251,7 +251,9 @@ void SILGenModule::emitCurryThunk(SILDeclRef constant) {
       /*adjointName*/ StringRef(),
       /*adjointIsPrimitive*/ false,
       /*jvpName*/ assocFnNames[0],
-      /*vjpName*/ assocFnNames[1]);
+      // /*vjpName*/ assocFnNames[1]);
+      /*vjpName*/ assocFnNames[1],
+      /*requirements*/ DA->getRequirements());
   f->addDifferentiableAttr(SILDA);
 }
 

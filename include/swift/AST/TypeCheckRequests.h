@@ -219,9 +219,13 @@ struct WhereClauseOwner {
   /// The declaration context in which the where clause will be evaluated.
   DeclContext *dc;
 
+  // SWIFT_ENABLE_TENSORFLOW
   /// The source of the where clause, which can be a generic parameter list
   /// or a declaration that can have a where clause.
-  llvm::PointerUnion3<GenericParamList *, Decl *, SpecializeAttr *> source;
+  // llvm::PointerUnion3<GenericParamList *, Decl *, DeclAttribute *> source;
+  llvm::PointerUnion4<GenericParamList *, Decl *, SpecializeAttr *,
+                      DifferentiableAttr *>
+      source;
 
   WhereClauseOwner(Decl *decl);
 
@@ -230,6 +234,10 @@ struct WhereClauseOwner {
 
   WhereClauseOwner(DeclContext *dc, SpecializeAttr *attr)
     : dc(dc), source(attr) { }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  WhereClauseOwner(DeclContext *dc, DifferentiableAttr *attr)
+    : dc(dc), source(attr) {}
 
   SourceLoc getLoc() const;
 

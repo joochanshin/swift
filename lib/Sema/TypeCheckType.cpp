@@ -162,9 +162,18 @@ Type TypeResolution::resolveDependentMemberType(
 
   ASTContext &ctx = baseTy->getASTContext();
 
+  // llvm::errs() << "BUILDER\n";
+  // builder->dump();
+  llvm::errs() << "BASE TYPE\n";
+  baseTy->dump();
+  llvm::errs() << "BASE EQUIV CLASS\n";
+  baseEquivClass->dump();
+  // assert(false);
   // Look for a nested type with the given name.
   if (auto nestedType =
           baseEquivClass->lookupNestedType(*builder, ref->getIdentifier())) {
+    llvm::errs() << "FOUND NESTED\n";
+    nestedType->dump();
     // Record the type we found.
     ref->setValue(nestedType, nullptr);
   } else {

@@ -674,6 +674,14 @@ serialization::TypeID Serializer::addTypeRef(Type ty) {
     return id;
 
   id = ++LastTypeID;
+    llvm::errs() << "SERIALIZER ADDING TYPE\n";
+    ty->dump();
+    if (auto depTy = ty->getAs<DependentMemberType>()) {
+      if (!depTy->getAssocType()) {
+        depTy->dump();
+        assert(false && "we got a failure");
+      }
+    }
   DeclsAndTypesToWrite.push(ty);
   return id;
 }

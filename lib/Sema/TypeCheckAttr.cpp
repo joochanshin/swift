@@ -2315,7 +2315,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     // Form a new generic signature.
     GenericSignatureBuilder builder(ctx);
     // First, add the old generic signature.
-    builder.addGenericSignature(genericSig);
+    // builder.addGenericSignature(genericSig);
     // Go over the set of requirements, adding them to the builder.
     SmallVector<Requirement, 4> convertedRequirements;
 
@@ -2326,13 +2326,47 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     WhereClauseOwner owner(original, attr);
     if (auto nominal = original->getDeclContext()->getSelfNominalTypeDecl()) {
       if (auto proto = dyn_cast<ProtocolDecl>(nominal)) {
+        if (!proto->isRequirementSignatureComputed())
+          proto->computeRequirementSignature();
+
         auto DC = original->getDeclContext();
         auto genericParams = proto->createGenericParams(DC);
+        // auto genericParams = proto->createGenericParams(original);
         TC.prepareGenericParamList(genericParams, DC);
         genericParams->addTrailingWhereClause(ctx, whereClause->getWhereLoc(),
                                               whereClause->getRequirements());
         owner = WhereClauseOwner(original, genericParams);
+
+        // NOTE: Maybe add parent gen sig?
+        for (auto param : *genericParams)
+          builder.addGenericParameter(param);
+        llvm::errs() << "AFTER BUILDER ADD GENERIC PARAMS\n";
+        builder.dump();
+
+        for (auto param : *genericParams)
+          builder.addGenericParameterRequirements(param);
+        llvm::errs() << "AFTER BUILDER ADD GENERIC PARAM REQUIREMENTS\n";
+        builder.dump();
+        // builder.addGenericSignature(genericSig);
       }
+    } else {
+      // First, add the old generic signature.
+      llvm::errs() << "NOTE: BIG DEAL WE REACHED HERE\n";
+      // builder.addGenericSignature(genericSig);
+      // auto genericParams = GenericParamList::create(ctx, SourceLoc(), <#ArrayRef<GenericTypeParamDecl *> Params#>, <#SourceLoc RAngleLoc#>)
+      // auto genericParams = GenericParamList::create(ctx, SourceLoc(), genericSig->getGenericParams(), <#SourceLoc RAngleLoc#>)
+      auto genericParams = original->getGenericParams();
+      for (auto param : *genericParams)
+        builder.addGenericParameter(param);
+      llvm::errs() << "AFTER BUILDER ADD GENERIC PARAMS\n";
+      // builder.dump();
+
+      for (auto param : *genericParams)
+        builder.addGenericParameterRequirements(param);
+      llvm::errs() << "AFTER BUILDER ADD GENERIC PARAM REQUIREMENTS\n";
+      // builder.dump();
+
+      builder.inferRequirements(*original->getModuleContext(), original->getParameters(), original->getGenericParams());
     }
 
     using FloatingRequirementSource =
@@ -2340,6 +2374,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
 
     RequirementRequest::visitRequirements(
       owner, TypeResolutionStage::Structural,
+      // owner, TypeResolutionStage::Interface,
       [&](const Requirement &req, RequirementRepr *reqRepr) {
         // Check additional constraints.
         // TODO: refine constraints.
@@ -2377,16 +2412,30 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
         builder.addRequirement(req, reqRepr,
                                FloatingRequirementSource::forExplicit(reqRepr),
                                nullptr, original->getModuleContext());
+        req.dump();
+        assert(!req.getFirstType()->hasUnboundGenericType());
+        assert(!req.getSecondType()->hasUnboundGenericType());
         convertedRequirements.push_back(getCanonicalRequirement(req));
         return false;
       });
+
+    // llvm::errs() << "AFTER BUILDER VISIT REQUIREMENTS\n";
+    // builder.dump();
+
+    RequirementRequest::visitRequirements(owner,
+                                          TypeResolutionStage::Interface,
+                                          [](Requirement, RequirementRepr *) {
+                                            return false;
+                                          });
 
     // Store the converted requirements in the attribute.
     attr->setRequirements(ctx, convertedRequirements);
     whereClauseGenSig = std::move(builder).computeGenericSignature(
         attr->getLocation(), /*allowConcreteGenericParams=*/true);
+    whereClauseGenSig->dump();
     whereClauseGenEnv = whereClauseGenSig->createGenericEnvironment();
-    whereClauseGenEnv->setOwningDeclContext(original->getDeclContext());
+    // whereClauseGenEnv->setOwningDeclContext(original->getDeclContext());
+
   }
 
   // Resolve the primal declaration, if it exists.
@@ -2628,6 +2677,18 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
       return false;
 
     // Check that generic signatures match.
+    if (auto genSig = candidateFnTy.getOptGenericSignature()) {
+      llvm::errs() << "CANDIDATE GEN SIG\n";
+      genSig->dump();
+    }
+    if (auto genSig = required.getOptGenericSignature()) {
+      llvm::errs() << "REQUIRED GEN SIG\n";
+      genSig->dump();
+      if (auto whereGenSig = whereClauseGenSig) {
+        llvm::errs() << "REQUIRED GEN SIG\n";
+        whereGenSig->getCanonicalSignature()->dump();
+      }
+    }
     if (candidateFnTy.getOptGenericSignature() !=
         required.getOptGenericSignature())
       return false;

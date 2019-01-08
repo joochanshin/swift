@@ -60,6 +60,9 @@ void checkGenericParamList(TypeChecker &tc,
   if (builder) {
     for (auto param : *genericParams)
       builder->addGenericParameter(param);
+
+    llvm::errs() << "AFTER BUILDER ADD GENERIC PARAMS\n";
+    // builder->dump();
   }
 
   // Add the requirements for each of the generic parameters to the builder.
@@ -67,8 +70,10 @@ void checkGenericParamList(TypeChecker &tc,
   if (builder) {
     for (auto param : *genericParams)
       builder->addGenericParameterRequirements(param);
-  }
 
+    llvm::errs() << "AFTER BUILDER ADD GENERIC PARAM REQUIREMENTS\n";
+    // builder->dump();
+  }
 
   // Add the requirements clause to the builder.
   if (builder) {
@@ -82,6 +87,9 @@ void checkGenericParamList(TypeChecker &tc,
                                   lookupDC->getParentModule());
           return false;
         });
+
+    llvm::errs() << "AFTER BUILDER VISIT REQUIREMENTS\n";
+    // builder->dump();
   }
 }
 

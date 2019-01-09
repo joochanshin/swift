@@ -28,7 +28,7 @@ public func sigmoid<T>(_ x: Tensor<T>) -> Tensor<T>
 /// Computes `relu` of the specified tensor element-wise.
 /// Specifically, computes `max(0, x)`.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointRelu(_:_:_:))
+@differentiable(vjp: _vjpRelu(_:))
 public func relu<T>(_ x: Tensor<T>) -> Tensor<T>
   where T : Differentiable & FloatingPoint
 {

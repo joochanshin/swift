@@ -80,7 +80,7 @@ extension Tensor : AdditiveArithmetic where Scalar : Numeric {
   /// - Note: `+` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointAdd(_:_:_:_:)
+    vjp: _vjpAdd(lhs:rhs:)
     where Scalar : Differentiable & FloatingPoint
   )
   public static func + (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -91,7 +91,7 @@ extension Tensor : AdditiveArithmetic where Scalar : Numeric {
   /// - Note: `-` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointSubtract(_:_:_:_:)
+    vjp: _vjpSubtract(lhs:rhs:)
     where Scalar : Differentiable & FloatingPoint
   )
   public static func - (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -107,6 +107,11 @@ extension Tensor : VectorNumeric where Scalar : Numeric {
   /// Multiplies the scalar with every scalar of the tensor and produces the
   /// product.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpMultiply(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   public static func * (lhs: Scalar, rhs: Tensor) -> Tensor {
     return Tensor(lhs) * rhs
   }
@@ -132,12 +137,22 @@ extension Tensor : Differentiable
 public extension Tensor where Scalar : Numeric {
   /// Adds the scalar to every scalar of the tensor and produces the sum.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpAdd(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func + (lhs: Scalar, rhs: Tensor) -> Tensor {
     return Tensor(lhs) + rhs
   }
 
   /// Adds the scalar to every scalar of the tensor and produces the sum.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpAdd(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func + (lhs: Tensor, rhs: Scalar) -> Tensor {
     return lhs + Tensor(rhs)
   }
@@ -145,6 +160,11 @@ public extension Tensor where Scalar : Numeric {
   /// Subtracts the scalar from every scalar of the tensor and produces the
   /// difference.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpSubtract(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func - (lhs: Scalar, rhs: Tensor) -> Tensor {
     return Tensor(lhs) - rhs
   }
@@ -152,6 +172,11 @@ public extension Tensor where Scalar : Numeric {
   /// Subtracts the scalar from every scalar of the tensor and produces the
   /// difference.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpSubtract(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func - (lhs: Tensor, rhs: Scalar) -> Tensor {
     return lhs - Tensor(rhs)
   }
@@ -189,7 +214,7 @@ public extension Tensor where Scalar : Numeric {
   /// - Note: `*` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointMultiply(_:_:_:_:)
+    vjp: _vjpMultiply(lhs:rhs:)
     where Scalar : Differentiable & FloatingPoint
   )
   static func * (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -199,6 +224,11 @@ public extension Tensor where Scalar : Numeric {
   /// Multiplies the scalar with every scalar of the tensor and produces the
   /// product.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpMultiply(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func * (lhs: Tensor, rhs: Scalar) -> Tensor {
     return lhs * Tensor(rhs)
   }
@@ -220,7 +250,7 @@ public extension Tensor where Scalar : Numeric {
   /// - Note: `/` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointDivide(_:_:_:_:)
+    vjp: _vjpDivide(lhs:rhs:)
     where Scalar : Differentiable & FloatingPoint
   )
   static func / (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -230,6 +260,11 @@ public extension Tensor where Scalar : Numeric {
   /// Returns the quotient of dividing the scalar by the tensor, broadcasting
   /// the scalar.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpDivide(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func / (lhs: Scalar, rhs: Tensor) -> Tensor {
     return Tensor(lhs) / rhs
   }
@@ -237,6 +272,11 @@ public extension Tensor where Scalar : Numeric {
   /// Returns the quotient of dividing the tensor by the scalar, broadcasting
   /// the scalar.
   @inlinable @inline(__always)
+  @differentiable(
+    vjp: _vjpDivide(lhs:rhs:)
+    where Scalar : Differentiable & FloatingPoint,
+          Scalar == Scalar.CotangentVector
+  )
   static func / (lhs: Tensor, rhs: Scalar) -> Tensor {
     return lhs / Tensor(rhs)
   }
@@ -299,30 +339,30 @@ public extension Tensor where Scalar : Numeric {
 /// result.
 @inlinable @inline(__always)
 @differentiable(
-  adjoint: _adjointMatmul(_:_:_:_:)
+  vjp: _vjpMatmul(_:_:)
   where Scalar : Differentiable & FloatingPoint
 )
 public func matmul<Scalar : Numeric>(
-  _ left: Tensor<Scalar>, _ right: Tensor<Scalar>
+  _ lhs: Tensor<Scalar>, _ rhs: Tensor<Scalar>
 ) -> Tensor<Scalar> {
   // Default arguments specified explicitly to avoid "external declarations of
   // SILFunctions with shared visibility is not allowed" SILVerifier error in
   // "tests/AutoDiff/tensor_autodiff_runtime.swift".
-  return Raw.matMul(left, right, transposeA: false, transposeB: false)
+  return Raw.matMul(lhs, rhs, transposeA: false, transposeB: false)
 }
 
 infix operator • : MultiplicationPrecedence
 
 public extension Tensor where Scalar : Numeric {
-  // TODO: We have to define a custom adjoint on • because AD can't yet
+  // TODO: We have to define a custom VJP on • because AD can't yet
   // differentiate generic methods. After AD can differentiate generic methods,
-  // remove the custom adjoint.
+  // remove the custom VJP.
 
   /// Performs matrix multiplication between two tensors and produces the
   /// result.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointMatmulOperator(seed:originalValue:lhs:rhs:)
+    vjp: _vjpMatmulOperator(lhs:rhs:)
     where Scalar : Differentiable & FloatingPoint
   )
   static func • (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -592,7 +632,7 @@ public extension Tensor {
   /// order.
   @inlinable @inline(__always)
   @differentiable(
-    wrt: (self), adjoint: _adjointTransposed(_:_:_:)
+    wrt: (self), vjp: _vjpTransposed(withPermutations:)
     where Scalar : Differentiable & FloatingPoint
   )
   func transposed(
@@ -718,7 +758,7 @@ public extension Tensor where Scalar : SignedNumeric {
   /// Computes the negation of the specified tensor element-wise.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointNegate(_:_:_:)
+    vjp: _vjpNegate(_:)
     where Scalar : Differentiable & FloatingPoint
   )
   static prefix func - (rhs: Tensor) -> Tensor {
@@ -734,91 +774,91 @@ public func abs<T : SignedNumeric>(_ x: Tensor<T>) -> Tensor<T> {
 
 /// Computes the natural logarithm of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointLog(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpLog(_:) where T : Differentiable)
 public func log<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.log(x)
 }
 
 /// Computes `sin` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointSin(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpSin(_:) where T : Differentiable)
 public func sin<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.sin(x)
 }
 
 /// Computes `cos` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointCos(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpCos(_:) where T : Differentiable)
 public func cos<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.cos(x)
 }
 
 /// Computes `tan` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointTan(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpTan(_:) where T : Differentiable)
 public func tan<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.tan(x)
 }
 
 /// Computes `sinh` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointSinh(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpSinh(_:) where T : Differentiable)
 public func sinh<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.sinh(x)
 }
 
 /// Computes `cosh` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointCosh(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpCosh(_:) where T : Differentiable)
 public func cosh<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.cosh(x)
 }
 
 /// Computes `tanh` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointTanh(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpTanh(_:) where T : Differentiable)
 public func tanh<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.tanh(x)
 }
 
 /// Computes the square root of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointSqrt(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpSqrt(_:) where T : Differentiable)
 public func sqrt<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.sqrt(x)
 }
 
 /// Computes the inverse square root of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointRsqrt(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpRsqrt(_:) where T : Differentiable)
 public func rsqrt<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.rsqrt(x)
 }
 
 /// Computes `exp` of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointExp(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpExp(_:) where T : Differentiable)
 public func exp<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.exp(x)
 }
 
 /// Computes the ceiling of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointCeil(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpCeil(_:) where T : Differentiable)
 public func ceil<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.ceil(x)
 }
 
 /// Computes the floor of the specified tensor element-wise.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointFloor(_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpFloor(_:) where T : Differentiable)
 public func floor<T : FloatingPoint>(_ x: Tensor<T>) -> Tensor<T> {
   return Raw.floor(x)
 }
 
 /// Computes the power of the first tensor to the second tensor.
 @inlinable @inline(__always)
-@differentiable(adjoint: _adjointPow(_:_:_:_:) where T : Differentiable)
+@differentiable(vjp: _vjpPow(_:_:) where T : Differentiable)
 public func pow<T>(_ lhs: Tensor<T>, _ rhs: Tensor<T>) -> Tensor<T>
   where T : FloatingPoint {
   return Raw.pow(lhs, rhs)
@@ -841,10 +881,7 @@ public func pow<T>(_ lhs: Tensor<T>, _ rhs: T) -> Tensor<T>
 /// Computes the element-wise maximum of two tensors.
 /// - Note: `max` supports broadcasting.
 @inlinable @inline(__always)
-@differentiable(
-  adjoint: _adjointMinMax(_:_:_:_:)
-  where T : Differentiable & FloatingPoint
-)
+@differentiable(vjp: _vjpMax(_:_:) where T : Differentiable & FloatingPoint)
 public func max<T>(_ lhs: Tensor<T>, _ rhs: Tensor<T>) -> Tensor<T>
   where T : Numeric & Comparable {
   return Raw.maximum(lhs, rhs)
@@ -869,10 +906,7 @@ public func max<T>(_ lhs: Tensor<T>, _ rhs: T) -> Tensor<T>
 /// Computes the element-wise minimum of two tensors.
 /// - Note: `min` supports broadcasting.
 @inlinable @inline(__always)
-@differentiable(
-  adjoint: _adjointMinMax(_:_:_:_:)
-  where T : Differentiable & FloatingPoint
-)
+@differentiable(vjp: _vjpMin(_:_:) where T : Differentiable & FloatingPoint)
 public func min<T>(_ lhs: Tensor<T>, _ rhs: Tensor<T>) -> Tensor<T>
   where T : Numeric & Comparable {
   return Raw.minimum(lhs, rhs)
@@ -1568,7 +1602,7 @@ public extension Tensor where Scalar : BinaryFloatingPoint {
   ///     stability.
   @inlinable @inline(__always)
   @differentiable(
-    wrt: (self, .1, .2), adjoint: _adjointBatchNormalized
+    wrt: (self, .1, .2), vjp: _vjpBatchNormalized
     where Scalar : Differentiable, Scalar == Scalar.CotangentVector
   )
   func batchNormalized(
@@ -1624,8 +1658,7 @@ public extension Tensor where Scalar : FloatingPoint {
   /// - Precondition: `filter` must have rank 4.
   @inlinable @inline(__always)
   @differentiable(
-    wrt: (self, .0),
-    adjoint: _adjointConvolved2D(seed:originalValue:filter:strides:padding:)
+    wrt: (self, .0), vjp: _vjpConvolved2D(filter:strides:padding:)
     where Scalar : Differentiable
   )
   func convolved2D(
@@ -1650,8 +1683,7 @@ public extension Tensor where Scalar : FloatingPoint {
   ///   - padding: The padding for the operation.
   @inlinable @inline(__always)
   @differentiable(
-    wrt: (self),
-    adjoint: _adjointMaxPooled(seed:originalValue:kernelSize:strides:padding:)
+    wrt: (self), vjp: _vjpMaxPooled(kernelSize:strides:padding:)
     where Scalar : Differentiable
   )
   func maxPooled(
@@ -1676,8 +1708,7 @@ public extension Tensor where Scalar : FloatingPoint {
   ///   - padding: The padding for the operation.
   @inlinable @inline(__always)
   @differentiable(
-    wrt: (self),
-    adjoint: _adjointAveragePooled(seed:originalValue:kernelSize:strides:padding:)
+    wrt: (self), vjp: _vjpAveragePooled(kernelSize:strides:padding:)
     where Scalar : Differentiable
   )
   func averagePooled(

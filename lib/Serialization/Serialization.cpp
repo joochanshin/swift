@@ -887,7 +887,7 @@ void Serializer::writeBlockInfoBlock() {
   BLOCK_RECORD(sil_block, SIL_ONE_OPERAND_EXTRA_ATTR);
   BLOCK_RECORD(sil_block, SIL_TWO_OPERANDS_EXTRA_ATTR);
   // SWIFT_ENABLE_TENSORFLOW
-  BLOCK_RECORD(sil_block, SIL_REVERSE_DIFFERENTIABLE_ATTR);
+  BLOCK_RECORD(sil_block, SIL_DIFFERENTIABLE_ATTR);
   BLOCK_RECORD(sil_block, SIL_INST_GRAPH_OPERATION);
   BLOCK_RECORD(sil_block, SIL_INST_AUTODIFF_FUNCTION);
   BLOCK_RECORD(sil_block, SIL_INST_AUTODIFF_FUNCTION_EXTRACT);
@@ -2369,6 +2369,7 @@ void Serializer::writeDeclAttribute(const DeclAttribute *DA) {
       vjpRef = addDeclRef(attr->getVJPFunction());
     }
 
+    /*
     SmallVector<uint32_t, 4> parameters;
     for (auto param : attr->getParameters()) {
       switch (param.getKind()) {
@@ -2382,10 +2383,26 @@ void Serializer::writeDeclAttribute(const DeclAttribute *DA) {
         break;
       }
     }
+     */
+
+    auto paramIndices = attr->getParameterIndices();
+    assert(paramIndices && "Checked parameter indices must be resolved");
+    SmallVector<bool, 4> indices;
+    for (unsigned i = 0; i < paramIndices->parameters.size(); i++)
+      indices.push_back(paramIndices->parameters[i]);
+
+    /*
+    SmallString<32> checkedParamIndicesString;
+    if (auto checkedParamIndices = attr->getCheckedParameterIndices()) {
+      checkedParamIndicesString.assign(checkedParamIndices->getString());
+      llvm::errs() << "CHECKED PARAM HEYO: '" << checkedParamIndicesString.str() << "'\n";
+    }
+     */
 
     DifferentiableDeclAttrLayout::emitRecord(
       Out, ScratchRecord, abbrCode, primalName, primalRef, adjointName,
-      adjointRef, jvpName, jvpRef, vjpName, vjpRef, parameters);
+      // adjointRef, jvpName, jvpRef, vjpName, vjpRef, parameters);
+      adjointRef, jvpName, jvpRef, vjpName, vjpRef, indices);
     // TODO: Serialize CheckedParameterIndices.
     writeGenericRequirements(attr->getRequirements(), DeclTypeAbbrCodes);
     return;

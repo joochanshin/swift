@@ -2551,12 +2551,12 @@ ModuleFile::getDeclCheckedImpl(DeclID DID) {
         DeclID jvpDeclId;
         uint64_t vjpNameId;
         DeclID vjpDeclId;
-        ArrayRef<uint64_t> paramValues;
+        ArrayRef<uint64_t> parameters;
         SmallVector<Requirement, 4> requirements;
 
         serialization::decls_block::DifferentiableDeclAttrLayout::readRecord(
             scratch, primalNameId, primalDeclId, adjointNameId, adjointDeclId,
-            jvpNameId, jvpDeclId, vjpNameId, vjpDeclId, paramValues);
+            jvpNameId, jvpDeclId, vjpNameId, vjpDeclId, parameters);
 
         using FuncSpecifier = DifferentiableAttr::DeclNameWithLoc;
         Optional<FuncSpecifier> primal;
@@ -2584,6 +2584,13 @@ ModuleFile::getDeclCheckedImpl(DeclID DID) {
           vjpDecl = cast<FuncDecl>(getDecl(vjpDeclId));
         }
 
+        llvm::SmallBitVector parametersBitVector(parameters.size());
+        for (unsigned i = 0; i < parameters.size(); i++)
+          parametersBitVector[i] = parameters[i];
+        auto *indices = AutoDiffParameterIndices::get(parametersBitVector, ctx);
+
+        SourceLoc loc;
+        /*
         SmallVector<AutoDiffParameter, 4> parameters;
         SourceLoc loc;
         for (auto paramValue : paramValues) {
@@ -2592,12 +2599,13 @@ ModuleFile::getDeclCheckedImpl(DeclID DID) {
             : AutoDiffParameter::getIndexParameter(loc, paramValue >> 1);
           parameters.push_back(parameter);
         }
+         */
         // TODO: Deserialize CheckedParameterIndices.
         readGenericRequirements(requirements, DeclTypeCursor);
 
         auto diffAttr =
-          DifferentiableAttr::create(ctx, loc, SourceRange(), parameters,
-                                     primal, adjoint, jvp, vjp, requirements);
+            DifferentiableAttr::create(ctx, loc, SourceRange(), indices,
+                                       primal, adjoint, jvp, vjp, requirements);
         diffAttr->setPrimalFunction(primalDecl);
         diffAttr->setAdjointFunction(adjointDecl);
         diffAttr->setJVPFunction(jvpDecl);

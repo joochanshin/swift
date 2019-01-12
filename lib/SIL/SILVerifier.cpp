@@ -4566,8 +4566,7 @@ public:
 
   /// SWIFT_ENABLE_TENSORFLOW
   /// Verify the [differentiable] attribute.
-  void verifyDifferentiableAttr(SILFunction *F,
-                                       SILDifferentiableAttr &Attr) {
+  void verifyDifferentiableAttr(SILFunction *F, SILDifferentiableAttr &Attr) {
     std::function<unsigned(Type)> countParams;
     countParams = [&](Type type) -> unsigned {
       auto *fnTy = type->getAs<SILFunctionType>();
@@ -4966,6 +4965,9 @@ public:
       if (F->hasForeignBody())
         return;
 
+      if (!F->isAvailableExternally()) {
+        F->getModule().dump();
+      }
       assert(F->isAvailableExternally() &&
              "external declaration of internal SILFunction not allowed");
       // If F is an external declaration, there is nothing further to do,

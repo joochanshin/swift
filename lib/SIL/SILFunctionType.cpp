@@ -168,7 +168,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   auto &ctx = getASTContext();
 
   auto testParamIndex = [&](unsigned index) -> bool {
-    return index < parameterIndices.size()  && parameterIndices[index];
+    return index < parameterIndices.size() && parameterIndices[index];
   };
 
   // Given a type, returns its formal SIL parameter info.
@@ -225,12 +225,16 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
         currentLevel->getSingleResult().getType()->getAs<SILFunctionType>();
   }
 
+  llvm::errs() << "GET AD ASSOC FUN TYPE 1\n";
+  dump();
   SmallVector<unsigned, 2> curryLevelParameterIndexOffsets(curryLevels.size());
   unsigned currentOffset = 0;
   for (unsigned curryLevelIndex : reversed(indices(curryLevels))) {
     curryLevelParameterIndexOffsets[curryLevelIndex] = currentOffset;
     currentOffset += curryLevels[curryLevelIndex]->getNumParameters();
   }
+
+  llvm::errs() << "GET AD ASSOC FUN TYPE 2\n";
 
   // Calculate WRT parameter infos, in the order that they appear in the
   // AST-level parameter lists.
@@ -250,6 +254,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
       }
     }
   }
+  llvm::errs() << "GET AD ASSOC FUN TYPE 3 " << (unsigned)kind << "\n";
 
   auto withNewResults = [&](SILFunctionType *base,
                             ArrayRef<SILResultInfo> newResults,
@@ -278,6 +283,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
                ->getCanonicalType(),
            param.getConvention()});
     SmallVector<SILResultInfo, 8> tangentResults;
+    llvm::errs() << "GET AD ASSOC FUN TYPE JVP 4 " << resultIndex << ", " << curryLevels.back()->getResults().size() << "\n";
     auto &result = curryLevels.back()->getResults()[resultIndex];
     tangentResults.push_back(
         {result.getType()
@@ -296,6 +302,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   }
   case AutoDiffAssociatedFunctionKind::VJP: {
     SmallVector<SILParameterInfo, 8> cotangentParams;
+    llvm::errs() << "GET AD ASSOC FUN TYPE VJP 4 " << resultIndex << ", " << curryLevels.back()->getResults().size() << "\n";
     auto &origRes = curryLevels.back()->getResults()[resultIndex];
     auto cotangentAssocTy =
         origRes.getType()
@@ -324,6 +331,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
     break;
   }
   }
+  llvm::errs() << "GET AD ASSOC FUN TYPE 5\n";
 
   SmallVector<SILResultInfo, 8> results(
       curryLevels.back()->getResults().begin(),
@@ -332,6 +340,8 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   CanSILFunctionType associatedFunction =
       withNewResults(curryLevels.back(), results,
                      curryLevels.size() == 1 ? whereClauseGenSig : nullptr);
+  llvm::errs() << "GET AD ASSOC FUN TYPE 6\n";
+
   auto curryLevelsWithoutLast =
       ArrayRef<SILFunctionType *>(curryLevels).drop_back(1);
   for (auto pair : enumerate(reversed(curryLevelsWithoutLast))) {

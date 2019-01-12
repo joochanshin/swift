@@ -1080,7 +1080,7 @@ public:
       subs = SubstitutionMap();
 
     setCallee(Callee::forDirect(SGF, constant, subs, e));
-    
+
     // If the decl ref requires captures, emit the capture params.
     if (!captureInfo.getCaptures().empty()) {
       SmallVector<ManagedValue, 4> captures;

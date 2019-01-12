@@ -301,7 +301,7 @@ public:
     // has an associated `@differentiable` attribute.
     DifferentiableAttribute,
 
-    // Invoker by a `[differentiable]` attribute in SIL **without** being lined
+    // Invoker by a `[differentiable]` attribute in SIL **without** being linked
     // to a Swift AST attribute. This case has an associated `[differentiable]`
     // attribute.
     SILDifferentiableAttribute
@@ -1125,6 +1125,8 @@ private:
     auto existing = enqueuedTaskIndices.find({original, indices});
     if (existing == enqueuedTaskIndices.end())
       return nullptr;
+    // llvm::errs() << "lookUpDifferentiationTask: " << differentiationTasks.size() << "\n";
+    // differentiationTasks[existing->getSecond()]->print(llvm::errs());
     return differentiationTasks[existing->getSecond()].get();
   }
 
@@ -1194,6 +1196,7 @@ public:
   lookUpOrRegisterDifferentiationTask(SILFunction *original,
                                       const SILAutoDiffIndices &indices,
                                       DifferentiationInvoker invoker) {
+    /*
     // If `original` has no differentiable attributes, it may be the case that
     // it has not been loaded yet. Load it, check for differentiable attributes,
     // and register the attributes as tasks so that they can be looked up.
@@ -1208,6 +1211,7 @@ public:
             DifferentiationInvoker(diffAttr, original));
       }
     }
+     */
 
     if (auto *existingTask = lookUpMinimalDifferentiationTask(original, indices))
       return existingTask;
@@ -1444,6 +1448,8 @@ private:
                                  unsigned independentVariableIndex);
   void setUsefulIfDifferentiable(SILValue value,
                                  unsigned dependentVariableIndex);
+  void recursivelySetVariedIfDifferentiable(SILValue value,
+                                            unsigned independentVariableIndex);
 
 public:
   explicit DifferentiableActivityInfo(SILFunction &f,
@@ -1541,7 +1547,12 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
         // Handle `store`.
         else if (auto *si = dyn_cast<StoreInst>(&inst)) {
           if (isVaried(si->getSrc(), i))
-            setVariedIfDifferentiable(si->getDest(), i);
+            recursivelySetVariedIfDifferentiable(si->getDest(), i);
+        }
+        // Handle `copy_addr`.
+        else if (auto *cai = dyn_cast<CopyAddrInst>(&inst)) {
+          if (isVaried(cai->getSrc(), i))
+            recursivelySetVariedIfDifferentiable(cai->getDest(), i);
         }
         // Handle everything else.
         else {
@@ -1585,12 +1596,16 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
             setUsefulIfDifferentiable(si->getSrc(), i);
         }
         // Handle side-effecting operations.
+        // All address operands are useful if any result is useful.
         else if (inst.mayHaveSideEffects()) {
-          for (auto &op : inst.getAllOperands())
-            if (op.get()->getType().isAddress())
-              setUsefulIfDifferentiable(op.get(), i);
-          for (auto result : inst.getResults())
-            setUsefulIfDifferentiable(result, i);
+          for (auto result : inst.getResults()) {
+            if (isUseful(result, i)) {
+              for (auto &op : inst.getAllOperands())
+                if (op.get()->getType().isAddress())
+                  setUsefulIfDifferentiable(op.get(), i);
+              break;
+            }
+          }
         }
         // Handle everything else.
         else {
@@ -1617,6 +1632,14 @@ void DifferentiableActivityInfo::setUsefulIfDifferentiable(
   if (!value->getType().isDifferentiable(function.getModule()))
     return;
   usefulValueSets[dependentVariableIndex].insert(value);
+}
+
+void DifferentiableActivityInfo::recursivelySetVariedIfDifferentiable(
+    SILValue value, unsigned independentVariableIndex) {
+  setVariedIfDifferentiable(value, independentVariableIndex);
+  if (auto *inst = value->getDefiningInstruction())
+    for (auto &op : inst->getAllOperands())
+      recursivelySetVariedIfDifferentiable(op.get(), independentVariableIndex);
 }
 
 bool DifferentiableActivityInfo::isIndependent(
@@ -1906,7 +1929,7 @@ emitAssociatedFunctionReference(
     }
 
     // Check that the requirement indices are the same as the desired indices.
-    auto *requirementParameterIndices = diffAttr->getCheckedParameterIndices();
+    auto *requirementParameterIndices = diffAttr->getParameterIndices();
     auto loweredRequirementIndices = requirementParameterIndices->getLowered(
         requirementDecl->getInterfaceType()->castTo<AnyFunctionType>());
     SILAutoDiffIndices requirementIndices(/*source*/ 0,
@@ -2931,6 +2954,7 @@ bool AdjointGen::run() {
       context.clearTask(synthesis.task);
       errorOccurred = true;
     }
+    context.getModule().dump();
     synthesis.task->setAdjointSynthesisState(FunctionSynthesisState::Done);
   }
   return errorOccurred;
@@ -4537,8 +4561,8 @@ DifferentiationTask::DifferentiationTask(ADContext &context,
 // a SILDifferentiableAttr. The expected generic signature is built from the
 // original generic signature and the attribute's requirements.
 static GenericSignature *
-getAutodiffAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr) {
-  auto original = attr->getOriginal();
+getAutodiffAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
+                                              SILFunction *original) {
   auto originalGenEnv = original->getGenericEnvironment();
   if (!originalGenEnv)
     return nullptr;
@@ -4569,7 +4593,8 @@ void DifferentiationTask::createEmptyPrimal() {
                         .getIdentifier("AD__" + original->getName().str() +
                                        "__primal_" + indices.mangle())
                         .str();
-  auto *primalGenericSig = getAutodiffAssociatedFunctionGenericSignature(attr);
+  auto *primalGenericSig =
+      getAutodiffAssociatedFunctionGenericSignature(attr, original);
   StructDecl *primalValueStructDecl = context.createPrimalValueStruct(this);
   primalInfo = std::unique_ptr<PrimalInfo>(
       new PrimalInfo(primalValueStructDecl, module));
@@ -4709,7 +4734,8 @@ void DifferentiationTask::createEmptyAdjoint() {
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__adjoint_" + getIndices().mangle())
                      .str();
-  auto *adjGenericSig = getAutodiffAssociatedFunctionGenericSignature(attr);
+  auto *adjGenericSig =
+      getAutodiffAssociatedFunctionGenericSignature(attr, original);
   auto *adjGenericEnv = adjGenericSig
       ? adjGenericSig->createGenericEnvironment()
       : nullptr;
@@ -4743,7 +4769,8 @@ void DifferentiationTask::createJVP() {
   // === Create an empty JVP. ===
   auto jvpName =
       "AD__" + original->getName().str() + "__jvp_" + getIndices().mangle();
-  auto *jvpGenericSig = getAutodiffAssociatedFunctionGenericSignature(attr);
+  auto *jvpGenericSig =
+      getAutodiffAssociatedFunctionGenericSignature(attr, original);
   auto *jvpGenericEnv = jvpGenericSig
       ? jvpGenericSig->createGenericEnvironment()
       : nullptr;
@@ -4804,7 +4831,8 @@ void DifferentiationTask::createVJP() {
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__vjp_" + getIndices().mangle())
                      .str();
-  auto *vjpGenericSig = getAutodiffAssociatedFunctionGenericSignature(attr);
+  auto *vjpGenericSig =
+      getAutodiffAssociatedFunctionGenericSignature(attr, original);
   auto *vjpGenericEnv = vjpGenericSig
       ? vjpGenericSig->createGenericEnvironment()
       : nullptr;
@@ -5122,7 +5150,11 @@ void Differentiation::run() {
   for (SILFunction &f : module) {
     // If `f` has a `[differentiable]` attribute, it should become a
     // differentiation task.
+    if (f.getDifferentiableAttrs().size() > 0)
+      llvm::errs() << "COUNT DIFF ATTRS '" << f.getName() << "': " << f.getDifferentiableAttrs().size() << "\n";
     for (auto *diffAttr : f.getDifferentiableAttrs()) {
+      diffAttr->print(llvm::errs());
+      llvm::errs() << "\n";
       if (diffAttr->hasPrimal() == diffAttr->hasAdjoint()) {
         diffAttrs.push_back({&f, diffAttr});
         continue;
@@ -5156,6 +5188,9 @@ void Differentiation::run() {
   // the attribute has a primal and adjoint, this task will not synthesize
   // anything, but it's still needed as a lookup target.
   for (auto &fnAndAttr : diffAttrs) {
+    // llvm::errs() << "YO WE FOUND YOU: '" << fnAndAttr.first->getName() << "'\n";
+    // fnAndAttr.second->print(llvm::errs());
+    // llvm::errs() << "\n";
     context.registerDifferentiationTask(
         fnAndAttr.first, fnAndAttr.second->getIndices(),
         DifferentiationInvoker(fnAndAttr.second, fnAndAttr.first));
@@ -5181,6 +5216,7 @@ void Differentiation::run() {
   // processing, back out.
   if (errorProcessingAutoDiffInsts)
     return;
+
 
   LLVM_DEBUG(getADDebugStream() << "All differentiation finished\n");
 }

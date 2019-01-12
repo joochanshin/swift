@@ -725,6 +725,7 @@ void SILGenModule::emitAbstractFuncDecl(AbstractFunctionDecl *AFD) {
   if (!AFD->hasBody())
     return;
 
+  /*
   // Look for a @differentiable attribute on the decl.
   // FIXME: Handle multiple @differentiable attributes.
   DifferentiableAttr *diffAttr = nullptr;
@@ -769,12 +770,14 @@ void SILGenModule::emitAbstractFuncDecl(AbstractFunctionDecl *AFD) {
   if (auto *vjpFn = diffAttr->getVJPFunction())
     vjpName = getFunction(SILDeclRef(vjpFn), ForDefinition)->getName();
   // Get lowered argument indices.
-  auto paramIndices = diffAttr->getCheckedParameterIndices()->getLowered(
+  auto paramIndices = diffAttr->getParameterIndices()->getLowered(
       AFD->getInterfaceType()->castTo<AnyFunctionType>());
-  SILAutoDiffIndices indices(/*source*/ 0, paramIndices);
-  silOriginalFn->addDifferentiableAttr(SILDifferentiableAttr::create(
+  SILAutoDiffIndices indices(0, paramIndices);
+  auto silDiffAttr = SILDifferentiableAttr::create(
       M, indices, diffAttr->getRequirements(), primName, adjName,
-      /*primitive*/ hasPrimitiveAdjoint, jvpName, vjpName));
+      hasPrimitiveAdjoint, jvpName, vjpName);
+  silOriginalFn->addDifferentiableAttr(silDiffAttr);
+   */
 }
 
 void SILGenModule::emitFunction(FuncDecl *fd) {

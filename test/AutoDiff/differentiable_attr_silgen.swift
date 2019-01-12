@@ -144,9 +144,6 @@ extension DiffStoredProp : Differentiable {
   typealias CotangentVector = DiffStoredProp
 }
 
-// CHECK-LABEL: DiffStoredProp.storedProp.getter
-// CHECK-NEXT: sil {{.*}} [differentiable source 0 wrt 0 jvp @storedPropJVP vjp @storedPropVJP]
-
 //===----------------------------------------------------------------------===//
 // Computed property
 //===----------------------------------------------------------------------===//

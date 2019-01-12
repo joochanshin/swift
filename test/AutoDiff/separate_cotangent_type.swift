@@ -13,7 +13,7 @@ var SeparateCotangentTypeTests = TestSuite("SeparateCotangentType")
 struct DifferentiableSubset : Differentiable {
   @differentiable(wrt: (self))
   var w: Float
-  @differentiable(wrt: (self))
+  @differentiable
   var b: Float
   @noDerivative var flag: Bool
 

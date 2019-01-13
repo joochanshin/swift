@@ -1076,15 +1076,15 @@ SpecializeAttr *SpecializeAttr::create(ASTContext &Ctx, SourceLoc atLoc,
 }
 
 // SWIFT_ENABLE_TENSORFLOW
-DifferentiableAttr::DifferentiableAttr(ASTContext &context, SourceLoc atLoc,
-                                       SourceRange baseRange,
+DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
+                                       SourceLoc atLoc, SourceRange baseRange,
                                        ArrayRef<ParsedAutoDiffParameter> params,
                                        Optional<DeclNameWithLoc> primal,
                                        Optional<DeclNameWithLoc> adjoint,
                                        Optional<DeclNameWithLoc> jvp,
                                        Optional<DeclNameWithLoc> vjp,
                                        TrailingWhereClause *clause)
-  : DeclAttribute(DAK_Differentiable, atLoc, baseRange, /*Implicit*/false),
+  : DeclAttribute(DAK_Differentiable, atLoc, baseRange, implicit),
     NumParsedParameters(params.size()),
     Primal(std::move(primal)), Adjoint(std::move(adjoint)),
     JVP(std::move(jvp)), VJP(std::move(vjp)), WhereClause(clause) {
@@ -1092,23 +1092,23 @@ DifferentiableAttr::DifferentiableAttr(ASTContext &context, SourceLoc atLoc,
             getTrailingObjects<ParsedAutoDiffParameter>());
 }
 
-DifferentiableAttr::DifferentiableAttr(ASTContext &context, SourceLoc atLoc,
-                                       SourceRange baseRange,
+DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
+                                       SourceLoc atLoc, SourceRange baseRange,
                                        AutoDiffParameterIndices *indices,
                                        Optional<DeclNameWithLoc> primal,
                                        Optional<DeclNameWithLoc> adjoint,
                                        Optional<DeclNameWithLoc> jvp,
                                        Optional<DeclNameWithLoc> vjp,
                                        ArrayRef<Requirement> requirements)
-  : DeclAttribute(DAK_Differentiable, atLoc, baseRange, /*Implicit*/false),
+  : DeclAttribute(DAK_Differentiable, atLoc, baseRange, implicit),
     Primal(std::move(primal)), Adjoint(std::move(adjoint)),
     JVP(std::move(jvp)), VJP(std::move(vjp)), ParameterIndices(indices) {
   setRequirements(context, requirements);
 }
 
 DifferentiableAttr *
-DifferentiableAttr::create(ASTContext &context, SourceLoc atLoc,
-                           SourceRange baseRange,
+DifferentiableAttr::create(ASTContext &context, bool implicit,
+                           SourceLoc atLoc, SourceRange baseRange,
                            ArrayRef<ParsedAutoDiffParameter> parameters,
                            Optional<DeclNameWithLoc> primal,
                            Optional<DeclNameWithLoc> adjoint,
@@ -1117,14 +1117,15 @@ DifferentiableAttr::create(ASTContext &context, SourceLoc atLoc,
                            TrailingWhereClause *clause) {
   unsigned size = totalSizeToAlloc<ParsedAutoDiffParameter>(parameters.size());
   void *mem = context.Allocate(size, alignof(DifferentiableAttr));
-  return new (mem) DifferentiableAttr(context, atLoc, baseRange, parameters,
-                                      std::move(primal), std::move(adjoint),
-                                      std::move(jvp), std::move(vjp), clause);
+  return new (mem) DifferentiableAttr(context, implicit, atLoc, baseRange,
+                                      parameters, std::move(primal),
+                                      std::move(adjoint), std::move(jvp),
+                                      std::move(vjp), clause);
 }
 
 DifferentiableAttr *
-DifferentiableAttr::create(ASTContext &context, SourceLoc atLoc,
-                           SourceRange baseRange,
+DifferentiableAttr::create(ASTContext &context, bool implicit,
+                           SourceLoc atLoc, SourceRange baseRange,
                            AutoDiffParameterIndices *indices,
                            Optional<DeclNameWithLoc> primal,
                            Optional<DeclNameWithLoc> adjoint,
@@ -1133,10 +1134,10 @@ DifferentiableAttr::create(ASTContext &context, SourceLoc atLoc,
                            ArrayRef<Requirement> requirements) {
   void *mem = context.Allocate(sizeof(DifferentiableAttr),
                                alignof(DifferentiableAttr));
-  return new (mem) DifferentiableAttr(context, atLoc, baseRange, indices,
-                                      std::move(primal), std::move(adjoint),
-                                      std::move(jvp), std::move(vjp),
-                                      requirements);
+  return new (mem) DifferentiableAttr(context, implicit, atLoc, baseRange,
+                                      indices, std::move(primal),
+                                      std::move(adjoint), std::move(jvp),
+                                      std::move(vjp), requirements);
 }
 
 void DifferentiableAttr::setRequirements(ASTContext &context,

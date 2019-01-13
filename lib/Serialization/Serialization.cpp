@@ -2400,10 +2400,8 @@ void Serializer::writeDeclAttribute(const DeclAttribute *DA) {
      */
 
     DifferentiableDeclAttrLayout::emitRecord(
-      Out, ScratchRecord, abbrCode, primalName, primalRef, adjointName,
-      // adjointRef, jvpName, jvpRef, vjpName, vjpRef, parameters);
-      adjointRef, jvpName, jvpRef, vjpName, vjpRef, indices);
-    // TODO: Serialize CheckedParameterIndices.
+      Out, ScratchRecord, abbrCode, attr->isImplicit(), primalName, primalRef,
+      adjointName, adjointRef, jvpName, jvpRef, vjpName, vjpRef, indices);
     writeGenericRequirements(attr->getRequirements(), DeclTypeAbbrCodes);
     return;
   }

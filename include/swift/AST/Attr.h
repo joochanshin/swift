@@ -1359,8 +1359,8 @@ private:
   /// where clause exists.
   MutableArrayRef<Requirement> Requirements;
 
-  explicit DifferentiableAttr(ASTContext &context, SourceLoc atLoc,
-                              SourceRange baseRange,
+  explicit DifferentiableAttr(ASTContext &context, bool implicit,
+                              SourceLoc atLoc, SourceRange baseRange,
                               ArrayRef<ParsedAutoDiffParameter> parameters,
                               Optional<DeclNameWithLoc> primal,
                               Optional<DeclNameWithLoc> adjoint,
@@ -1368,8 +1368,8 @@ private:
                               Optional<DeclNameWithLoc> vjp,
                               TrailingWhereClause *clause);
 
-  explicit DifferentiableAttr(ASTContext &context, SourceLoc atLoc,
-                              SourceRange baseRange,
+  explicit DifferentiableAttr(ASTContext &context, bool implicit,
+                              SourceLoc atLoc, SourceRange baseRange,
                               AutoDiffParameterIndices *indices,
                               Optional<DeclNameWithLoc> primal,
                               Optional<DeclNameWithLoc> adjoint,
@@ -1378,8 +1378,8 @@ private:
                               ArrayRef<Requirement> requirements);
 
 public:
-  static DifferentiableAttr *create(ASTContext &context, SourceLoc atLoc,
-                                    SourceRange baseRange,
+  static DifferentiableAttr *create(ASTContext &context, bool implicit,
+                                    SourceLoc atLoc, SourceRange baseRange,
                                     ArrayRef<ParsedAutoDiffParameter> params,
                                     Optional<DeclNameWithLoc> primal,
                                     Optional<DeclNameWithLoc> adjoint,
@@ -1387,8 +1387,8 @@ public:
                                     Optional<DeclNameWithLoc> vjp,
                                     TrailingWhereClause *clause);
 
-  static DifferentiableAttr *create(ASTContext &context, SourceLoc atLoc,
-                                    SourceRange baseRange,
+  static DifferentiableAttr *create(ASTContext &context, bool implicit,
+                                    SourceLoc atLoc, SourceRange baseRange,
                                     AutoDiffParameterIndices *indices,
                                     Optional<DeclNameWithLoc> primal,
                                     Optional<DeclNameWithLoc> adjoint,

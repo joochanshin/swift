@@ -65,8 +65,8 @@ class SILFunctionBuilder {
   // propagation requires access to original function declaration (via
   // SILDeclRef).
   void addFunctionAttributes(SILFunction *F, SILDeclRef constant,
-                             DeclAttributes &Attrs, SILModule &M);
-
+                             DeclAttributes &Attrs, SILModule &M,
+                             ForDefinition_t forDefinition);
 
   /// Return the declaration of a function, or create it if it doesn't exist.
   SILFunction *getOrCreateFunction(

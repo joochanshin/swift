@@ -386,6 +386,7 @@ void SILSerializer::writeSILFunction(const SILFunction &F, bool DeclOnly) {
     clangNodeOwnerID = S.addDeclRef(F.getClangNodeOwner());
 
   unsigned numSpecAttrs = NoBody ? 0 : F.getSpecializeAttrs().size();
+  unsigned numDiffAttrs = NoBody ? 0 : F.getDifferentiableAttrs().size();
   SILFunctionLayout::emitRecord(
       Out, ScratchRecord, abbrCode, toStableSILLinkage(Linkage),
       (unsigned)F.isTransparent(), (unsigned)F.isSerialized(),
@@ -393,14 +394,16 @@ void SILSerializer::writeSILFunction(const SILFunction &F, bool DeclOnly) {
       (unsigned)F.isGlobalInit(), (unsigned)F.getInlineStrategy(),
       (unsigned)F.getOptimizationMode(), (unsigned)F.getEffectsKind(),
       // SWIFT_ENABLE_TENSORFLOW
-      (unsigned)numSpecAttrs,
-      (unsigned)F.getDifferentiableAttrs().size(),
+      (unsigned)numSpecAttrs, (unsigned)numDiffAttrs,
       (unsigned)F.hasQualifiedOwnership(),
       F.isWeakLinked(), FnID, genericEnvID, clangNodeOwnerID, SemanticsIDs);
 
   if (NoBody)
     return;
 
+  llvm::errs() << "NUM SIL SPECIALIZE ATTRS: " << F.getSpecializeAttrs().size() << "\n";
+  if (!F.getSpecializeAttrs().empty())
+    F.dump();
   for (auto *SA : F.getSpecializeAttrs()) {
     unsigned specAttrAbbrCode = SILAbbrCodes[SILSpecializeAttrLayout::Code];
     SILSpecializeAttrLayout::emitRecord(Out, ScratchRecord, specAttrAbbrCode,
@@ -411,22 +414,24 @@ void SILSerializer::writeSILFunction(const SILFunction &F, bool DeclOnly) {
 
   // SWIFT_ENABLE_TENSORFLOW
   auto &Ctx = F.getASTContext();
+  llvm::errs() << "NUM SIL DIFFABLE ATTRS: " << F.getDifferentiableAttrs().size() << "\n";
+  if (!F.getDifferentiableAttrs().empty())
+    F.dump();
   for (auto *DA : F.getDifferentiableAttrs()) {
     unsigned differentiableAttrAbbrCode =
         SILAbbrCodes[SILDifferentiableAttrLayout::Code];
+
+    if (F.getModule().getStage() == SILStage::Canonical)
+      assert(DA->hasJVP() && DA->hasVJP() &&
+             "JVP and VJP must exist in canonical SIL");
+
     auto &paramIndices = DA->getIndices();
     SmallVector<bool, 4> parameters;
     for (unsigned i : indices(paramIndices.parameters))
       parameters.push_back(paramIndices.parameters[i]);
+
     SILDifferentiableAttrLayout::emitRecord(
         Out, ScratchRecord, differentiableAttrAbbrCode,
-        DA->hasPrimal()
-            ? S.addDeclBaseNameRef(Ctx.getIdentifier(DA->getPrimalName()))
-            : IdentifierID(),
-        DA->hasAdjoint()
-            ? S.addDeclBaseNameRef(Ctx.getIdentifier(DA->getAdjointName()))
-            : IdentifierID(),
-        DA->isAdjointPrimitive(),
         // TODO: Once we add synthesis for JVP and VJP, serialized
         // [differentiable] attrs should always have JVP and VJP, so we should
         // be able to eliminate these checks.

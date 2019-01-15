@@ -4581,6 +4581,15 @@ public:
     // Parameter indices must be specified.
     require(!Attr.getIndices().parameters.empty(),
             "Parameter indices cannot be empty");
+    if (F->getModule().getStage() == SILStage::Canonical) {
+      if (Attr.getJVPName().empty()) {
+        llvm::errs() << "UH OH EMPTY JVP NAME!!!!\n";
+        Attr.print(llvm::errs());
+        F->dump();
+      }
+      require(!Attr.getJVPName().empty() && !Attr.getVJPName().empty(),
+              "JVP and VJP must be specified");
+    }
     // Verify if specified parameter indices are valid.
     auto numParams = countParams(F->getLoweredFunctionType());
     int lastIndex = -1;

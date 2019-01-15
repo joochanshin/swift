@@ -592,6 +592,10 @@ SILDeserializer::readSILFunctionChecked(DeclID FID, SILFunction *existingFn,
   }
 
   // Read and instantiate the specialize attributes.
+  // llvm::errs() << "DESERIALIZE " << fn->getName() << "\n";
+  // llvm::errs() << "NUM SIL SPECIALIZE ATTRS DESERIALIZE: " << numSpecAttrs << "\n";
+  // if (numSpecAttrs)
+  //   fn->dump();
   while (numSpecAttrs--) {
     auto next = SILCursor.advance(AF_DontPopBlockAtEnd);
     assert(next.Kind == llvm::BitstreamEntry::Record);
@@ -617,6 +621,12 @@ SILDeserializer::readSILFunctionChecked(DeclID FID, SILFunction *existingFn,
 
   // SWIFT_ENABLE_TENSORFLOW
   // Read and instantiate the differentiable attributes.
+  // llvm::errs() << "NUM SIL DIFFABLE ATTRS DESERIALIZE: " << numDifferentiableAttrs << "\n";
+  // if (numDifferentiableAttrs)
+  //   fn->dump();
+  // if (numDifferentiableAttrs == 1) {
+  //
+  // }
   while (numDifferentiableAttrs--) {
     auto next = SILCursor.advance(AF_DontPopBlockAtEnd);
     assert(next.Kind == llvm::BitstreamEntry::Record);
@@ -626,20 +636,13 @@ SILDeserializer::readSILFunctionChecked(DeclID FID, SILFunction *existingFn,
     assert(kind == SIL_DIFFERENTIABLE_ATTR &&
            "Missing differentiable attribute");
 
-    uint64_t primalNameId;
-    uint64_t adjointNameId;
-    bool adjointIsPrimitive;
     uint64_t jvpNameId;
     uint64_t vjpNameId;
     uint64_t source;
     ArrayRef<uint64_t> parameters;
-    SILDifferentiableAttrLayout::readRecord(scratch, primalNameId,
-                                            adjointNameId, adjointIsPrimitive,
-                                            jvpNameId, vjpNameId, source,
-                                            parameters);
+    SILDifferentiableAttrLayout::readRecord(scratch, jvpNameId, vjpNameId,
+                                            source, parameters);
 
-    StringRef primalName = MF->getIdentifier(primalNameId).str();
-    StringRef adjointName = MF->getIdentifier(adjointNameId).str();
     llvm::SmallBitVector parametersBitVector(parameters.size());
     StringRef jvpName = MF->getIdentifier(jvpNameId).str();
     StringRef vjpName = MF->getIdentifier(vjpNameId).str();
@@ -650,10 +653,21 @@ SILDeserializer::readSILFunctionChecked(DeclID FID, SILFunction *existingFn,
     SmallVector<Requirement, 8> requirements;
     MF->readGenericRequirements(requirements, SILCursor);
 
+    bool skip = false;
+    for (auto *existingAttr : fn->getDifferentiableAttrs()) {
+      if (existingAttr->getIndices() == indices) {
+        // TODO: Improve?
+        llvm::errs() << "WOW EQUAL INDICES!!!!!!!!!!!!!!!!!!!!!!\n";
+        skip = true;
+      }
+    }
+    if (skip)
+      continue;
     auto *attr = SILDifferentiableAttr::create(SILMod, indices, requirements,
-                                               primalName, adjointName,
-                                               adjointIsPrimitive, jvpName,
-                                               vjpName);
+                                               /*primal*/ StringRef(),
+                                               /*adjoint*/ StringRef(),
+                                               /*adjointIsPrimitive*/ false,
+                                               jvpName, vjpName);
     fn->addDifferentiableAttr(attr);
   }
 

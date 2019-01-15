@@ -208,6 +208,7 @@ void SILGenModule::emitCurryThunk(SILDeclRef constant) {
 
   SILGenFunction(*this, *f, SwiftModule).emitCurryThunk(constant);
   postEmitFunction(constant, f);
+  return;
 
   // SWIFT_ENABLE_TENSORFLOW
   // If we emitted a curry thunk for a differentiable function, then also emit a
@@ -247,6 +248,9 @@ void SILGenModule::emitCurryThunk(SILDeclRef constant) {
       /*adjointIsPrimitive*/ false,
       /*jvpName*/ assocFnNames[0],
       /*vjpName*/ assocFnNames[1]);
+  llvm::errs() << "HELLO WE MADE IT TO SILGENTHUNK, " << f->getName() << "\n";
+  SILDA->print(llvm::errs());
+  llvm::errs() << "\n";
   f->addDifferentiableAttr(SILDA);
 }
 

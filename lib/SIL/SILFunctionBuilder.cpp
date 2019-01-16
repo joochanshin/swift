@@ -78,7 +78,7 @@ SILFunctionBuilder::addFunctionAttributes(SILFunction *F, SILDeclRef constant,
       // Either only adjoint is specified, or both primal and adjoint are
       // spcified.
       std::string primName, adjName, jvpName, vjpName;
-      bool hasPrimitiveAdjoint = false;
+      bool hasPrimitiveAdjoint = true;
       // Register primal/adjoint names only for definition.
       /*
       if (forDefinition == NotForDefinition) {
@@ -122,7 +122,7 @@ SILFunctionBuilder::addFunctionAttributes(SILFunction *F, SILDeclRef constant,
       else if (!isSameModule)
         vjpName = constant.asAutoDiffAssociatedFunction(
             AutoDiffAssociatedFunctionIdentifier::get(
-                AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
+                AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
                 DA->getParameterIndices(), F->getASTContext())).mangle();
       // Get lowered argument indices.
       auto paramIndices = DA->getParameterIndices();

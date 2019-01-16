@@ -919,6 +919,7 @@ private:
       SILFunction *original, const SILAutoDiffIndices &indices) {
     if (auto *attr = lookUpDifferentiableAttr(original, indices))
       return attr;
+    assert(original->isDefinition());
     return createDifferentiableAttr(original, indices);
   }
 
@@ -953,8 +954,7 @@ private:
       if (!indexSet.test(rdaIndexSet) && // all indexSet indices in rdaIndexSet
           (supersetParamIndices.empty() || // fewer parameters than before
            rdaIndexSet.count() < supersetParamIndices.count()) &&
-          // (indexSet == rdaIndexSet || rda->isAdjointPrimitive()))
-          (indexSet == rdaIndexSet))
+          (indexSet == rdaIndexSet || rda->isAdjointPrimitive()))
         supersetParamIndices = rda->getIndices().parameters;
     }
     auto existing = enqueuedTaskIndices.find(
@@ -1004,22 +1004,6 @@ public:
   lookUpOrRegisterDifferentiationTask(SILFunction *original,
                                       const SILAutoDiffIndices &indices,
                                       DifferentiationInvoker invoker) {
-    /*
-    // If `original` has no differentiable attributes, it may be the case that
-    // it has not been loaded yet. Load it, check for differentiable attributes,
-    // and register the attributes as tasks so that they can be looked up.
-    if (original->getDifferentiableAttrs().empty() &&
-        original->isExternalDeclaration()) {
-      auto loaded = module.loadFunction(original);
-      assert(loaded && "Cannot load original function");
-      (void)loaded;
-      for (auto *diffAttr : original->getDifferentiableAttrs()) {
-        registerDifferentiationTask(
-                                    original, diffAttr->getIndices(),
-                                    DifferentiationInvoker(diffAttr, original));
-      }
-    }
-    */
     if (auto *existingTask = lookUpMinimalDifferentiationTask(original, indices))
       return existingTask;
     return registerDifferentiationTask(original, indices, invoker);
@@ -3663,29 +3647,23 @@ DifferentiationTask::DifferentiationTask(ADContext &context,
                                          SILDifferentiableAttr *&&attr,
                                          DifferentiationInvoker invoker)
     : context(context), original(original), attr(attr), invoker(invoker) {
-  llvm::errs() << "DIFFERENTIATION TASK TIME ATTR: " << attr << ", original: " << original->getName() << "\n";
-  attr->print(llvm::errs());
-  llvm::errs() << "\n";
-  llvm::errs() << "HI1\n";
-  if (attr->hasPrimal())
+  if (attr->hasPrimal()) {
     primal = lookUpOrLinkFunction(attr->getPrimalName(), context.getModule());
-  llvm::errs() << "HI2\n";
-  if (attr->hasAdjoint())
+    assert(primal);
+  }
+  if (attr->hasAdjoint()) {
     adjoint = lookUpOrLinkFunction(attr->getAdjointName(), context.getModule());
-  llvm::errs() << "HI3\n";
-  if (attr->hasJVP())
+    assert(adjoint);
+  }
+  if (attr->hasJVP()) {
     jvp = lookUpOrLinkFunction(attr->getJVPName(), context.getModule());
-  llvm::errs() << "HI4\n";
-  if (attr->hasVJP())
+    assert(jvp);
+  }
+  if (attr->hasVJP()) {
     vjp = lookUpOrLinkFunction(attr->getVJPName(), context.getModule());
+    assert(vjp);
+  }
 
-  llvm::errs() << "HI5\n";
-  if (attr->hasAdjoint())
-    llvm::errs() << "ADJOINT NAME: " << attr->getAdjointName() << ", " << adjoint << "\n";
-  if (attr->hasJVP())
-    llvm::errs() << "JVP NAME: " << attr->getJVPName() << ", " << jvp << "\n";
-  if (attr->hasVJP())
-    llvm::errs() << "VJP NAME: " << attr->getVJPName() << ", " << vjp << "\n";
   if (!jvp)
     createJVP();
 
@@ -3722,7 +3700,7 @@ DifferentiationTask::DifferentiationTask(ADContext &context,
 // a SILDifferentiableAttr. The expected generic signature is built from the
 // original generic signature and the attribute's requirements.
 static GenericSignature *
-getAutodiffAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
+getAutoDiffAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
                                               SILFunction *original) {
   auto originalGenSig = original->getLoweredFunctionType()->getGenericSignature();
   if (!originalGenSig)
@@ -3758,7 +3736,7 @@ void DifferentiationTask::createEmptyPrimal() {
                                        "__primal_" + indices.mangle())
                         .str();
   auto *primalGenericSig =
-      getAutodiffAssociatedFunctionGenericSignature(attr, original);
+      getAutoDiffAssociatedFunctionGenericSignature(attr, original);
   llvm::errs() << "CREATING EMPTY PRIMAL 1.5\n";
   StructDecl *primalValueStructDecl = context.createPrimalValueStruct(this);
   llvm::errs() << "CREATING EMPTY PRIMAL 2\n";
@@ -3917,7 +3895,7 @@ void DifferentiationTask::createEmptyAdjoint() {
                                     "__adjoint_" + getIndices().mangle())
                      .str();
   auto *adjGenericSig =
-      getAutodiffAssociatedFunctionGenericSignature(attr, original);
+      getAutoDiffAssociatedFunctionGenericSignature(attr, original);
   auto *adjGenericEnv = adjGenericSig
       ? adjGenericSig->createGenericEnvironment()
       : nullptr;
@@ -3964,7 +3942,7 @@ void DifferentiationTask::createJVP() {
    */
   llvm::errs() << "JVP ORIGINAL: " << original->getName() << ", JVP NAME: " << jvpName << "\n";
   auto *jvpGenericSig =
-      getAutodiffAssociatedFunctionGenericSignature(attr, original);
+      getAutoDiffAssociatedFunctionGenericSignature(attr, original);
   auto *jvpGenericEnv = jvpGenericSig
       ? jvpGenericSig->createGenericEnvironment()
       : nullptr;
@@ -3996,65 +3974,64 @@ void DifferentiationTask::createJVP() {
   unsigned argumentIndex = 0;
   // original->getLoweredType()
   llvm::errs() << "ORIGINAL DECL CONTEXT\n";
-  original->getDeclContext()->dumpContext();
   llvm::errs() << "JVP TYPE\n";
-  jvp->getLoweredType().dump();
   auto &astCtx = module.getASTContext();
-  for (auto indResultTy : jvpConv.getIndirectSILResultTypes()) {
-    llvm::errs() << "IND RESULT TY\n";
-    indResultTy.dump();
-    jvp->mapTypeIntoContext(indResultTy).getAddressType().dump();
-    auto var = new (astCtx) ParamDecl(VarDecl::Specifier::InOut,
-                                      SourceLoc(), SourceLoc(),
-                                      astCtx.getIdentifier("$return_value"), SourceLoc(),
-                                      astCtx.getIdentifier("$return_value"),
-                                      original->getDeclContext());
-    // auto varType = jvp->mapTypeIntoContext(indResultTy).getAddressType();
-    // auto varType = jvp->mapTypeIntoContext(indResultTy);
-    auto varType = indResultTy.isAddress()
-    ? jvp->mapTypeIntoContext(indResultTy).getAddressType()
-    : jvp->mapTypeIntoContext(indResultTy);
-    varType.dump();
-    varType.getASTType().dump();
-    var->setInterfaceType(indResultTy.getASTType());
-    llvm::errs() << "HAS TYPE PARAM? " << varType.hasTypeParameter() << ", AST TYPE: " << varType.getASTType()->hasTypeParameter() << ", indirect: " << indResultTy.hasTypeParameter() << "\n";
-    llvm::errs() << "TYPE GENERIC CONTEXT? " << module.Types.getCurGenericContext() << "\n";
-    if (auto genCtx = module.Types.getCurGenericContext())
-      genCtx->dump();
+createEntryArguments(jvp);
+  // for (auto indResultTy : jvpConv.getIndirectSILResultTypes()) {
+  //   llvm::errs() << "IND RESULT TY\n";
+  //   indResultTy.dump();
+  //   jvp->mapTypeIntoContext(indResultTy).getAddressType().dump();
+  //   auto var = new (astCtx) ParamDecl(VarDecl::Specifier::InOut,
+  //                                     SourceLoc(), SourceLoc(),
+  //                                     astCtx.getIdentifier("$return_value"), SourceLoc(),
+  //                                     astCtx.getIdentifier("$return_value"),
+  //                                     original->getDeclContext());
+  //   // auto varType = jvp->mapTypeIntoContext(indResultTy).getAddressType();
+  //   // auto varType = jvp->mapTypeIntoContext(indResultTy);
+  //   auto varType = indResultTy.isAddress()
+  //   ? jvp->mapTypeIntoContext(indResultTy).getAddressType()
+  //   : jvp->mapTypeIntoContext(indResultTy);
+  //   varType.dump();
+  //   varType.getASTType().dump();
+  //   var->setInterfaceType(indResultTy.getASTType());
+  //   llvm::errs() << "HAS TYPE PARAM? " << varType.hasTypeParameter() << ", AST TYPE: " << varType.getASTType()->hasTypeParameter() << ", indirect: " << indResultTy.hasTypeParameter() << "\n";
+  //   llvm::errs() << "TYPE GENERIC CONTEXT? " << module.Types.getCurGenericContext() << "\n";
+  //   if (auto genCtx = module.Types.getCurGenericContext())
+  //     genCtx->dump();
 
-    // indResultTy.mapTypeOutOfContext().dump();
-    entry->createFunctionArgument(varType, var);
-    /*
-    entry->createFunctionArgument(
-        jvp->mapTypeIntoContext(indResultTy).getAddressType(),
-        original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
-     */
-  }
-  for (auto paramTy : jvpConv.getParameterSILTypes()) {
-    llvm::errs() << "PARAM TYPE\n";
-    paramTy.dump();
-    // entry->createFunctionArgument(jvp->mapTypeIntoContext(paramTy));
-    auto var = new (astCtx) ParamDecl(VarDecl::Specifier::Default,
-                                      SourceLoc(), SourceLoc(),
-                                      astCtx.getIdentifier("$return_value"), SourceLoc(),
-                                      astCtx.getIdentifier("$return_value"),
-                                      original->getDeclContext());
-    // auto varType = jvp->mapTypeIntoContext(paramTy);
-    // module.getTypeLowering(paramTy).isAddress()
-    auto varType = paramTy.isAddress()
-      ? jvp->mapTypeIntoContext(paramTy).getAddressType()
-      : jvp->mapTypeIntoContext(paramTy);
-    varType.dump();
-    // llvm::errs() << "HAS TYPE PARAM? " << varType.hasTypeParameter() << ", AST TYPE: " << paramTy.hasTypeParameter() << "\n";
-    llvm::errs() << "TYPE GENERIC CONTEXT? " << module.Types.getCurGenericContext() << "\n";
-    var->setInterfaceType(paramTy.getASTType());
-    entry->createFunctionArgument(varType, var);
-    /*
-    entry->createFunctionArgument(
-        jvp->mapTypeIntoContext(paramTy),
-        original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
-     */
-  }
+  //   // indResultTy.mapTypeOutOfContext().dump();
+  //   entry->createFunctionArgument(varType, var);
+  //   /*
+  //   entry->createFunctionArgument(
+  //       jvp->mapTypeIntoContext(indResultTy).getAddressType(),
+  //       original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
+  //    */
+  // }
+  // for (auto paramTy : jvpConv.getParameterSILTypes()) {
+  //   llvm::errs() << "PARAM TYPE\n";
+  //   paramTy.dump();
+  //   // entry->createFunctionArgument(jvp->mapTypeIntoContext(paramTy));
+  //   auto var = new (astCtx) ParamDecl(VarDecl::Specifier::Default,
+  //                                     SourceLoc(), SourceLoc(),
+  //                                     astCtx.getIdentifier("$return_value"), SourceLoc(),
+  //                                     astCtx.getIdentifier("$return_value"),
+  //                                     original->getDeclContext());
+  //   // auto varType = jvp->mapTypeIntoContext(paramTy);
+  //   // module.getTypeLowering(paramTy).isAddress()
+  //   auto varType = paramTy.isAddress()
+  //     ? jvp->mapTypeIntoContext(paramTy).getAddressType()
+  //     : jvp->mapTypeIntoContext(paramTy);
+  //   varType.dump();
+  //   // llvm::errs() << "HAS TYPE PARAM? " << varType.hasTypeParameter() << ", AST TYPE: " << paramTy.hasTypeParameter() << "\n";
+  //   llvm::errs() << "TYPE GENERIC CONTEXT? " << module.Types.getCurGenericContext() << "\n";
+  //   var->setInterfaceType(paramTy.getASTType());
+  //   entry->createFunctionArgument(varType, var);
+  //   /*
+  //   entry->createFunctionArgument(
+  //       jvp->mapTypeIntoContext(paramTy),
+  //       original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
+  //    */
+  // }
 
   // Return undef
   SILBuilder builder(entry);
@@ -4093,7 +4070,7 @@ void DifferentiationTask::createVJP() {
   //                                   "__vjp_" + getIndices().mangle());
   auto vjpName = "AD__" + original->getName().str() + "__vjp_" + getIndices().mangle();
   auto *vjpGenericSig =
-      getAutodiffAssociatedFunctionGenericSignature(attr, original);
+      getAutoDiffAssociatedFunctionGenericSignature(attr, original);
   auto *vjpGenericEnv = vjpGenericSig
       ? vjpGenericSig->createGenericEnvironment()
       : nullptr;
@@ -4206,30 +4183,31 @@ void DifferentiationTask::createVJP() {
 #endif
 
   // Create the entry block with indirect results and parameters.
-  auto *entry = vjp->createBasicBlock();
-  unsigned argumentIndex = 0;
-  llvm::errs() << "VJP HELLO 6\n";
-  for (auto indResultTy : vjpConv.getIndirectSILResultTypes()) {
-    llvm::errs() << "VJP HELLO IND RESULT TYPE\n";
-    indResultTy.dump();
-    entry->createFunctionArgument(
-        vjp->mapTypeIntoContext(indResultTy).getAddressType());
-  }
-  /*
-    entry->createFunctionArgument(
-        vjp->mapTypeIntoContext(indResultTy).getAddressType(),
-        original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
-   */
-  for (auto paramTy : vjpConv.getParameterSILTypes()) {
-    llvm::errs() << "VJP HELLO PARAM TYPE\n";
-    paramTy.dump();
-    entry->createFunctionArgument(vjp->mapTypeIntoContext(paramTy));
-  }
-  /*
-    entry->createFunctionArgument(
-        vjp->mapTypeIntoContext(paramTy),
-        original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
-   */
+   auto *entry = vjp->createBasicBlock();
+  // unsigned argumentIndex = 0;
+  // llvm::errs() << "VJP HELLO 6\n";
+  // for (auto indResultTy : vjpConv.getIndirectSILResultTypes()) {
+  //   llvm::errs() << "VJP HELLO IND RESULT TYPE\n";
+  //   indResultTy.dump();
+  //   entry->createFunctionArgument(
+  //       vjp->mapTypeIntoContext(indResultTy).getAddressType());
+  // }
+  // /*
+  //   entry->createFunctionArgument(
+  //       vjp->mapTypeIntoContext(indResultTy).getAddressType(),
+  //       original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
+  //  */
+  // for (auto paramTy : vjpConv.getParameterSILTypes()) {
+  //   llvm::errs() << "VJP HELLO PARAM TYPE\n";
+  //   paramTy.dump();
+  //   entry->createFunctionArgument(vjp->mapTypeIntoContext(paramTy));
+  // }
+  // /*
+  //   entry->createFunctionArgument(
+  //       vjp->mapTypeIntoContext(paramTy),
+  //       original->getEntryBlock()->getArgument(argumentIndex++)->getDecl());
+  //  */
+    createEntryArguments(vjp);
 
   SILBuilder builder(entry);
   auto loc = vjp->getLocation();

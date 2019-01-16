@@ -208,7 +208,7 @@ void SILGenModule::emitCurryThunk(SILDeclRef constant) {
 
   SILGenFunction(*this, *f, SwiftModule).emitCurryThunk(constant);
   postEmitFunction(constant, f);
-  return;
+  //return;
 
   // SWIFT_ENABLE_TENSORFLOW
   // If we emitted a curry thunk for a differentiable function, then also emit a

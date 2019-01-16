@@ -977,21 +977,7 @@ public:
                               DifferentiationInvoker invoker) {
     // Make sure this pair of original and indices is unique.
     assert(!lookUpDifferentiationTask(original, indices));
-    // Make sure this function either has a body or has a
-    // `[differentiable]` attribute that is a superset of all the indices.
-    // TODO: Remove this blurb; manual deserialization should not be necessary.
-    /*
-    if (original->isExternalDeclaration()) {
-      // If it's serialized, deserialize it.
-      assert(original->isSerialized() &&
-             "Differentiation task cannot be on a function without a body");
-      auto *deserializedFn = silLoader->lookupSILFunction(original);
-      assert(deserializedFn && "Cannot deserialize original function");
-      (void)deserializedFn;
-    }
-     */
     auto *attr = getOrCreateDifferentiableAttr(original, indices);
-    assert(attr && "NO NULL ATTRS");
     std::unique_ptr<DifferentiationTask> task(
         new DifferentiationTask(*this, original, std::move(attr), invoker));
     differentiationTasks.push_back(std::move(task));

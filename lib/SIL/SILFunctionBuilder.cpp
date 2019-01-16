@@ -79,15 +79,10 @@ SILFunctionBuilder::addFunctionAttributes(SILFunction *F, SILDeclRef constant,
       // spcified.
       std::string primName, adjName, jvpName, vjpName;
       bool hasPrimitiveAdjoint = true;
-      // Register primal/adjoint names only for definition.
-      /*
-      if (forDefinition == NotForDefinition) {
-        assert(false && "show me the trace");
-      }
-       */
+      // Register primal/adjoint names only for functions defined in the current
+      // module.
       bool isSameModule = M.getSwiftModule() == decl->getModuleContext();
-      llvm::errs() << "IS SAME MODULE? " << isSameModule << "\n";
-      // if (forDefinition == ForDefinition) {
+      // bool isSameModule = F->isDefinition();
       if (isSameModule) {
         if (auto *primFn = DA->getPrimalFunction())
           primName = SILDeclRef(primFn).mangle();
@@ -103,22 +98,15 @@ SILFunctionBuilder::addFunctionAttributes(SILFunction *F, SILDeclRef constant,
                  "Primal cannot be present if adjoint is not");
         }
       }
-      llvm::errs() << "VISITING DIFF ATTR FUNCTION " << F->getName() << "\n";
-      if (auto *jvpFn = DA->getJVPFunction()) {
-        llvm::errs() << "WHAT 1?\n";
+      if (auto *jvpFn = DA->getJVPFunction())
         jvpName = SILDeclRef(jvpFn).mangle();
-      }
-      // else if (forDefinition == NotForDefinition) {
-      else if (!isSameModule) {
-        llvm::errs() << "WHAT 2?\n";
+      else if (!isSameModule)
         jvpName = constant.asAutoDiffAssociatedFunction(
             AutoDiffAssociatedFunctionIdentifier::get(
                 AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
                 DA->getParameterIndices(), F->getASTContext())).mangle();
-      }
       if (auto *vjpFn = DA->getVJPFunction())
         vjpName = SILDeclRef(vjpFn).mangle();
-      //else if (forDefinition == NotForDefinition)
       else if (!isSameModule)
         vjpName = constant.asAutoDiffAssociatedFunction(
             AutoDiffAssociatedFunctionIdentifier::get(
@@ -129,6 +117,7 @@ SILFunctionBuilder::addFunctionAttributes(SILFunction *F, SILDeclRef constant,
       auto loweredIndices = paramIndices->getLowered(
           decl->getInterfaceType()->castTo<AnyFunctionType>());
       SILAutoDiffIndices indices(/*source*/ 0, loweredIndices);
+      /*
       bool skip = false;
       for (auto silDiffAttr : F->getDifferentiableAttrs()) {
         if (silDiffAttr->getIndices() == indices) {
@@ -138,6 +127,7 @@ SILFunctionBuilder::addFunctionAttributes(SILFunction *F, SILDeclRef constant,
       }
       if (skip)
         break;
+       */
       auto silDiffAttr = SILDifferentiableAttr::create(
           M, indices, DA->getRequirements(),
           M.allocateCopy(primName), M.allocateCopy(adjName),

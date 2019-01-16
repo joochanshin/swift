@@ -80,7 +80,7 @@ extension Tensor : AdditiveArithmetic where Scalar : Numeric {
   /// - Note: `+` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointAdd(_:_:_:_:)
+    adjoint: _vjpAdd(_:_:)
     where Scalar : Differentiable & FloatingPoint
   )
   public static func + (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -91,7 +91,7 @@ extension Tensor : AdditiveArithmetic where Scalar : Numeric {
   /// - Note: `-` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointSubtract(_:_:_:_:)
+    adjoint: _vjpSubtract(_:_:)
     where Scalar : Differentiable & FloatingPoint
   )
   public static func - (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -190,7 +190,7 @@ public extension Tensor where Scalar : Numeric {
   /// - Note: `*` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointMultiply(_:_:_:_:)
+    adjoint: _vjpMultiply(_:_:)
     where Scalar : Differentiable & FloatingPoint
   )
   static func * (lhs: Tensor, rhs: Tensor) -> Tensor {
@@ -221,7 +221,7 @@ public extension Tensor where Scalar : Numeric {
   /// - Note: `/` supports broadcasting.
   @inlinable @inline(__always)
   @differentiable(
-    adjoint: _adjointDivide(_:_:_:_:)
+    adjoint: _vjpDivide(_:_:)
     where Scalar : Differentiable & FloatingPoint
   )
   static func / (lhs: Tensor, rhs: Tensor) -> Tensor {

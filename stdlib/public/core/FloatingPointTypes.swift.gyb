@@ -1719,7 +1719,7 @@ extension ${Self} {
 extension ${Self} {
   @_transparent
   /// SWIFT_ENABLE_TENSORFLOW
-  @differentiable(adjoint: _adjointAdd)
+  @differentiable(reverse, vjp: _vjpAdd)
   public static func + (lhs: ${Self}, rhs: ${Self}) -> ${Self} {
     var lhs = lhs
     lhs += rhs
@@ -1728,7 +1728,7 @@ extension ${Self} {
 
   @_transparent
   /// SWIFT_ENABLE_TENSORFLOW
-  @differentiable(adjoint: _adjointSubtract)
+  @differentiable(reverse, vjp: _vjpSubtract)
   public static func - (lhs: ${Self}, rhs: ${Self}) -> ${Self} {
     var lhs = lhs
     lhs -= rhs
@@ -1737,7 +1737,7 @@ extension ${Self} {
 
   @_transparent
   /// SWIFT_ENABLE_TENSORFLOW
-  @differentiable(adjoint: _adjointMultiply)
+  @differentiable(reverse, vjp: _vjpMultiply)
   public static func * (lhs: ${Self}, rhs: ${Self}) -> ${Self} {
     var lhs = lhs
     lhs *= rhs
@@ -1746,7 +1746,7 @@ extension ${Self} {
 
   @_transparent
   /// SWIFT_ENABLE_TENSORFLOW
-  @differentiable(adjoint: _adjointDivide)
+  @differentiable(reverse, vjp: _vjpDivide)
   public static func / (lhs: ${Self}, rhs: ${Self}) -> ${Self} {
     var lhs = lhs
     lhs /= rhs
@@ -1754,6 +1754,45 @@ extension ${Self} {
   }
 }
 
+/// SWIFT_ENABLE_TENSORFLOW
+/// Vector-Jacobian products of standard binary operators.
+extension ${Self} {
+  @inlinable // FIXME(sil-serialize-all)
+  @_transparent
+  static func _vjpAdd(
+    lhs: ${Self}, rhs: ${Self}
+  ) -> (${Self}, (${Self}) -> (${Self}, ${Self})) {
+    return (lhs + rhs, { adjoint in (adjoint, adjoint) })
+  }
+
+  @inlinable // FIXME(sil-serialize-all)
+  @_transparent
+  static func _vjpSubtract(
+    lhs: ${Self}, rhs: ${Self}
+  ) -> (${Self}, (${Self}) -> (${Self}, ${Self})) {
+    return (lhs - rhs, { adjoint in (adjoint, -adjoint) })
+  }
+
+  @inlinable // FIXME(sil-serialize-all)
+  @_transparent
+  static func _vjpMultiply(
+    lhs: ${Self}, rhs: ${Self}
+  ) -> (${Self}, (${Self}) -> (${Self}, ${Self})) {
+    return (lhs * rhs, { adjoint in (rhs * adjoint, lhs * adjoint) })
+  }
+
+  @inlinable // FIXME(sil-serialize-all)
+  @_transparent
+  static func _vjpDivide(
+    lhs: ${Self}, rhs: ${Self}
+  ) -> (${Self}, (${Self}) -> (${Self}, ${Self})) {
+    return (lhs / rhs, { adjoint in
+      (adjoint / rhs, -lhs / (rhs * rhs) * adjoint)
+    })
+  }
+}
+
+/*
 /// SWIFT_ENABLE_TENSORFLOW
 /// Adjoints of standard binary operators.
 extension ${Self} {
@@ -1793,6 +1832,7 @@ extension ${Self} {
     return (adjoint / rhs, -lhs / (rhs * rhs) * adjoint)
   }
 }
+*/
 
 //===----------------------------------------------------------------------===//
 // Strideable Conformance

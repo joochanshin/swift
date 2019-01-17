@@ -3785,6 +3785,9 @@ void IRGenSILFunction::visitPartialApplyInst(swift::PartialApplyInst *i) {
 
   // Create the thunk and function value.
   Explosion function;
+  llvm::errs() << "DUMPING PARTIAL APPLY\n";
+  i->dumpInContext();
+  i->getFunction()->dump();
   emitFunctionPartialApplication(
       *this, *CurSILFn, calleeFn, innerContext, llArgs, params,
       i->getSubstitutionMap(), origCalleeTy, i->getSubstCalleeType(),

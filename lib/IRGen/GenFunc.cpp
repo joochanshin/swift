@@ -1247,6 +1247,9 @@ static llvm::Function *emitPartialApplicationForwarder(IRGenModule &IGM,
     // cast to the result type - it could be substituted.
     if (origConv.getSILResultType().hasTypeParameter()) {
       auto ResType = fwd->getReturnType();
+      llvm::errs() << "EMIT PARTIAL APPLY FORWARDER RESULT CHECK\n";
+      callResult->getType()->dump();
+      ResType->dump();
       callResult = subIGF.Builder.CreateBitCast(callResult, ResType);
     }
     subIGF.Builder.CreateRet(callResult);
@@ -1430,6 +1433,7 @@ void irgen::emitFunctionPartialApplication(
 
     auto origSig = IGF.IGM.getSignature(origType);
 
+    llvm::errs() << "EMIT PARTIAL APPLY FORWARDER REACHED\n";
     llvm::Value *forwarder =
       emitPartialApplicationForwarder(IGF.IGM, staticFn, fnContext != nullptr,
                                       origSig, origType, substType,

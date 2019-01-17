@@ -73,14 +73,13 @@ template <typename T> static inline void debugDump(T &v) {
 static void createEntryArguments(SILFunction *f) {
   auto *entry = f->getEntryBlock();
   auto conv = f->getConventions();
-  auto &ctx = f->getASTContext();
   auto moduleDecl = f->getModule().getSwiftModule();
   assert((entry->getNumArguments() == 0 || conv.getNumSILArguments() == 0) &&
          "Entry already has arguments?!");
   // Create a dummy argument declaration.
   // Necessary to prevent crash during argument explosion optimization.
   auto createDummyParamDecl = [&] {
-    return new (ctx)
+    return new (f->getASTContext())
         ParamDecl(VarDecl::Specifier::Default, SourceLoc(), SourceLoc(),
                   Identifier(), SourceLoc(), Identifier(), moduleDecl);
   };
@@ -448,7 +447,18 @@ private:
           new (ctx) UsableFromInlineAttr(/*implicit*/ true));
     else
       varDecl->setAccess(AccessLevel::Public);
-    varDecl->setInterfaceType(type);
+    // if (type->hasTypeParameter())
+    //   varDecl->setInterfaceType(type->mapTypeOutOfContext());
+    llvm::errs() << "HELLO ADDING VAR DECL\n";
+    type->dump();
+    type->mapTypeOutOfContext()->dump();
+    primalValueStruct->mapTypeIntoContext(type->mapTypeOutOfContext())->dump();
+    if (type->hasArchetype())
+      // varDecl->setInterfaceType(primalValueStruct->mapTypeIntoContext(type->mapTypeOutOfContext()));
+      varDecl->setInterfaceType(type->mapTypeOutOfContext());
+    else
+      varDecl->setInterfaceType(type);
+    // varDecl->setType(type);
     primalValueStruct->addMember(varDecl);
     return varDecl;
   }
@@ -468,6 +478,7 @@ public:
   StructType *computePrimalValueStructType() {
     assert(!primalValueStructType &&
            "The primal value struct type has been computed before");
+    // BoundGenericStructType(<#StructDecl *theDecl#>, <#Type parent#>, <#ArrayRef<Type> genericArgs#>, <#const ASTContext *context#>, <#RecursiveTypeProperties properties#>)
     primalValueStructType = StructType::get(primalValueStruct, Type(),
                                             primalValueStruct->getASTContext());
     return primalValueStructType;
@@ -883,7 +894,8 @@ public:
   /// Creates a struct declaration (without contents) for storing primal values
   /// of a function. The newly created struct will have the same generic
   /// parameters as the function.
-  StructDecl *createPrimalValueStruct(const DifferentiationTask *task);
+  StructDecl *createPrimalValueStruct(const DifferentiationTask *task,
+                                      CanGenericSignature primalGenSig);
 
 private:
   /// Finds the `[differentiable]` attribute on the specified original function
@@ -1744,8 +1756,38 @@ private:
 };
 } // end anonymous namespace
 
+static GenericParamList *cloneGenericParams(ASTContext &ctx,
+                                            DeclContext *dc,
+                                            // GenericParamList *params) {
+                                            CanGenericSignature sig) {
+  // Clone generic parameters.
+  llvm::errs() << "ORIGINAL FUNCTION GEN SIG\n";
+  sig->dump();
+  SmallVector<GenericTypeParamDecl *, 2> clonedParams;
+  for (auto paramType : sig->getGenericParams()) {
+    // Create the new generic parameter.
+    auto param = paramType->getDecl();
+    // auto clonedParam = new (ctx) GenericTypeParamDecl(dc, param->getName(),
+    //                                                   SourceLoc(),
+    //                                                   param->getDepth(),
+    //                                                   param->getIndex());
+    llvm::errs() << "PARAM depth " << paramType->getDepth() << ", index: " << paramType->getIndex() << "\n";
+    // auto clonedParam = new (ctx) GenericTypeParamDecl(dc, Identifier(),
+    auto clonedParam = new (ctx) GenericTypeParamDecl(dc, paramType->getName(),
+                                                      SourceLoc(),
+                                                      paramType->getDepth(),
+                                                      paramType->getIndex());
+    clonedParam->setDeclContext(dc);
+    clonedParam->setImplicit(true);
+    clonedParams.push_back(clonedParam);
+  }
+  // if (auto outerParams = params->getOuterParameters())
+  //   params->setOuterParameters(cloneGenericParams(ctx, dc, outerParams));
+  return GenericParamList::create(ctx, SourceLoc(), clonedParams, SourceLoc());
+}
+
 StructDecl *
-ADContext::createPrimalValueStruct(const DifferentiationTask *task) {
+ADContext::createPrimalValueStruct(const DifferentiationTask *task, CanGenericSignature primalGenSig) {
   auto *function = task->getOriginal();
   assert(&function->getModule() == &module &&
          "The function must be in the same module");
@@ -1755,12 +1797,22 @@ ADContext::createPrimalValueStruct(const DifferentiationTask *task) {
                              task->getIndices().mangle();
   auto structId = astCtx.getIdentifier(pvStructName);
   SourceLoc loc = function->getLocation().getSourceLoc();
+  // auto params = function->getLoweredFunctionType()->getGenericSignature()->getGenericParams();
+  // function->getLoweredFunctionType()->getGenericSignature
+  // params.back()->getDecl()
+  // GenericParamList::create(getASTContext(), SourceLoc(), <#ArrayRef<GenericTypeParamDecl *> Params#>, SourceLoc()
   auto pvStruct =
       new (astCtx) StructDecl(/*StructLoc*/ loc, /*Name*/ structId,
                               /*NameLoc*/ loc, /*Inherited*/ {},
                               /*GenericParams*/ nullptr, // to be set later
                               /*DC*/ &file);
-  pvStruct->computeType();
+  // if (auto originalGenSig = function->getLoweredFunctionType()->getGenericSignature()) {
+  //   auto genericParams = cloneGenericParams(astCtx, pvStruct, originalGenSig);
+  if (primalGenSig) {
+    auto genericParams = cloneGenericParams(astCtx, pvStruct, primalGenSig);
+    // GenericSignature(dd, <#ArrayRef<Requirement> requirements#>, <#bool isKnownCanonical#>)^i// 
+    pvStruct->setGenericParams(genericParams);
+  }
   if (auto *dc = function->getDeclContext()) {
     if (auto *afd = dyn_cast<AbstractFunctionDecl>(dc)) {
       auto funcAccess = afd->getEffectiveAccess();
@@ -1775,10 +1827,20 @@ ADContext::createPrimalValueStruct(const DifferentiationTask *task) {
     pvStruct->getAttrs().add(
         new (astCtx) UsableFromInlineAttr(/*implicit*/ true));
   }
-  if (auto originalGenSig =
-          task->getOriginal()->getLoweredFunctionType()->getGenericSignature())
-    pvStruct->setGenericEnvironment(originalGenSig->createGenericEnvironment());
+  pvStruct->setImplicit();
+  // if (auto originalGenSig = task->getOriginal()->getLoweredFunctionType()->getGenericSignature()) {
+  //   pvStruct->setGenericEnvironment(originalGenSig->createGenericEnvironment());
+  if (primalGenSig) {
+    pvStruct->setGenericEnvironment(primalGenSig->createGenericEnvironment());
+    llvm::errs() << "PRIMAL STRUCT GEN SIG\n";
+    pvStruct->getGenericSignature()->dump();
+  }
+  // originalGenSig->getGeneric
+  pvStruct->computeType();
   file.addVisibleDecl(pvStruct);
+  llvm::errs() << "PRIMAL STRUCT TYPE\n";
+  pvStruct->getDeclaredInterfaceType()->dump();
+  pvStruct->getDeclaredInterfaceType()->getCanonicalType()->dump();
   LLVM_DEBUG({
     auto &s = getADDebugStream();
     s << "Primal value struct created for function " << function->getName()
@@ -1929,18 +1991,98 @@ public:
     SILClonerWithScopes::postProcess(orig, cloned);
   }
 
+  SILType remapType(SILType ty) {
+    if (!ty.hasArchetype())
+      return ty;
+    auto *primal = getPrimal();
+    auto *primalGenEnv = primal->getGenericEnvironment();
+    if (!primalGenEnv)
+      return ty;
+    return primalGenEnv->mapTypeIntoContext(primal->getModule(), ty.mapTypeOutOfContext());
+  }
+
+  CanType remapASTType(CanType ty) {
+    if (!ty->hasArchetype())
+      return ty;
+    auto *primal = getPrimal();
+    auto *primalGenEnv = primal->getGenericEnvironment();
+    if (!primalGenEnv)
+      return ty;
+    return primalGenEnv->mapTypeIntoContext(ty->mapTypeOutOfContext())->getCanonicalType();
+  }
+
+  ProtocolConformanceRef remapConformance(Type Ty, ProtocolConformanceRef C) {
+    llvm::errs() << "HELLO REMAP CONFORMANCE\n";
+    Ty->dump();
+    C.dump();
+    auto *primal = getPrimal();
+    auto *primalGenEnv = primal->getGenericEnvironment();
+    if (!primalGenEnv)
+      return C;
+    // C.subst(Ty, primalGenEnv->getFo)
+    auto primalSubstMap = primalGenEnv->getForwardingSubstitutionMap();
+    return C.subst(Ty,
+                   [&](SubstitutableType *ty) {
+                     auto newTy = Type(ty).subst(primalSubstMap);
+                     if (!newTy->hasArchetype())
+                       return newTy;
+                     return primalGenEnv->mapTypeIntoContext(newTy->mapTypeOutOfContext());
+                   },
+                   LookUpConformanceInModule(getContext().getModule().getSwiftModule()));
+  }
+
+  SubstitutionMap remapSubstitutionMap(SubstitutionMap substMap) {
+    llvm::errs() << "HELLO REMAP SUBST MAP\n";
+    substMap.dump();
+    auto *primal = getPrimal();
+    auto *primalGenEnv = primal->getGenericEnvironment();
+    if (!primalGenEnv)
+      return substMap;
+    auto primalSubstMap = primalGenEnv->getForwardingSubstitutionMap();
+    primalSubstMap.dump();
+    return substMap.subst(
+        [&](SubstitutableType *ty) {
+          auto newTy = Type(ty).subst(primalSubstMap);
+          if (!newTy->hasArchetype())
+            return newTy;
+          return primalGenEnv->mapTypeIntoContext(newTy->mapTypeOutOfContext());
+        },
+        LookUpConformanceInModule(getContext().getModule().getSwiftModule()));
+  }
+
   // Run primal generation. Returns true on error.
   bool run() {
     auto *original = getOriginal();
+    auto *primal = getPrimal();
+    auto *primalGenEnv = primal->getGenericEnvironment();
     LLVM_DEBUG(getADDebugStream()
                << "Cloning original @" << getOriginal()->getName()
                << " to primal @" << synthesis.target->getName() << '\n');
     // Create entry BB and arguments.
-    auto *entry = getPrimal()->createBasicBlock();
+    auto *entry = primal->createBasicBlock();
     // Map the original's arguments to the new function's arguments.
     SmallVector<SILValue, 8> entryArgs;
     for (auto *origArg : original->getArguments()) {
-      auto *newArg = entry->createFunctionArgument(origArg->getType());
+      SILFunctionArgument *newArg = nullptr;
+      llvm::errs() << "ORIGINAL ARGUMENT HAS ARCHETYPE? " << origArg->getType().hasArchetype() << "\n";
+      origArg->getType().dump();
+      if (primalGenEnv && origArg->getType().hasArchetype()) {
+        llvm::errs() << "CREATING PRIMAL ARGUMENT\n";
+        origArg->getType().dump();
+        // primalGenEnv->mapTypeIntoContext(primal->getModule(), origArg->getType()).dump();
+        // origArg->getType().mapTypeOutOfContext()
+        // auto asdf = primalGenEnv->mapTypeIntoContext(origArg->getType().getASTType());
+        // asdf->dump();
+        // asdf->getCanonicalType()->dump();
+        // auto silType = SILType::getPrimitiveObjectType(asdf->getCanonicalType());
+        // silType.dump();
+
+        auto silType = primalGenEnv->mapTypeIntoContext(primal->getModule(), origArg->getType().mapTypeOutOfContext());
+        newArg = entry->createFunctionArgument(silType);
+        // newArg = entry->createFunctionArgument(origArg->getType().mapTypeOutOfContext());
+      } else {
+        newArg = entry->createFunctionArgument(origArg->getType());
+      }
       entryArgs.push_back(newArg);
     }
     // Clone.
@@ -1950,16 +2092,22 @@ public:
       return true;
     auto *origExit = &*original->findReturnBB();
     auto *exit = BBMap.lookup(origExit);
-    assert(exit->getParent() == getPrimal());
+    assert(exit->getParent() == primal);
     // Get the original's return value's corresponsing value in the primal.
     auto *origRetInst = cast<ReturnInst>(origExit->getTerminator());
     auto origRetVal = origRetInst->getOperand();
     auto origResInPrimal = getOpValue(origRetVal);
     // Create a primal value struct containing all static primal values and
     // tapes.
-    auto loc = getPrimal()->getLocation();
+    auto loc = primal->getLocation();
     auto structTy =
         getPrimalInfo().getPrimalValueStruct()->getDeclaredInterfaceType();
+    // if (auto primalGenEnv = primal->getGenericEnvironment()) {
+    if (primalGenEnv) {
+      structTy = primalGenEnv->mapTypeIntoContext(structTy);
+      llvm::errs() << "WOW WE MADE A NEW TYPE!\n";
+      structTy->dump();
+    }
     auto &builder = getBuilder();
     builder.setInsertionPoint(exit);
     auto structLoweredTy =
@@ -1999,8 +2147,8 @@ public:
     });
     LLVM_DEBUG(getADDebugStream() << "Finished PrimalGen for function "
                                   << original->getName() << ":\n"
-                                  << *getPrimal());
-    debugDump(*getPrimal());
+                                  << *primal);
+    debugDump(primal);
     return errorOccurred;
   }
 
@@ -2186,14 +2334,25 @@ public:
       newArgs.push_back(getOpValue(origArg));
     assert(newArgs.size() == numVJPParams);
     // Apply the VJP.
+
+    /*
     auto substMap = ai->getSubstitutionMap();
     if (auto vjpGenSig = vjpFnTy->getGenericSignature()) {
-      auto vjpSubstMap =
-          vjpGenSig->createGenericEnvironment()->getForwardingSubstitutionMap();
+      auto vjpGenEnv = vjpGenSig->createGenericEnvironment();
+      auto vjpSubstMap = vjpGenEnv->getForwardingSubstitutionMap();
       substMap = vjpSubstMap.subst(
-          [&](SubstitutableType *ty) { return Type(ty).subst(substMap); },
+          [&](SubstitutableType *ty) {
+            // return Type(ty).subst(substMap);
+            return remapASTType(ty->getCanonicalType()).subst(substMap);
+            // auto newTy = Type(ty).subst(substMap);
+            // if (!newTy->hasArchetype())
+            //   return newTy;
+            // return vjpGenEnv->mapTypeIntoContext(newTy->mapTypeOutOfContext());
+          },
           LookUpConformanceInModule(context.getModule().getSwiftModule()));
     }
+    */
+    auto substMap = remapSubstitutionMap(ai->getSubstitutionMap());
     auto *vjpCall = getBuilder().createApply(ai->getLoc(), vjp, substMap,
                                              newArgs, ai->isNonThrowing());
     LLVM_DEBUG(getADDebugStream() << "Applied vjp function\n" << *vjpCall);
@@ -2248,7 +2407,7 @@ public:
 } // end anonymous namespace
 
 bool PrimalGen::performSynthesis(FunctionSynthesisItem item) {
-  LLVM_DEBUG(getADDebugStream() << "Performing primal synthesis for original"
+  LLVM_DEBUG(getADDebugStream() << "Performing primal synthesis for original "
              << item.original->getName() << " and its corresponding primal "
              << item.target->getName() << '\n');
   // FIXME: If the original function has multiple basic blocks, bail out since
@@ -2259,7 +2418,34 @@ bool PrimalGen::performSynthesis(FunctionSynthesisItem item) {
   }
   // FIXME: Support generics.
   auto *original = item.original;
-  if (original->getLoweredFunctionType()->getGenericSignature()) {
+  auto originalGenSig =
+      original->getLoweredFunctionType()->getGenericSignature();
+  original->getLoweredFunctionType()->dump();
+  /*
+  originalGenSig->dump();
+  for (auto req : originalGenSig->getRequirements()) {
+    req.getFirstType()->dump();
+    req.getSecondType()->dump();
+    // if (req.getFirstType()->isTypeParameter())
+  }
+  */
+  for (auto param : original->getLoweredFunctionType()->getParameters()) {
+    param.getType()->dump();
+    llvm::errs() << "HELLO: " << param.getType()->isTypeParameter() << "\n";
+  }
+  bool originalHasIndirectParamOrResult =
+  original->hasIndirectFormalResults() ||
+  llvm::any_of(original->getLoweredFunctionType()->getParameters(),
+               [](SILParameterInfo param) { return param.isFormalIndirect(); });
+  llvm::errs() << "HAS INDIRECT PARAM OR RESULT: " << originalHasIndirectParamOrResult << "\n";
+  bool originalHasTypeParameterParam =
+  llvm::any_of(original->getLoweredFunctionType()->getParameters(),
+               [](SILParameterInfo param) { return param.getType()->isTypeParameter(); });
+  llvm::errs() << "HAS TYPE PARAMETER PARAM: " << originalHasTypeParameterParam << "\n";
+  // if (originalGenSig && !originalGenSig->areAllParamsConcrete()) {
+  // no indirect parameter/result types, skip all parameters that don't
+  // SILztype.isDifferentiable
+  if (originalHasIndirectParamOrResult) {
     context.diagnose(original->getLocation().getSourceLoc(),
                      diag::autodiff_function_generic_functions_unsupported);
     context.diagnose(original->getLocation().getSourceLoc(),
@@ -2656,9 +2842,13 @@ private:
     auto cotanSpace = origTy->getAutoDiffAssociatedVectorSpace(
         AutoDiffAssociatedVectorSpaceKind::Cotangent,
         LookUpConformanceInModule(getModule().getSwiftModule()));
+    llvm::errs() << "ADDING ADJOINT! " << cotanSpace.hasValue() << "\n";
+    adjointValue.print(llvm::errs());
+    adjointValue.getType().getASTType()->dump();
+    cotanSpace->getCanonicalType()->dump();
     // The adjoint value must be in the cotangent space.
-    assert(cotanSpace && adjointValue.getType().getASTType()
-               == cotanSpace->getCanonicalType());
+    // assert(cotanSpace && adjointValue.getType().getASTType()->isEqual(
+    //            cotanSpace->getCanonicalType()));
 #endif
     auto insertion = adjointMap.try_emplace(originalValue, adjointValue);
     auto inserted = insertion.second;
@@ -3610,7 +3800,7 @@ void AdjointEmitter::accumulateMaterializedAdjointsIndirect(
 }
 
 bool AdjointGen::performSynthesis(FunctionSynthesisItem item) {
-  LLVM_DEBUG(getADDebugStream() << "Performing adjoint synthesis for original"
+  LLVM_DEBUG(getADDebugStream() << "Performing adjoint synthesis for original "
              << item.original->getName() << " and its corresponding adjoint "
              << item.target->getName() << '\n');
   auto &passManager = context.getPassManager();
@@ -3680,7 +3870,8 @@ DifferentiationTask::DifferentiationTask(ADContext &context,
 // Return the expected generic signature for autodiff associated functions given
 // a SILDifferentiableAttr. The expected generic signature is built from the
 // original generic signature and the attribute's requirements.
-static GenericSignature *
+// static GenericSignature *
+static CanGenericSignature
 getAutoDiffAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
                                               SILFunction *original) {
   auto originalGenSig =
@@ -3697,9 +3888,17 @@ getAutoDiffAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
     builder.addRequirement(req, source, original->getModule().getSwiftModule());
   auto canGenericSig = std::move(builder)
                            .computeGenericSignature(
-                               SourceLoc(), /*allowConcreteGenericParams=*/true)
-                           ->getCanonicalSignature();
-  return canGenericSig;
+                       SourceLoc(), /*allowConcreteGenericParams=*/true);
+  // llvm::errs() << "NON CAN GEN SIG\n";
+  // canGenericSig->dump();
+  // llvm::errs() << "CAN GEN SIG\n";
+  // canGenericSig->getCanonicalSignature()->dump();
+  return canGenericSig->getCanonicalSignature();
+  // auto canGenericSig = std::move(builder)
+  //                          .computeGenericSignature(
+  //                              SourceLoc(), /*allowConcreteGenericParams=*/true)
+  //                          ->getCanonicalSignature();
+  // return canGenericSig;
 }
 
 void DifferentiationTask::createEmptyPrimal() {
@@ -3714,25 +3913,72 @@ void DifferentiationTask::createEmptyPrimal() {
                         .getIdentifier("AD__" + original->getName().str() +
                                        "__primal_" + indices.mangle())
                         .str();
-  auto *primalGenericSig =
+  auto primalGenericSig =
       getAutoDiffAssociatedFunctionGenericSignature(attr, original);
-  StructDecl *primalValueStructDecl = context.createPrimalValueStruct(this);
+  // attr->getVJPName()
+  // StructDecl *primalValueStructDecl = context.createPrimalValueStruct(this, primalGenericSig);
+  StructDecl *primalValueStructDecl = context.createPrimalValueStruct(this, primalGenericSig);
   primalInfo = std::unique_ptr<PrimalInfo>(
       new PrimalInfo(primalValueStructDecl, module));
-  auto pvType = primalValueStructDecl->getDeclaredType()->getCanonicalType();
+  auto *primalGenericEnv = primalGenericSig
+      ? primalGenericSig->createGenericEnvironment()
+      : nullptr;
+  auto pvType = primalValueStructDecl->getDeclaredInterfaceType()->getCanonicalType();
+  /*
+  pvType->dump();
+  llvm::errs() << "get canonical type in primal gen sig, has type param? " << primalValueStructDecl->getDeclaredInterfaceType()->hasTypeParameter() <<  "\n";
+  primalGenericSig->dump();
+  primalGenericSig->createGenericEnvironment()->dump();
+  primalGenericSig->getCanonicalTypeInContext(primalValueStructDecl->getDeclaredInterfaceType())->dump();
+  primalGenericSig->getCanonicalTypeInContext(primalValueStructDecl->getDeclaredType()->mapTypeOutOfContext())->dump();
+  primalGenericEnv->mapTypeIntoContext(primalValueStructDecl->getDeclaredInterfaceType())->dump();
+   */
+  if (primalGenericEnv)
+    pvType = primalGenericEnv->mapTypeIntoContext(primalValueStructDecl->getDeclaredInterfaceType())->getCanonicalType();
   auto objTy = SILType::getPrimitiveObjectType(pvType);
+  objTy.dump();
+  auto addressTy = SILType::getPrimitiveAddressType(pvType);
+  addressTy.dump();
+  if (primalGenericSig) {
+    auto hello = primalGenericSig->getGenericParams().back();
+    llvm::errs() << "OUR LAST HOPE\n";
+    original->getLoweredFunctionType()->getGenericSignature()->getGenericParams().back()->dump();
+    original->getGenericEnvironment()->dump();
+  }
+  // primalValueStructDecl->getDeclaredInterfaceType()->getAs<UnboundGenericType>()->get
+  // auto resultConv = ResultConvention::Owned;
   auto resultConv = objTy.isLoadable(module) ? ResultConvention::Owned
                                              : ResultConvention::Indirect;
   auto origResults = original->getLoweredFunctionType()->getResults();
+  pvType = primalValueStructDecl->getDeclaredInterfaceType()->getCanonicalType();
   SmallVector<SILResultInfo, 8> results;
   results.push_back({pvType, resultConv});
   results.append(origResults.begin(), origResults.end());
   // Create result info for checkpoints.
   auto originalTy = original->getLoweredFunctionType();
+  // SILFunctionType::get(<#GenericSignature *genericSig#>, <#ExtInfo ext#>, <#SILCoroutineKind coroutineKind#>, <#ParameterConvention calleeConvention#>, <#ArrayRef<SILParameterInfo> interfaceParams#>, <#ArrayRef<SILYieldInfo> interfaceYields#>, <#ArrayRef<SILResultInfo> interfaceResults#>, <#Optional<SILResultInfo> interfaceErrorResult#>, <#const ASTContext &ctx#>)
+  SmallVector<SILParameterInfo, 8> params;
+  for (auto paramInfo : originalTy->getParameters()) {
+    llvm::errs() << "HELLO PARAM INFO, has type param? " << paramInfo.getType()->hasTypeParameter() << "\n";
+    paramInfo.getType().dump();
+    if (!paramInfo.getType()->hasTypeParameter()) {
+      params.push_back(paramInfo);
+      continue;
+    }
+    /*
+    // params.push_back(paramInfo.getWithType(primalGenericEnv->mapTypeIntoContext(paramInfo.getType()->mapTypeOutOfContext())->getCanonicalType()));
+    auto mappedType = primalGenericEnv->mapTypeIntoContext(paramInfo.getType())->getCanonicalType();
+    llvm::errs() << "NEW MAPPED TYPE\n";
+    mappedType.dump();
+    params.push_back(paramInfo.getWithType(mappedType));
+    */
+    params.push_back(paramInfo);
+  }
   auto primalTy = SILFunctionType::get(
       primalGenericSig, originalTy->getExtInfo(),
       originalTy->getCoroutineKind(), originalTy->getCalleeConvention(),
       originalTy->getParameters(), originalTy->getYields(), results,
+      // params, originalTy->getYields(), results,
       originalTy->getOptionalErrorResult(), context.getASTContext());
   SILOptFunctionBuilder fb(context.getTransform());
   // We set generated primal linkage to Hidden because generated primals are
@@ -3745,6 +3991,13 @@ void DifferentiationTask::createEmptyPrimal() {
   primal = fb.getOrCreateFunction(
       original->getLocation(), primalName, linkage, primalTy,
       original->isBare(), IsNotTransparent, original->isSerialized());
+  /*
+  adjoint = fb.createFunction(
+      linkage, adjName, adjType, adjGenericEnv, original->getLocation(),
+      original->isBare(), IsNotTransparent, original->isSerialized());
+   */
+  if (primalGenericEnv)
+    primal->setGenericEnvironment(primalGenericEnv);
   primal->setUnqualifiedOwnership();
   LLVM_DEBUG(getADDebugStream() << "Primal function created \n"
                                 << *primal << '\n');
@@ -3761,11 +4014,22 @@ void DifferentiationTask::createEmptyAdjoint() {
   auto origTy = original->getLoweredFunctionType();
   auto lookupConformance = LookUpConformanceInModule(module.getSwiftModule());
 
+  auto adjName = original->getASTContext()
+                     .getIdentifier("AD__" + original->getName().str() +
+                                    "__adjoint_" + getIndices().mangle())
+                     .str();
+  auto adjGenericSig =
+      getAutoDiffAssociatedFunctionGenericSignature(attr, original);
+  auto *adjGenericEnv = adjGenericSig
+      ? adjGenericSig->createGenericEnvironment()
+      : nullptr;
+
   // RAII that pushes the original function's generic signature to
   // `module.Types` so that the calls `module.Types.getTypeLowering()` below
   // will know the original function's generic parameter types.
   Lowering::GenericContextScope genericContextScope(
-      module.Types, origTy->getGenericSignature());
+      // module.Types, origTy->getGenericSignature());
+      module.Types, adjGenericSig);
 
   // Given a type, returns its formal SIL parameter info.
   auto getFormalParameterInfo = [&](CanType type) -> SILParameterInfo {
@@ -3851,6 +4115,7 @@ void DifferentiationTask::createEmptyAdjoint() {
             ->getCanonicalType()));
   }
 
+  /*
   auto adjName = original->getASTContext()
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__adjoint_" + getIndices().mangle())
@@ -3860,6 +4125,7 @@ void DifferentiationTask::createEmptyAdjoint() {
   auto *adjGenericEnv = adjGenericSig
       ? adjGenericSig->createGenericEnvironment()
       : nullptr;
+   */
   auto adjType = SILFunctionType::get(
       adjGenericSig, origTy->getExtInfo(), origTy->getCoroutineKind(),
       origTy->getCalleeConvention(), adjParams, {}, adjResults, None,
@@ -3887,22 +4153,24 @@ void DifferentiationTask::createJVP() {
   auto &module = context.getModule();
   auto originalTy = original->getLoweredFunctionType();
 
-  // RAII that pushes the original function's generic signature to
-  // `module.Types` so that the calls `module.Types.getTypeLowering()` below
-  // will know the original function's generic parameter types.
-  Lowering::GenericContextScope genericContextScope(
-      module.Types, originalTy->getGenericSignature());
-
   // === Create an empty JVP. ===
   auto jvpName = original->getASTContext()
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__jvp_" + getIndices().mangle())
                      .str();
-  auto *jvpGenericSig =
+  auto jvpGenericSig =
       getAutoDiffAssociatedFunctionGenericSignature(attr, original);
   auto *jvpGenericEnv = jvpGenericSig
       ? jvpGenericSig->createGenericEnvironment()
       : nullptr;
+
+  // RAII that pushes the original function's generic signature to
+  // `module.Types` so that the calls `module.Types.getTypeLowering()` below
+  // will know the original function's generic parameter types.
+  Lowering::GenericContextScope genericContextScope(
+      // module.Types, originalTy->getGenericSignature());
+      module.Types, jvpGenericSig);
+
   auto jvpType = originalTy->getAutoDiffAssociatedFunctionType(
       getIndices().parameters, getIndices().source, 1,
       AutoDiffAssociatedFunctionKind::JVP, module,
@@ -3946,19 +4214,28 @@ void DifferentiationTask::createVJP() {
   auto &module = context.getModule();
   auto originalTy = original->getLoweredFunctionType();
 
+  /*
   // RAII that pushes the original function's generic signature to
   // `module.Types` so that the calls `module.Types.getTypeLowering()` below
   // will know the original function's generic parameter types.
   Lowering::GenericContextScope genericContextScope(
       module.Types, originalTy->getGenericSignature());
+  */
 
   // === Create an empty VJP. ===
   auto vjpName = original->getASTContext()
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__vjp_" + getIndices().mangle())
                      .str();
-  auto *vjpGenericSig =
+  auto vjpGenericSig =
       getAutoDiffAssociatedFunctionGenericSignature(attr, original);
+
+  // RAII that pushes the original function's generic signature to
+  // `module.Types` so that the calls `module.Types.getTypeLowering()` below
+  // will know the original function's generic parameter types.
+  Lowering::GenericContextScope genericContextScope(
+      module.Types, vjpGenericSig);
+
   auto *vjpGenericEnv = vjpGenericSig
       ? vjpGenericSig->createGenericEnvironment()
       : nullptr;

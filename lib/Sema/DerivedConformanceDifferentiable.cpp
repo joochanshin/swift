@@ -141,10 +141,10 @@ bool DerivedConformance::canDeriveDifferentiable(NominalTypeDecl *nominal,
 static Type getAssociatedType(VarDecl *decl, DeclContext *DC, Identifier id) {
   auto &C = decl->getASTContext();
   auto *diffableProto = C.getProtocol(KnownProtocolKind::Differentiable);
+  C.getLazyResolver()->resolveDeclSignature(decl);
   auto declType = decl->getType()->hasArchetype()
                       ? decl->getType()
                       : DC->mapTypeIntoContext(decl->getType());
-  C.getLazyResolver()->resolveDeclSignature(decl);
   auto conf = TypeChecker::conformsToProtocol(declType, diffableProto, DC,
                                               ConformanceCheckFlags::Used);
   if (!conf)
@@ -417,6 +417,9 @@ static ValueDecl *getUnderlyingAllDiffableVariables(ModuleDecl *module,
   auto *diffableProto = C.getProtocol(KnownProtocolKind::Differentiable);
   auto allDiffableVarsReq =
       getProtocolRequirement(diffableProto, C.Id_allDifferentiableVariables);
+  C.getLazyResolver()->resolveDeclSignature(varDecl);
+  if (!varDecl->getType())
+    return nullptr;
   auto confRef =
       module->lookupConformance(varDecl->getType(), diffableProto);
   if (!confRef)

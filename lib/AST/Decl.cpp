@@ -3033,14 +3033,24 @@ ConstructorDecl *NominalTypeDecl::getMemberwiseInitializer() {
     auto ctorDecl = dyn_cast<ConstructorDecl>(decl);
     if (!ctorDecl)
       continue;
-    // Continue if:
-    // - Constructor is not a memberwise initializer.
-    // - Constructor is implicit and takes no arguments, and nominal has no
-    //   stored properties. This is ad-hoc and accepts empty struct
-    //   constructors generated via `TypeChecker::defineDefaultConstructor`.
+    // Constructor is a memberwise initializer if:
+    // - `isMemberwiseInitializer()` is true.
+    // - All stored properties have an initial value and constructor is implicit
+    //   and takes no arguments.
+    //   - This is ad-hoc and accepts empty constructors generated via
+    //     `TypeChecker::defineDefaultConstructor`.
+    // Continue otherwise.
+    bool allStoredPropertiesHaveInitialValue = llvm::all_of(
+        getStoredProperties(), [](VarDecl *v) { return v->hasInitialValue(); });
     if (!ctorDecl->isMemberwiseInitializer() &&
-        !(getStoredProperties().empty() && ctorDecl->isImplicit() &&
+        !(allStoredPropertiesHaveInitialValue && ctorDecl->isImplicit() &&
           ctorDecl->getParameters()->size() == 0))
+      continue;
+    // If a true memberwise initializer has been found and the current
+    // constructor is an empty constructor (not a true memberwise initializer),
+    // continue.
+    if (memberwiseInitDecl && memberwiseInitDecl->isMemberwiseInitializer() &&
+        !ctorDecl->isMemberwiseInitializer())
       continue;
     assert(!memberwiseInitDecl && "Memberwise initializer already found");
     memberwiseInitDecl = ctorDecl;

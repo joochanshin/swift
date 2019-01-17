@@ -7,6 +7,30 @@ struct Empty : Differentiable {}
 // Previously, this crashed due to duplicate memberwise initializer synthesis.
 struct EmptyAdditiveArithmetic : AdditiveArithmetic, Differentiable {}
 
+// Test structs where all stored properties have an initial value.
+struct AllStoredPropertiesHaveInitialValue: Differentiable {
+  let x = Float(1)
+  let y = Float(1)
+}
+struct AllStoredPropertiesHaveInitialValue2: Differentiable {
+  var x = Float(1)
+  var y = Float(1)
+}
+struct AllStoredPropertiesHaveInitialValue3: Differentiable {
+  let x = Float(1)
+  var y = Float(1)
+  // Memberwise initializer should be `init(y:)` since `x` is immutable.
+  static func testMemberwiseInitializer() {
+    _ = AllStoredPropertiesHaveInitialValue3(y: 1)
+  }
+}
+struct AllStoredPropertiesHaveInitialValue4: Differentiable {
+  var x = Float(1)
+  var y = Float(1)
+  // Custom constructor should not affect synthesis.
+  init(x: Float, y: Float, z: Bool) {}
+}
+
 struct Simple : AdditiveArithmetic, Differentiable {
   var w: Float
   var b: Float

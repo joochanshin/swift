@@ -1247,7 +1247,23 @@ static llvm::Function *emitPartialApplicationForwarder(IRGenModule &IGM,
     // cast to the result type - it could be substituted.
     if (origConv.getSILResultType().hasTypeParameter()) {
       auto ResType = fwd->getReturnType();
-      callResult = subIGF.Builder.CreateBitCast(callResult, ResType);
+      // SWIFT_ENABLE_TENSORFLOW
+      if (ResType->isPointerTy())
+        callResult = subIGF.Builder.CreateBitCast(callResult, ResType);
+      else {
+        // Cast all struct elements to the desired type.
+        auto *structType = cast<llvm::StructType>(ResType);
+        for (auto i : range(structType->getStructNumElements())) {
+          auto desiredEltTy = ResType->getStructElementType(i);
+          callResult = llvm::UndefValue::get(ResType);
+          if (structType->getElementType(i) == desiredEltTy)
+            continue;
+          auto elt = subIGF.Builder.CreateExtractValue(callResult, {i});
+          auto castElt = subIGF.Builder.CreateBitCast(elt, desiredEltTy);
+          callResult =
+          subIGF.Builder.CreateInsertValue(callResult, castElt, {i});
+        }
+      }
     }
     subIGF.Builder.CreateRet(callResult);
   }
@@ -1430,6 +1446,7 @@ void irgen::emitFunctionPartialApplication(
 
     auto origSig = IGF.IGM.getSignature(origType);
 
+    llvm::errs() << "EMIT PARTIAL APPLY FORWARDER REACHED\n";
     llvm::Value *forwarder =
       emitPartialApplicationForwarder(IGF.IGM, staticFn, fnContext != nullptr,
                                       origSig, origType, substType,

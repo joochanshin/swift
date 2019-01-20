@@ -66,10 +66,13 @@ public:
       return SILType::getPrimitiveObjectType(origFnTy);
     auto differentiationOrder = std::get<1>(Index);
     auto kind = *std::get<0>(Index).getExtracteeAsAssociatedFunction();
+    llvm::errs() << "GEN DIFF FUNC\n";
+    fnTy->dump();
     auto assocTy = origFnTy->getAutoDiffAssociatedFunctionType(
         SmallBitVector(origFnTy->getNumParameters(), true), /*resultIndex*/ 0,
         differentiationOrder, kind, IGM.getSILModule(),
         LookUpConformanceInModule(IGM.getSwiftModule()));
+        // fnTy->getGenericSignature());
     return SILType::getPrimitiveObjectType(assocTy);
   }
 };
@@ -158,10 +161,13 @@ public:
       return SILType::getPrimitiveObjectType(origFnTy->getCanonicalType());
     auto differentiationOrder = std::get<1>(field);
     auto kind = *std::get<0>(field).getExtracteeAsAssociatedFunction();
+    llvm::errs() << "GEN DIFF FUNC 2\n";
+    origFnTy->dump();
     auto assocTy = origFnTy->getAutoDiffAssociatedFunctionType(
         SmallBitVector(origFnTy->getNumParameters(), true), /*resultIndex*/ 0,
         differentiationOrder, kind, IGM.getSILModule(),
         LookUpConformanceInModule(IGM.getSwiftModule()));
+        // origFnTy->getGenericSignature());
     return SILType::getPrimitiveObjectType(assocTy);
   }
 

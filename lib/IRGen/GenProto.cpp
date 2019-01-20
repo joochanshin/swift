@@ -3247,6 +3247,21 @@ irgen::emitGenericRequirementFromSubstitutions(IRGenFunction &IGF,
   }
 
   auto proto = requirement.Protocol;
+  auto conf = subs.lookupConformance(depTy, proto);
+  // requirement.dump();
+  llvm::errs() << "LOOKUP CONFORMANCE? " << conf.hasValue() << "\n";
+  depTy->dump();
+  if (conf.hasValue()) {
+    conf->dump();
+  }
+  subs.dump();
+  /*
+  llvm::errs() << "DUMPING GENERIC REQUIREMENTS\n";
+  subs.dump();
+  depTy.dump();
+  argType.dump();
+  proto->dump();
+   */
   auto conformance = *subs.lookupConformance(depTy, proto);
   assert(conformance.getRequirement() == proto);
   llvm::Value *metadata = nullptr;

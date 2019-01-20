@@ -1537,7 +1537,12 @@ TypeConverter::getTypeLowering(AbstractionPattern origType,
                                Type origSubstType) {
   CanType substType = origSubstType->getCanonicalType();
   auto key = getTypeKey(origType, substType);
-  
+
+  /*
+  llvm::errs() << "GET TYPE LOWERING\n";
+  origType.dump();
+  substType->dump();
+   */
   assert((!key.isDependent() || getCurGenericContext())
          && "dependent type outside of generic context?!");
   assert(!substType->is<InOutType>());

@@ -270,14 +270,27 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   switch (kind) {
   case AutoDiffAssociatedFunctionKind::JVP: {
     SmallVector<SILParameterInfo, 8> tangentParams;
-    for (auto &param : wrtParams)
+    for (auto &param : wrtParams) {
+      /*
       tangentParams.push_back(
           {param.getType()
                ->getAutoDiffAssociatedVectorSpace(
                    AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
                ->getCanonicalType(),
            param.getConvention()});
+       */
+      auto paramTangentTy =
+      param.getType()
+         ->getAutoDiffAssociatedVectorSpace(
+                                         AutoDiffAssociatedVectorSpaceKind::Tangent,
+                                         lookupConformance) ->getCanonicalType();
+      tangentParams.push_back({paramTangentTy, param.getConvention()});
+      // tangentParams.push_back({paramTangentTy, ParameterConvention::Indirect_In_Guaranteed});
+                              // getResultInfoForOriginalParameter(paramTangentTy, param.getConvention()));
+    }
+
     SmallVector<SILResultInfo, 8> tangentResults;
+    /*
     auto &result = curryLevels.back()->getResults()[resultIndex];
     tangentResults.push_back(
         {result.getType()
@@ -285,13 +298,22 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
                  AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
              ->getCanonicalType(),
          result.getConvention()});
+     */
+    auto &origRes = curryLevels.back()->getResults()[resultIndex];
+    auto tangentAssocTy =
+        origRes.getType()
+            ->getAutoDiffAssociatedVectorSpace(
+                 AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
+             ->getCanonicalType();
+    // tangentResults.push_back({tangentAssocTy, origRes.getConvention()});
+    tangentResults.push_back({tangentAssocTy, origRes.getConvention()});
+        // getParameterInfoForOriginalResult(tangentAssocTy, origRes.getConvention()));
+        // getResultInfoForOriginalParameter(tangentAssocTy, origRes.getConvention()));
+
     closureType = SILFunctionType::get(
         /*genericSignature*/ nullptr, ExtInfo(), SILCoroutineKind::None,
         ParameterConvention::Direct_Guaranteed, tangentParams, {},
         tangentResults, None, ctx);
-    SmallVector<SILResultInfo, 8> jvpResults(
-        curryLevels.back()->getResults().begin(),
-        curryLevels.back()->getResults().end());
     break;
   }
   case AutoDiffAssociatedFunctionKind::VJP: {

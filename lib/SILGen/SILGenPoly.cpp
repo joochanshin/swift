@@ -3220,6 +3220,8 @@ static ManagedValue createAutoDiffThunk(SILGenFunction &SGF,
   };
   auto withoutDifferentiablePattern = [](AbstractionPattern pattern)
       -> AbstractionPattern {
+    if (pattern.isOpaque())
+      return pattern;
     auto patternType = cast<AnyFunctionType>(pattern.getType());
     pattern.rewriteType(
         pattern.getGenericSignature(),
@@ -3259,6 +3261,8 @@ static ManagedValue createAutoDiffThunk(SILGenFunction &SGF,
   auto getAssocFnPattern =
       [&](AbstractionPattern pattern, AutoDiffAssociatedFunctionKind kind)
           -> AbstractionPattern {
+        if (pattern.isOpaque())
+          return pattern;
         return AbstractionPattern(
             pattern.getGenericSignature(),
             getAssocFnTy(cast<AnyFunctionType>(pattern.getType()), kind));

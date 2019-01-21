@@ -785,6 +785,18 @@ public:
   /// pattern?
   bool matchesTuple(CanTupleType substType);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  bool isOpaque() {
+    switch (getKind()) {
+    case Kind::Invalid:
+      llvm_unreachable("querying invalid abstraction pattern!");
+    case Kind::Opaque:
+      return true;
+    default:
+      return false;
+    }
+  }
+
   bool isTuple() {
     switch (getKind()) {
     case Kind::Invalid:

@@ -22,7 +22,7 @@ func test<T: FloatTangent>(_ x: T) {
   let _ = gradient(of: example, at: 1)
 }
 
-// CHECK: SIL verification failed: Unexpected JVP function type: expectedJVPType == jvpType
+// CHECK: SIL verification failed: Unexpected JVP function type: expectedJVPType->isEqual(jvpType)
 
 // Ideally, the above code would compile and work correctly. This test
 // documents the current non-ideal SIL verification failure.

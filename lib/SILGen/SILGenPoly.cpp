@@ -2657,6 +2657,11 @@ void ResultPlanner::execute(ArrayRef<SILValue> innerDirectResults,
   // A helper function to claim an inner direct result.
   auto claimNextInnerDirectResult = [&](SILResultInfo result) -> ManagedValue {
     auto resultValue = claimNext(innerDirectResults);
+
+    // llvm::errs() << "ARE RESULT TYPES EQUAL?\n";
+    // resultValue->getType().dump();
+    // SGF.getSILType(result).dump();
+
     assert(resultValue->getType() == SGF.getSILType(result));
     auto &resultTL = SGF.getTypeLowering(result.getType());
     switch (result.getConvention()) {

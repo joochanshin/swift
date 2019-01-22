@@ -39,7 +39,7 @@
         "tensorflow-swift-bindings": {
             "remote": { "id": "tensorflow/swift-bindings" } },
         "tensorflow-swift-apis": {
-            "remote": { "id": "rxwei/DeepLearning" } }
+            "remote": { "id": "rxwei/DeepLearning" } },
         "icu": {
             "remote": { "id": "unicode-org/icu" },
             "platforms": [ "Linux" ]

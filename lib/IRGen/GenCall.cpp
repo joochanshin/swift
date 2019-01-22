@@ -2828,6 +2828,10 @@ void IRGenFunction::emitBBForReturn() {
 void IRGenFunction::emitPrologue() {
   // Set up the IRBuilder.
   llvm::BasicBlock *EntryBB = createBasicBlock("entry");
+  if (!CurFn->getBasicBlockList().empty()) {
+    llvm::errs() << "WE HAVE PROBLEM IN IRGENFUNCTIION EMITPROLOGUE\n";
+    CurFn->dump();
+  }
   assert(CurFn->getBasicBlockList().empty() && "prologue already emitted?");
   CurFn->getBasicBlockList().push_back(EntryBB);
   Builder.SetInsertPoint(EntryBB);

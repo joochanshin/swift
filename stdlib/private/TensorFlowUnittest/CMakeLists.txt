@@ -4,7 +4,7 @@ add_swift_target_library(swiftTensorFlowUnittest ${SWIFT_STDLIB_LIBRARY_BUILD_TY
   TensorFlowUnittest.swift
   TensorFlowUnittestRemote.swift
 
-  SWIFT_MODULE_DEPENDS Python StdlibUnittest TensorFlow
+  SWIFT_MODULE_DEPENDS Python StdlibUnittest TensorFlowCore
   SWIFT_MODULE_DEPENDS_OSX Darwin
   SWIFT_MODULE_DEPENDS_LINUX Glibc
   PRIVATE_LINK_LIBRARIES "${TF_LIBRARIES}"

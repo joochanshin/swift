@@ -67,19 +67,24 @@ func checkOk(_ s: CTFStatus?, file: StaticString = #file, line: UInt = #line) {
 // should check that the pointer is not NULL.
 
 /// The `TF_Session *` type.
+@usableFromInline
 typealias CTFSession = OpaquePointer
 
 /// The `TF_Status *` type.
+@usableFromInline
 typealias CTFStatus = OpaquePointer
 
 /// The `TF_Graph*` type.
+@usableFromInline
 typealias CTFGraph = OpaquePointer
 
 /// The `TF_Function*` type.
+@usableFromInline
 typealias CTFFunction = OpaquePointer
 
 /// The `TF_Tensor *` type.
-@usableFromInline typealias CTensor = OpaquePointer
+@usableFromInline
+typealias CTensor = OpaquePointer
 
 /// The `TF_TensorHandle *` type.
 ///
@@ -91,6 +96,7 @@ public typealias CTensorHandle = OpaquePointer
 public typealias CTFEContext = OpaquePointer
 
 /// The `TFE_Op *` type.
+@usableFromInline
 typealias CTFEOp = OpaquePointer
 
 //===----------------------------------------------------------------------===//

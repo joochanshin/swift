@@ -1545,6 +1545,9 @@ static bool diagnoseIndirectParametersOrResult(ADContext &context,
       break;
     }
   }
+  llvm::errs() << "DIAGNOSE INDIRECT PARAMS OR RESULT\n";
+  originalFnTy->dump();
+
   if (originalHasIndirectParamOrResult) {
     context.emitNondifferentiabilityError(
         task, diag::autodiff_function_indirect_params_or_result_unsupported);

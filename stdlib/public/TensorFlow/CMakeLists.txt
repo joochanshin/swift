@@ -59,6 +59,14 @@ if (TENSORFLOW_SWIFT_BINDINGS)
   list(APPEND SOURCES "${TENSORFLOW_SWIFT_BINDINGS}")
 endif()
 
+# Copy TensorFlow high-level API sources, if they exists.
+if (TENSORFLOW_SWIFT_APIS)
+  file(GLOB TENSORFLOW_SWIFT_API_SOURCES
+    "${TENSORFLOW_SWIFT_APIS}/Sources/*.swift")
+  message(STATUS "HIGH LEVEL API SOURCES: ${TENSORFLOW_SWIFT_API_SOURCES}")
+  list(APPEND SOURCES "${TENSORFLOW_SWIFT_API_SOURCES}")
+endif()
+
 # When Python exists, NumpyConversion.swift imports it, so it must be
 # available at link time.
 set(TENSORFLOW_DEPENDS_PYTHON)

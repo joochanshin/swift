@@ -197,6 +197,7 @@ EXPECTED_DEFAULTS = {
     'tensorflow_target_lib_dir': None,
     'tensorflow_target_include_dir': None,
     'tensorflow_swift_bindings': None,
+    'tensorflow_swift_apis': None,
     'host_bazel': None,
     'tensorflow_bazel_options': [],
 }

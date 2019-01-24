@@ -1618,7 +1618,7 @@ public extension Tensor where Scalar : BinaryFloatingPoint {
     alongAxis axis: Int32,
     offset: Tensor = Tensor(0),
     scale: Tensor = Tensor(1),
-    epsilon: Scalar = 0.001
+    epsilon: Tensor = Tensor(0.001)
   ) -> Tensor {
     let mean = self.mean(alongAxes: axis)
     let squaredDiff: Tensor = Raw.squaredDifference(self, mean)

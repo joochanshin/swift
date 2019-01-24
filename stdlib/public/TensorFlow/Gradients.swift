@@ -585,7 +585,7 @@ extension Tensor where Scalar : BinaryFloatingPoint & Differentiable,
     alongAxis axis: Int32,
     offset: Tensor,
     scale: Tensor,
-    epsilon: Scalar
+    epsilon: Tensor
   ) -> (Tensor, (Tensor) -> (Tensor, Tensor, Tensor)) {
     let value = batchNormalized(alongAxis: axis, offset: offset, scale: scale,
                                 epsilon: epsilon)

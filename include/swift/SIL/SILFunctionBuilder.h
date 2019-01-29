@@ -103,7 +103,8 @@ class SILFunctionBuilder {
   // propagation requires access to original function declaration (via
   // SILDeclRef).
   void addFunctionAttributes(SILFunction *F, DeclAttributes &Attrs,
-                             SILModule &M, SILDeclRef constant = SILDeclRef());
+                             SILModule &M, SILDeclRef constant,
+                             ForDefinition_t forDefinition);
 };
 } // namespace swift
 

@@ -110,10 +110,9 @@ static SILLinkage getAutoDiffFunctionLinkage(SILLinkage originalLinkage) {
 
   // If the original is public, then external modules may need to link the
   // associated function. Make the associated function public.
-  if (originalLinkage == SILLinkage::Public)
-    return SILLinkage::Public;
-  if (originalLinkage == SILLinkage::PublicNonABI)
-    return SILLinkage::PublicNonABI;
+  if (originalLinkage == SILLinkage::Public ||
+      originalLinkage == SILLinkage::PublicNonABI)
+    return originalLinkage;
 
   // Otherwise, the original function is defined and used only in the current
   // module, so external modules will never try to access the associated
@@ -3958,7 +3957,7 @@ ADContext::declareExternalAssociatedFunction(
   auto *assocFn = fb.createFunction(
       SILLinkage::PublicExternal, name, assocFnTy,
       /*genericEnv*/ nullptr, originalLoc, original->isBare(), IsNotTransparent,
-      original->isSerialized(), original->isDynamicallyReplaceable());
+      IsNotSerialized, original->isDynamicallyReplaceable());
   // NOTE: Setting debug scope is necessary to prevent crash in TFPartition.
   assocFn->setDebugScope(new (module) SILDebugScope(originalLoc, assocFn));
   return assocFn;
@@ -4040,17 +4039,14 @@ void DifferentiationTask::createEmptyPrimal() {
   // We set generated primal linkage to Hidden because generated primals are
   // never called cross-module in VJP mode: all cross-module calls to associated
   // functions call the VJP.
-  // TODO: In order for cross-module calls to work in non-VJP mode, we must use
-  // `getAutoDiffFunctionLinkage` to make the linkage occasionally public. We'll
-  // also need to update TBDGen to generate TBD entries for public primals.
   auto linkage = SILLinkage::Hidden;
-  primal = fb.getOrCreateFunction(original->getLocation(), primalName, linkage,
-                                  primalTy, original->isBare(),
-                                  IsNotTransparent, original->isSerialized(),
-                                  original->isDynamicallyReplaceable());
+  primal = fb.createFunction(linkage, primalName, primalTy, primalGenericEnv,
+                             original->getLocation(), original->isBare(),
+                             IsNotTransparent, original->isSerialized(),
+                             original->isDynamicallyReplaceable());
   primal->setUnqualifiedOwnership();
-  if (primalGenericEnv)
-    primal->setGenericEnvironment(primalGenericEnv);
+  primal->setDebugScope(new (context.getModule())
+                            SILDebugScope(original->getLocation(), primal));
   LLVM_DEBUG(getADDebugStream() << "Primal function created \n"
                                 << *primal << '\n');
 }
@@ -4160,9 +4156,6 @@ void DifferentiationTask::createEmptyAdjoint() {
   // We set generated adjoint linkage to Hidden because generated adjoints are
   // never called cross-module in VJP mode: all cross-module calls to associated
   // functions call the VJP.
-  // TODO: In order for cross-module calls to work in non-VJP mode, we must use
-  // `getAutoDiffFunctionLinkage` to make the linkage occasionally public. We'll
-  // also need to update TBDGen to generate TBD entries for public adjoints.
   auto linkage = SILLinkage::Hidden;
   adjoint = fb.createFunction(linkage, adjName, adjType, adjGenericEnv,
                               original->getLocation(), original->isBare(),

@@ -40,7 +40,8 @@ SILFunction *SILFunctionBuilder::getOrCreateFunction(
 void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
                                                DeclAttributes &Attrs,
                                                SILModule &M,
-                                               SILDeclRef constant) {
+                                               SILDeclRef constant,
+                                               ForDefinition_t forDefinition) {
 
   for (auto *A : Attrs.getAttributes<SemanticsAttr>())
     F->addSemanticsAttr(cast<SemanticsAttr>(A)->Value);
@@ -82,23 +83,18 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
     for (auto *A : Attrs.getAttributes<DifferentiableAttr>()) {
       auto *DA = cast<DifferentiableAttr>(A);
       std::string jvpName, vjpName;
-      // Note: the following alternative implementations of `isSameModule` don't
-      // work under all scenarios:
-      // - `F->isDefinition()`
-      // - `forDefinition` (passed from `getOrCreateFunction`)
-      bool isSameModule = M.getSwiftModule() == decl->getModuleContext();
       // Get JVP/VJP names. If the functions aren't specified, use the expected
       // mangled name. Differentiation pass ensures that JVP and VJP exist.
       if (auto *jvpFn = DA->getJVPFunction())
         jvpName = SILDeclRef(jvpFn).mangle();
-      else if (!isSameModule)
+      else if (forDefinition == NotForDefinition)
         jvpName = constant.asAutoDiffAssociatedFunction(
             AutoDiffAssociatedFunctionIdentifier::get(
                 AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
                 DA->getParameterIndices(), F->getASTContext())).mangle();
       if (auto *vjpFn = DA->getVJPFunction())
         vjpName = SILDeclRef(vjpFn).mangle();
-      else if (!isSameModule)
+      else if (forDefinition == NotForDefinition)
         vjpName = constant.asAutoDiffAssociatedFunction(
             AutoDiffAssociatedFunctionIdentifier::get(
                 AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
@@ -209,10 +205,11 @@ SILFunctionBuilder::getOrCreateFunction(SILLocation loc, SILDeclRef constant,
     if (auto *accessor = dyn_cast<AccessorDecl>(decl)) {
       auto *storage = accessor->getStorage();
       // SWIFT_ENABLE_TENSORFLOW
-      addFunctionAttributes(F, storage->getAttrs(), mod, constant);
+      addFunctionAttributes(F, storage->getAttrs(), mod, constant,
+                            forDefinition);
     }
     // SWIFT_ENABLE_TENSORFLOW
-    addFunctionAttributes(F, decl->getAttrs(), mod, constant);
+    addFunctionAttributes(F, decl->getAttrs(), mod, constant, forDefinition);
   }
 
   return F;

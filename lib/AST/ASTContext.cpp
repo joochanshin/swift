@@ -394,6 +394,10 @@ FOR_KNOWN_FOUNDATION_TYPES(CACHE_FOUNDATION_DECL)
   llvm::FoldingSet<AutoDiffAssociatedFunctionIdentifier>
       AutoDiffAssociatedFunctionIdentifiers;
 
+  /// For uniquifying `AutoDiffInternalFunctionIdentifier` allocations.
+  llvm::FoldingSet<AutoDiffInternalFunctionIdentifier>
+      AutoDiffInternalFunctionIdentifiers;
+
   /// List of Objective-C member conflicts we have found during type checking.
   std::vector<ObjCMethodConflict> ObjCMethodConflicts;
 
@@ -5259,6 +5263,33 @@ AutoDiffAssociatedFunctionIdentifier::get(
   void *mem = C.Allocate(sizeof(AutoDiffAssociatedFunctionIdentifier),
                          alignof(AutoDiffAssociatedFunctionIdentifier));
   auto *newNode = ::new (mem) AutoDiffAssociatedFunctionIdentifier(
+      kind, differentiationOrder, parameterIndices);
+  foldingSet.InsertNode(newNode, insertPos);
+
+  return newNode;
+}
+
+AutoDiffInternalFunctionIdentifier *
+AutoDiffInternalFunctionIdentifier::get(
+    AutoDiffInternalFunctionKind kind, unsigned differentiationOrder,
+    AutoDiffParameterIndices *parameterIndices, ASTContext &C) {
+  assert(parameterIndices);
+
+  auto &foldingSet = C.getImpl().AutoDiffInternalFunctionIdentifiers;
+
+  llvm::FoldingSetNodeID id;
+  id.AddInteger((unsigned)kind);
+  id.AddInteger(differentiationOrder);
+  id.AddPointer(parameterIndices);
+
+  void *insertPos;
+  auto *existing = foldingSet.FindNodeOrInsertPos(id, insertPos);
+  if (existing)
+    return existing;
+
+  void *mem = C.Allocate(sizeof(AutoDiffInternalFunctionIdentifier),
+                         alignof(AutoDiffInternalFunctionIdentifier));
+  auto *newNode = ::new (mem) AutoDiffInternalFunctionIdentifier(
       kind, differentiationOrder, parameterIndices);
   foldingSet.InsertNode(newNode, insertPos);
 

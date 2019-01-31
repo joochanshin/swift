@@ -78,7 +78,7 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
   // - Thunks. Those are currently handled in SILGenThunk.cpp.
   if ((!isa<AccessorDecl>(decl) || dyn_cast<AccessorDecl>(decl)->isGetter()) &&
       constant.kind != SILDeclRef::Kind::DefaultArgGenerator &&
-      !constant.autoDiffAssociatedFunctionIdentifier &&
+      !constant.autoDiffFunctionIdentifier &&
       !constant.isThunk()) {
     for (auto *A : Attrs.getAttributes<DifferentiableAttr>()) {
       auto *DA = cast<DifferentiableAttr>(A);

@@ -1879,12 +1879,17 @@ TypeConverter::getFunctionInterfaceTypeWithCaptures(CanAnyFunctionType funcType,
 
 CanAnyFunctionType TypeConverter::makeConstantInterfaceType(SILDeclRef c) {
   // SWIFT_ENABLE_TENSORFLOW
-  if (auto *autoDiffFuncId = c.autoDiffAssociatedFunctionIdentifier) {
+  if (auto autoDiffFuncId = c.autoDiffFunctionIdentifier) {
+    auto *autoDiffAssocFuncId =
+        autoDiffFuncId.dyn_cast<AutoDiffAssociatedFunctionIdentifier *>();
+    assert(autoDiffAssocFuncId &&
+           "Only autodiff associated function identifers are supported");
     auto originalFnTy =
         makeConstantInterfaceType(c.asAutoDiffOriginalFunction());
     auto *fnTy = originalFnTy->getAutoDiffAssociatedFunctionType(
-        autoDiffFuncId->getParameterIndices(), /*resultIndex*/ 0,
-        autoDiffFuncId->getDifferentiationOrder(), autoDiffFuncId->getKind(),
+        autoDiffAssocFuncId->getParameterIndices(), /*resultIndex*/ 0,
+        autoDiffAssocFuncId->getDifferentiationOrder(),
+        autoDiffAssocFuncId->getKind(),
         LookUpConformanceInModule(M.getSwiftModule()));
     return cast<AnyFunctionType>(fnTy->getCanonicalType());
   }

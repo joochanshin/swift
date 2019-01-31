@@ -57,6 +57,15 @@ AutoDiffAssociatedFunctionKind(StringRef string) {
   rawValue = *result;
 }
 
+AutoDiffInternalFunctionKind::
+AutoDiffInternalFunctionKind(StringRef string) {
+  Optional<innerty> result =
+      llvm::StringSwitch<Optional<innerty>>(string)
+          .Case("primal", Primal).Case("adjoint", Adjoint);
+  assert(result && "Invalid string");
+  rawValue = *result;
+}
+
 unsigned autodiff::getOffsetForAutoDiffAssociatedFunction(
     unsigned order, AutoDiffAssociatedFunctionKind kind) {
   return (order - 1) * getNumAutoDiffAssociatedFunctions(order) + kind.rawValue;

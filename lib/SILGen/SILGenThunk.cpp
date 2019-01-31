@@ -96,7 +96,7 @@ static ManagedValue getNextUncurryLevelRef(SILGenFunction &SGF, SILLocation loc,
   // SWIFT_ENABLE_TENSORFLOW
   SILDeclRef next = SILDeclRef(vd, thunk.kind, /*isCurried*/ false,
                                /*isForeign*/ false,
-                               thunk.autoDiffAssociatedFunctionIdentifier);
+                               thunk.autoDiffFunctionIdentifier);
   assert(!next.isCurried);
 
   // If the function is natively foreign, reference its foreign entry point.
@@ -217,7 +217,7 @@ void SILGenModule::emitCurryThunk(SILDeclRef constant) {
   if (!DA)
     return;
 
-  if (constant.autoDiffAssociatedFunctionIdentifier)
+  if (constant.autoDiffFunctionIdentifier)
     return;
 
   SmallVector<SILDeclRef, 2> assocFnConstants;

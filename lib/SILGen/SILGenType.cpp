@@ -672,10 +672,13 @@ SILFunction *SILGenModule::emitProtocolWitness(
       NewMangler.mangleWitnessThunk(manglingConformance, requirement.getDecl());
   // SWIFT_ENABLE_TENSORFLOW
   // TODO: Proper mangling for autodiff witness thunks.
-  if (auto *autoDiffFuncId =
-          requirement.autoDiffAssociatedFunctionIdentifier) {
+  if (auto autoDiffFuncId =
+          requirement.autoDiffFunctionIdentifier) {
+    auto *autoDiffAssocFuncId =
+        autoDiffFuncId.get<AutoDiffAssociatedFunctionIdentifier *>();
+    // NOTE: Reuse mangling?
     std::string kindString;
-    switch (autoDiffFuncId->getKind()) {
+    switch (autoDiffAssocFuncId->getKind()) {
     case AutoDiffAssociatedFunctionKind::JVP:
       kindString = "jvp";
       break;
@@ -684,7 +687,7 @@ SILFunction *SILGenModule::emitProtocolWitness(
       break;
     }
     nameBuffer = "AD__" + nameBuffer + "_" + kindString + "_" +
-                 autoDiffFuncId->getParameterIndices()->getString();
+                 autoDiffAssocFuncId->getParameterIndices()->getString();
   }
 
   // If the thunked-to function is set to be always inlined, do the

@@ -188,6 +188,17 @@ void TBDGenVisitor::visitAbstractFunctionDecl(AbstractFunctionDecl *AFD) {
   // The AutoDiff pass creates an order-1 JVP and VJP for every function with a
   // `@differentiable` attribute.
   if (auto *DA = AFD->getAttrs().getAttribute<DifferentiableAttr>()) {
+    llvm::errs() << "TBDGEN for " << AFD->getFullName() << ", IS SERIALIZED? " << bool(SILDeclRef(AFD).isSerialized()) << "\n";
+    if (SILDeclRef(AFD).isSerialized()) {
+      auto *primalId = AutoDiffInternalFunctionIdentifier::get(
+          AutoDiffInternalFunctionKind::Primal, /*differentiationO/adjoint =rder*/ 1,
+          DA->getParameterIndices(), AFD->getASTContext());
+      auto *adjointId = AutoDiffInternalFunctionIdentifier::get(
+          AutoDiffInternalFunctionKind::Adjoint, /*differentiationOrder*/ 1,
+          DA->getParameterIndices(), AFD->getASTContext());
+      addSymbol(SILDeclRef(AFD).asAutoDiffInternalFunction(primalId));
+      addSymbol(SILDeclRef(AFD).asAutoDiffInternalFunction(adjointId));
+    }
     // FIXME: When we get rid of `vjp:` and `jvp:` arguments in `@differentiable`,
     // we will no longer need to see whether they are specified.
     if (!DA->getJVP()) {

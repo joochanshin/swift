@@ -116,19 +116,19 @@ bool swift::requiresForeignEntryPoint(ValueDecl *vd) {
 SILDeclRef::SILDeclRef(ValueDecl *vd, SILDeclRef::Kind kind,
                        // SWIFT_ENABLE_TENSORFLOW
                        bool isCurried, bool isForeign,
-                       AutoDiffAssociatedFunctionIdentifier *autoDiffFuncId)
+                       AutoDiffFunctionIdentifier autoDiffFuncId)
   : loc(vd), kind(kind),
     isCurried(isCurried), isForeign(isForeign),
     // SWIFT_ENABLE_TENSORFLOW
     isDirectReference(0), defaultArgIndex(0),
-    autoDiffAssociatedFunctionIdentifier(autoDiffFuncId)
+    autoDiffFunctionIdentifier(autoDiffFuncId)
 {}
 
 SILDeclRef::SILDeclRef(SILDeclRef::Loc baseLoc,
                        bool isCurried, bool asForeign)
   // SWIFT_ENABLE_TENSORFLOW
   : isCurried(isCurried), isDirectReference(0), defaultArgIndex(0),
-    autoDiffAssociatedFunctionIdentifier(nullptr)
+    autoDiffFunctionIdentifier()
 {
   if (auto *vd = baseLoc.dyn_cast<ValueDecl*>()) {
     if (auto *fd = dyn_cast<FuncDecl>(vd)) {
@@ -631,16 +631,16 @@ static void mangleClangDecl(raw_ostream &buffer,
 
 std::string SILDeclRef::mangle(ManglingKind MKind) const {
   // SWIFT_ENABLE_TENSORFLOW
-  if (autoDiffAssociatedFunctionIdentifier) {
+  if (autoDiffFunctionIdentifier) {
     std::string originalMangled = asAutoDiffOriginalFunction().mangle(MKind);
     auto *functionTy =
         getDecl()->getInterfaceType()->castTo<AnyFunctionType>();
     auto silParameterIndices =
-        autoDiffAssociatedFunctionIdentifier->getParameterIndices()->getLowered(
+        autoDiffFunctionIdentifier->getParameterIndices()->getLowered(
             functionTy);
     SILAutoDiffIndices indices(/*source*/ 0, silParameterIndices);
     std::string mangledKind;
-    switch (autoDiffAssociatedFunctionIdentifier->getKind()) {
+    switch (autoDiffFunctionIdentifier->getKind()) {
     case AutoDiffAssociatedFunctionKind::JVP:
       mangledKind = "jvp";
       break;

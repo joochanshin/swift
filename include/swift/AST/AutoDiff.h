@@ -270,13 +270,13 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &s,
   return s;
 }
 
-/// The kind of an associated function.
+/// The kind of an associated function (JVP or VJP).
 struct AutoDiffAssociatedFunctionKind {
   enum innerty : uint8_t {
-     // The Jacobian-vector products function.
-     JVP = 0,
-     // The vector-Jacobian products function.
-     VJP = 1
+    // The Jacobian-vector products function.
+    JVP = 0,
+    // The vector-Jacobian products function.
+    VJP = 1
   } rawValue;
 
   AutoDiffAssociatedFunctionKind() = default;
@@ -285,6 +285,99 @@ struct AutoDiffAssociatedFunctionKind {
   operator innerty() const { return rawValue; }
 };
 
+/// The kind of an internal associated function (primal or adjoint).
+struct AutoDiffInternalFunctionKind {
+  enum innerty : uint8_t {
+    // The primal function.
+    Primal = 0,
+    // The adjoint function.
+    Adjoint = 1
+  } rawValue;
+
+  AutoDiffInternalFunctionKind() = default;
+  AutoDiffInternalFunctionKind(innerty rawValue) : rawValue(rawValue) {}
+  explicit AutoDiffInternalFunctionKind(StringRef string);
+  operator innerty() const { return rawValue; }
+};
+
+/// In conjunction with the original function decl, identifies an autodiff
+/// function. Base class for associated function identifier (JVP/VJP) and
+/// internal function identifier (primal/adjoint).
+///
+/// Is uniquely allocated within an ASTContext so that it can be hashed and
+/// compared by opaque pointer value.
+class AutoDiffFunctionIdentifierBase : public llvm::FoldingSetNode {
+protected:
+  const unsigned differentiationOrder;
+  AutoDiffParameterIndices *const parameterIndices;
+
+  AutoDiffFunctionIdentifierBase(
+      unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices) :
+    differentiationOrder(differentiationOrder),
+    parameterIndices(parameterIndices) {}
+
+public:
+  unsigned getDifferentiationOrder() const { return differentiationOrder; }
+  AutoDiffParameterIndices *getParameterIndices() const {
+    return parameterIndices;
+  }
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    ID.AddInteger(differentiationOrder);
+    ID.AddPointer(parameterIndices);
+  }
+};
+
+class AutoDiffAssociatedFunctionIdentifier :
+    public AutoDiffFunctionIdentifierBase {
+  const AutoDiffAssociatedFunctionKind kind;
+
+  AutoDiffAssociatedFunctionIdentifier(
+      AutoDiffAssociatedFunctionKind kind, unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices) :
+    AutoDiffFunctionIdentifierBase(differentiationOrder, parameterIndices),
+      kind(kind) {}
+
+public:
+  AutoDiffAssociatedFunctionKind getKind() const { return kind; }
+
+  static AutoDiffAssociatedFunctionIdentifier *get(
+      AutoDiffAssociatedFunctionKind kind, unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices, ASTContext &C);
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    ID.AddInteger(kind);
+    ID.AddInteger(differentiationOrder);
+    ID.AddPointer(parameterIndices);
+  }
+};
+
+class AutoDiffInternalFunctionIdentifier :
+    public AutoDiffFunctionIdentifierBase {
+  const AutoDiffInternalFunctionKind kind;
+
+  AutoDiffInternalFunctionIdentifier(
+      AutoDiffInternalFunctionKind kind, unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices) :
+    AutoDiffFunctionIdentifierBase(differentiationOrder, parameterIndices),
+      kind(kind) {}
+
+public:
+  AutoDiffInternalFunctionKind getKind() const { return kind; }
+
+  static AutoDiffInternalFunctionIdentifier *get(
+      AutoDiffInternalFunctionKind kind, unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices, ASTContext &C);
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    ID.AddInteger(kind);
+    ID.AddInteger(differentiationOrder);
+    ID.AddPointer(parameterIndices);
+  }
+};
+
+  /*
 /// In conjunction with the original function decl, identifies an associated
 /// autodiff function.
 ///
@@ -318,6 +411,41 @@ public:
     ID.AddPointer(parameterIndices);
   }
 };
+
+/// In conjunction with the original function decl, identifies an internal
+/// autodiff function.
+///
+/// Is uniquely allocated within an ASTContext so that it can be hashed and
+/// compared by opaque pointer value.
+class AutoDiffInternalFunctionIdentifier : public llvm::FoldingSetNode {
+  const AutoDiffInternalFunctionKind kind;
+  const unsigned differentiationOrder;
+  AutoDiffParameterIndices *const parameterIndices;
+
+  AutoDiffInternalFunctionIdentifier(
+      AutoDiffInternalFunctionKind kind, unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices) :
+    kind(kind), differentiationOrder(differentiationOrder),
+    parameterIndices(parameterIndices) {}
+
+public:
+  AutoDiffInternalFunctionKind getKind() const { return kind; }
+  unsigned getDifferentiationOrder() const { return differentiationOrder; }
+  AutoDiffParameterIndices *getParameterIndices() const {
+    return parameterIndices;
+  }
+
+  static AutoDiffAssociatedFunctionIdentifier *get(
+      AutoDiffInternalFunctionKind kind, unsigned differentiationOrder,
+      AutoDiffParameterIndices *parameterIndices, ASTContext &C);
+
+  void Profile(llvm::FoldingSetNodeID &ID) {
+    ID.AddInteger(kind);
+    ID.AddInteger(differentiationOrder);
+    ID.AddPointer(parameterIndices);
+  }
+};
+*/
 
 /// The kind of an associated type.
 enum class AutoDiffAssociatedVectorSpaceKind : unsigned {

@@ -3941,12 +3941,12 @@ ADContext::declareExternalAssociatedFunction(
   auto originalLoc = original->getLocation();
   StringRef name;
   switch (kind) {
-    case AutoDiffAssociatedFunctionKind::JVP:
-      name = attr->getJVPName();
-      break;
-    case AutoDiffAssociatedFunctionKind::VJP:
-      name = attr->getVJPName();
-      break;
+  case AutoDiffAssociatedFunctionKind::JVP:
+    name = attr->getJVPName();
+    break;
+  case AutoDiffAssociatedFunctionKind::VJP:
+    name = attr->getVJPName();
+    break;
   }
   auto assocGenSig = getAssociatedFunctionGenericSignature(attr, original);
   auto assocFnTy = originalTy->getAutoDiffAssociatedFunctionType(
@@ -4036,10 +4036,7 @@ void DifferentiationTask::createEmptyPrimal() {
       originalTy->getParameters(), originalTy->getYields(), results,
       originalTy->getOptionalErrorResult(), context.getASTContext());
   SILOptFunctionBuilder fb(context.getTransform());
-  // We set generated primal linkage to Hidden because generated primals are
-  // never called cross-module in VJP mode: all cross-module calls to associated
-  // functions call the VJP.
-  auto linkage = SILLinkage::Hidden;
+  auto linkage = getAutoDiffFunctionLinkage(original->getLinkage());
   primal = fb.createFunction(linkage, primalName, primalTy, primalGenericEnv,
                              original->getLocation(), original->isBare(),
                              IsNotTransparent, original->isSerialized(),
@@ -4153,10 +4150,7 @@ void DifferentiationTask::createEmptyAdjoint() {
       original->getASTContext());
 
   SILOptFunctionBuilder fb(context.getTransform());
-  // We set generated adjoint linkage to Hidden because generated adjoints are
-  // never called cross-module in VJP mode: all cross-module calls to associated
-  // functions call the VJP.
-  auto linkage = SILLinkage::Hidden;
+  auto linkage = getAutoDiffFunctionLinkage(original->getLinkage());
   adjoint = fb.createFunction(linkage, adjName, adjType, adjGenericEnv,
                               original->getLocation(), original->isBare(),
                               IsNotTransparent, original->isSerialized(),

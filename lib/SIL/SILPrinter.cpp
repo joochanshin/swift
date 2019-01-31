@@ -345,8 +345,7 @@ void SILDeclRef::print(raw_ostream &OS) const {
     OS << ((isDot || uncurryLevel != 0) ? '.' : '!')  << "direct";
 
   // SWIFT_ENABLE_TENSORFLOW
-  if (autoDiffAssociatedFunctionIdentifier) {
-    auto *autoDiffFuncId = autoDiffAssociatedFunctionIdentifier;
+  if (autoDiffFunctionIdentifier) {
     OS << ((isDot || uncurryLevel != 0 || isForeign || isDirectReference)
                ? '.' : '!');
     switch (autoDiffFuncId->getKind()) {

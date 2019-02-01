@@ -578,22 +578,25 @@ bool DeclAttribute::printImpl(ASTPrinter &Printer, const PrintOptions &Options,
     };
 
     // Print differentiation parameters, if any.
-    if (auto indices = attr->getParameterIndices()) {
-      printCommaIfNecessary();
-      Printer << "wrt: (";
-      SmallBitVector parameters(indices->parameters);
-      // Check if differentiating wrt `self`. If so, manually print it first.
-      if (isMethod && parameters.test(parameters.size() - 1)) {
-        parameters.reset(parameters.size() - 1);
-        Printer << "self";
-        if (parameters.any())
-          Printer << ", ";
+    if (original) {
+      if (auto indices = attr->getParameterIndices()) {
+        printCommaIfNecessary();
+        Printer << "wrt: (";
+        SmallBitVector parameters(indices->parameters);
+        llvm::errs() << "HELLO PARAMETER INDICES: " << indices->getString() << ", size: " << parameters.size() << ", D: " << D << "\n";
+        // Check if differentiating wrt `self`. If so, manually print it first.
+        if (isMethod && parameters.test(parameters.size() - 1)) {
+          parameters.reset(parameters.size() - 1);
+          Printer << "self";
+          if (parameters.any())
+            Printer << ", ";
+        }
+        // Print remaining differentiation parameters.
+        interleave(parameters.set_bits(), [&](unsigned index) {
+          Printer << original->getParameters()->get(index)->getName().str();
+        }, [&] { Printer << ", "; });
+        Printer << ")";
       }
-      // Print remaining differentiation parameters.
-      interleave(parameters.set_bits(), [&](unsigned index) {
-        Printer << original->getParameters()->get(index)->getName().str();
-      }, [&] { Printer << ", "; });
-      Printer << ")";
     } else if (!parsedParams.empty()) {
       printCommaIfNecessary();
       Printer << "wrt: (";

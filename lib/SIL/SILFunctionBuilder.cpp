@@ -12,6 +12,7 @@
 
 #include "swift/SIL/SILFunctionBuilder.h"
 #include "swift/AST/Decl.h"
+#include "swift/AST/Module.h"
 using namespace swift;
 
 SILFunction *SILFunctionBuilder::getOrCreateFunction(
@@ -40,7 +41,8 @@ SILFunction *SILFunctionBuilder::getOrCreateFunction(
 void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
                                                DeclAttributes &Attrs,
                                                SILModule &M,
-                                               SILDeclRef constant) {
+                                               SILDeclRef constant,
+                                               ForDefinition_t forDefinition) {
 
   for (auto *A : Attrs.getAttributes<SemanticsAttr>())
     F->addSemanticsAttr(cast<SemanticsAttr>(A)->Value);
@@ -77,32 +79,59 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
   // - Thunks. Those are currently handled in SILGenThunk.cpp.
   if ((!isa<AccessorDecl>(decl) || dyn_cast<AccessorDecl>(decl)->isGetter()) &&
       constant.kind != SILDeclRef::Kind::DefaultArgGenerator &&
-      !constant.autoDiffAssociatedFunctionIdentifier &&
+      !constant.autoDiffFunctionIdentifier &&
       !constant.isThunk()) {
     for (auto *A : Attrs.getAttributes<DifferentiableAttr>()) {
       auto *DA = cast<DifferentiableAttr>(A);
+      // bool isSameModule = M.getSwiftModule() == decl->getModuleContext();
+      // bool isSameModule = M.getAssociatedContext() == decl->getModuleContext();
+      bool isSameSILModule = M.lookUpFunction(constant);
+      // bool isSameSILModule = M.lookUpFunction(constant) && !M.lookUpFunction(constant)->isExternalDeclaration();
+      llvm::errs() << "CONSTANT: " << constant << ", SILMODULE " << &M << " CAN FIND CONSTANT? " << M.lookUpFunction(constant) << ", CONSTANT FOR DEFINITION? " << (forDefinition == ForDefinition) << "\n";
+      DA->print(llvm::errs());
+      if (auto origFn = M.lookUpFunction(constant)) {
+        llvm::errs() << "FOUND FUNCTION: " << origFn->getName() << ", IS EXTERN DECLARATION? " << origFn->isExternalDeclaration() << "\n";
+        if (origFn->getName() == "$s10TensorFlow0A0VAASjRzrlE4mean9alongAxesACyxGs5Int32Vd_tF") {
+          llvm::errs() << "WE FOUND MEAN!\n";
+          if (forDefinition == NotForDefinition) {
+            auto test = rand() % 2;
+            llvm::errs() << "Expectations subverted, random: " << test << "\n";
+            if (test == 0)
+              assert(false && "expected for definition");
+            // M.dump();
+          }
+        }
+      }
+      // constant.getDecl()->getDeclContext()->dumpContext()
+      // constant.dump();
+      if (auto src = constant.getDecl()->getSourceFileName())
+        llvm::errs() << "CONSTANT SOURCE FILE: " << *src << "\n";
+
+      // M.dump();
+      // decl->dump();
+      // decl->getModuleContext()->dump();
+      llvm::errs() << "IS SAME SIL MODULE? " << isSameSILModule << "\n";
       std::string jvpName, vjpName;
-      // Note: the following alternative implementations of `isSameModule` don't
-      // work under all scenarios:
-      // - `F->isDefinition()`
-      // - `forDefinition` (passed from `getOrCreateFunction`)
-      bool isSameModule = M.getSwiftModule() == decl->getModuleContext();
       // Get JVP/VJP names. If the functions aren't specified, use the expected
-      // mangled name. Differentiation pass ensures that JVP and VJP exist.
+      // mangled name if . Differentiation pass ensures that JVP and VJP exist.
       if (auto *jvpFn = DA->getJVPFunction())
         jvpName = SILDeclRef(jvpFn).mangle();
-      else if (!isSameModule)
-        jvpName = constant.asAutoDiffAssociatedFunction(
-            AutoDiffAssociatedFunctionIdentifier::get(
-                AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
-                DA->getParameterIndices(), F->getASTContext())).mangle();
+      // else if (forDefinition == NotForDefinition)
+      // // else if (forDefinition == NotForDefinition && !isSameSILModule)
+      // // else if (!isSameSILModule)
+      //   jvpName = constant.asAutoDiffAssociatedFunction(
+      //       AutoDiffAssociatedFunctionIdentifier::get(
+      //           AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
+      //           DA->getParameterIndices(), F->getASTContext())).mangle();
       if (auto *vjpFn = DA->getVJPFunction())
         vjpName = SILDeclRef(vjpFn).mangle();
-      else if (!isSameModule)
-        vjpName = constant.asAutoDiffAssociatedFunction(
-            AutoDiffAssociatedFunctionIdentifier::get(
-                AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
-                DA->getParameterIndices(), F->getASTContext())).mangle();
+      // else if (forDefinition == NotForDefinition && !isSameSILModule)
+      // else if (forDefinition == NotForDefinition)
+      // // else if (!isSameSILModule)
+      //   vjpName = constant.asAutoDiffAssociatedFunction(
+      //       AutoDiffAssociatedFunctionIdentifier::get(
+      //           AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
+      //           DA->getParameterIndices(), F->getASTContext())).mangle();
       // Get lowered argument indices.
       auto paramIndices = DA->getParameterIndices();
       auto loweredIndices = paramIndices->getLowered(
@@ -209,10 +238,11 @@ SILFunctionBuilder::getOrCreateFunction(SILLocation loc, SILDeclRef constant,
     if (auto *accessor = dyn_cast<AccessorDecl>(decl)) {
       auto *storage = accessor->getStorage();
       // SWIFT_ENABLE_TENSORFLOW
-      addFunctionAttributes(F, storage->getAttrs(), mod, constant);
+      addFunctionAttributes(F, storage->getAttrs(), mod, constant,
+                            forDefinition);
     }
     // SWIFT_ENABLE_TENSORFLOW
-    addFunctionAttributes(F, decl->getAttrs(), mod, constant);
+    addFunctionAttributes(F, decl->getAttrs(), mod, constant, forDefinition);
   }
 
   return F;

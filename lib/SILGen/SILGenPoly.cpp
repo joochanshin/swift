@@ -3764,27 +3764,30 @@ getWitnessFunctionRef(SILGenFunction &SGF,
   switch (witnessKind) {
   case WitnessDispatchKind::Static:
     // SWIFT_ENABLE_TENSORFLOW
-    if (auto *autoDiffFuncId = witness.autoDiffAssociatedFunctionIdentifier) {
+    if (auto autoDiffFuncId = witness.autoDiffFunctionIdentifier) {
+      auto autoDiffAssocFuncId =
+          autoDiffFuncId.get<AutoDiffAssociatedFunctionIdentifier *>();
       auto originalFn = SGF.emitGlobalFunctionRef(
           loc, witness.asAutoDiffOriginalFunction());
-      auto loweredIndices = autoDiffFuncId->getParameterIndices()->getLowered(
-          witness.getDecl()->getInterfaceType()->castTo<AnyFunctionType>());
+      auto loweredIndices =
+          autoDiffAssocFuncId->getParameterIndices()->getLowered(
+              witness.getDecl()->getInterfaceType()->castTo<AnyFunctionType>());
       auto autoDiffFn = SGF.B.createAutoDiffFunction(
           loc, loweredIndices, /*differentiationOrder*/ 1, originalFn);
       return SGF.B.createAutoDiffFunctionExtract(
-          loc,
-          AutoDiffFunctionExtractInst::Extractee(autoDiffFuncId->getKind()),
+          loc, AutoDiffFunctionExtractInst::Extractee(
+              autoDiffAssocFuncId->getKind()),
           /*differentiationOrder*/ 1, autoDiffFn);
     }
 
     return SGF.emitGlobalFunctionRef(loc, witness);
   case WitnessDispatchKind::Dynamic:
     // SWIFT_ENABLE_TENSORFLOW
-    assert(!witness.autoDiffAssociatedFunctionIdentifier);
+    assert(!witness.autoDiffFunctionIdentifier);
     return SGF.emitDynamicMethodRef(loc, witness, witnessFTy).getValue();
   case WitnessDispatchKind::Class: {
     // SWIFT_ENABLE_TENSORFLOW
-    assert(!witness.autoDiffAssociatedFunctionIdentifier);
+    assert(!witness.autoDiffFunctionIdentifier);
     SILValue selfPtr = witnessParams.back().getValue();
     return SGF.emitClassMethodRef(loc, selfPtr, witness, witnessFTy);
   }

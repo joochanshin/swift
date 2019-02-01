@@ -1747,6 +1747,9 @@ SILModule::constructSIL(ModuleDecl *mod, SILOptions &options, FileUnit *SF) {
 
   std::unique_ptr<SILModule> M(
       new SILModule(mod, options, DC, /*wholeModule*/ SF == nullptr));
+  llvm::errs() << "NEW SIL MODULE! " << M.get() << ", ASTMODULE NAME: " << mod->getName() << ", SOURCE FILE: " << SF << "\n";
+  if (SF) {
+  }
   SILGenModule SGM(*M, mod);
 
   if (SF) {

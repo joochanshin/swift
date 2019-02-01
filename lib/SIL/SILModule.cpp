@@ -120,8 +120,12 @@ SILModule::~SILModule() {
 std::unique_ptr<SILModule>
 SILModule::createEmptyModule(ModuleDecl *M, SILOptions &Options,
                              bool WholeModule) {
-  return std::unique_ptr<SILModule>(
-      new SILModule(M, Options, M, WholeModule));
+  // return std::unique_ptr<SILModule>(
+  //     new SILModule(M, Options, M, WholeModule));
+  auto result = std::unique_ptr<SILModule>(
+                                    new SILModule(M, Options, M, WholeModule));
+  llvm::errs() << "NEW EMPTY SIL MODULE! " << result.get() << ", WHOLE MODULE: " << WholeModule << "\n";
+  return result;
 }
 
 ASTContext &SILModule::getASTContext() const {

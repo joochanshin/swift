@@ -345,20 +345,36 @@ void SILDeclRef::print(raw_ostream &OS) const {
     OS << ((isDot || uncurryLevel != 0) ? '.' : '!')  << "direct";
 
   // SWIFT_ENABLE_TENSORFLOW
-  if (autoDiffAssociatedFunctionIdentifier) {
-    auto *autoDiffFuncId = autoDiffAssociatedFunctionIdentifier;
+  if (autoDiffFunctionIdentifier) {
     OS << ((isDot || uncurryLevel != 0 || isForeign || isDirectReference)
                ? '.' : '!');
-    switch (autoDiffFuncId->getKind()) {
-    case AutoDiffAssociatedFunctionKind::JVP:
-      OS << "jvp.";
-      break;
-    case AutoDiffAssociatedFunctionKind::VJP:
-      OS << "vjp.";
-      break;
+    if (auto autoDiffAssocFuncId =
+        autoDiffFunctionIdentifier.dyn_cast<AutoDiffAssociatedFunctionIdentifier *>()) {
+      switch (autoDiffAssocFuncId->getKind()) {
+      case AutoDiffAssociatedFunctionKind::JVP:
+        OS << "jvp.";
+        break;
+      case AutoDiffAssociatedFunctionKind::VJP:
+        OS << "vjp.";
+        break;
+      }
+      OS << autoDiffAssocFuncId->getDifferentiationOrder() << "."
+         << autoDiffAssocFuncId->getParameterIndices()->getString();
     }
-    OS << autoDiffFuncId->getDifferentiationOrder() << "."
-       << autoDiffFuncId->getParameterIndices()->getString();
+    else {
+      auto autoDiffInternalFuncId =
+         autoDiffFunctionIdentifier.get<AutoDiffInternalFunctionIdentifier *>();
+      switch (autoDiffInternalFuncId->getKind()) {
+        case AutoDiffInternalFunctionKind::Primal:
+          OS << "primal.";
+          break;
+        case AutoDiffInternalFunctionKind::Adjoint:
+          OS << "adjoint.";
+          break;
+      }
+      OS << autoDiffInternalFuncId->getDifferentiationOrder() << "."
+         << autoDiffInternalFuncId->getParameterIndices()->getString();
+    }
   }
 }
 

@@ -23,8 +23,26 @@
 #include "ImageInspection.h"
 #include "ImageInspectionELF.h"
 #include <dlfcn.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <cassert>
+#include <string>
+#include <vector>
+#include <elf.h>
+#include <libelf.h>
+#include <libdwarf/libdwarf.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <linux/limits.h>
+#include <sys/auxv.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <string.h>
 
 using namespace swift;
+using namespace std;
 
 namespace {
 static const swift::MetadataSections *registered = nullptr;
@@ -126,8 +144,198 @@ void swift_addNewDSOImage(const void *addr) {
                                             dynamic_replacements.length);
 }
 
+#define PRINT_ERROR(err) \
+    do { if (err) { fprintf(stderr, "error(%d): %d: \"%s\"\n", __LINE__, (int)dwarf_errno(err), dwarf_errmsg(err)); } } while (0)
+
+#define CHECK_ERROR(err) \
+    do { if (err) { fprintf(stderr, "error(%d): %d: \"%s\"\n", __LINE__, (int)dwarf_errno(err), dwarf_errmsg(err)); exit(0); } } while (0)
+
+int LookupSection(Elf* elf, Elf64_Word sh_type, const char* name) {
+  auto* hdr = elf64_getehdr(elf);
+  for (int i = 0; i < hdr->e_shnum; ++i) {
+    auto* section = elf_getscn(elf, i);
+    auto* shdr = elf64_getshdr(section);
+    char* c = elf_strptr(elf, hdr->e_shstrndx, shdr->sh_name);
+    if (shdr->sh_type == sh_type && strcmp(name, c) == 0) return i;
+  }
+  return -1;
+}
+
+bool LookupSymbol(Elf* elf, Elf64_Addr offset, size_t load_offset, const char** symname) {
+  size_t nbytes;
+  auto* base = elf_rawfile(elf, &nbytes);
+
+  int string_table_index = LookupSection(elf, SHT_STRTAB, ".strtab");
+  int symtab = LookupSection(elf, SHT_SYMTAB, ".symtab");
+  int dynamic_symtab = LookupSection(elf, SHT_DYNSYM, ".dynsym");
+  if (symtab == -1) {
+    // Fallback to dynamic symbol table.
+    symtab = dynamic_symtab;
+    string_table_index = LookupSection(elf, SHT_STRTAB, ".dynstr");
+  }
+  if (dynamic_symtab != -1) {
+    // Loads are absolute in .symtab.
+    offset -= load_offset;
+  }
+
+  if (string_table_index >= 0 && symtab >= 0) {
+    auto* section = elf_getscn(elf, symtab);
+    auto* shdr = elf64_getshdr(section);
+    auto* sym_table = (Elf64_Sym*)(shdr->sh_offset + base);
+    int sym_count = shdr->sh_size / (sizeof(Elf64_Sym));
+    for (int j = 0; j < sym_count; ++j) {
+      auto sym = sym_table[j];
+      if (sym.st_size > 0) {
+        if (sym.st_value <= offset && offset <= sym.st_value + sym.st_size) {
+          *symname = elf_strptr(elf, string_table_index, sym.st_name);
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+struct LineInfo {
+  const char* filename = nullptr;
+  unsigned int line = 0;
+  unsigned int column = 0;
+};
+
+class LoadedDebugInfo {
+ public:
+  const char* filename;
+  explicit LoadedDebugInfo(const char* fname) : filename(fname) {
+    int fd = open(fname, O_RDONLY);
+    Dwarf_Error err = nullptr;
+    dwarf_init(fd, DW_DLC_READ, nullptr, nullptr, &dbg, &err);
+    CHECK_ERROR(err);
+
+    dwarf_get_elf(dbg, &elf, &err);
+    CHECK_ERROR(err);
+
+    InitLineTable();
+  }
+
+  void InitLineTable();
+
+  bool GetInfo(const void* addr, const char** my_symbol, LineInfo* info, size_t load_offset);
+
+  Dwarf_Debug dbg;
+  Elf* elf = nullptr;
+
+  struct LineTable {
+    Dwarf_Line* lines;
+    Dwarf_Signed count;
+  };
+
+  std::vector<LineTable> lineTables;
+};
+
+void LoadedDebugInfo::InitLineTable() {
+  Dwarf_Error err = nullptr;
+  for (int k = 0; k < 100000; ++k) {
+    Dwarf_Unsigned cu_header_length = 0;
+    Dwarf_Unsigned abbrev_offset = 0;
+    Dwarf_Half version_stamp = 0;
+    Dwarf_Half address_size = 0;
+    Dwarf_Half extension_size = 0;
+    Dwarf_Half length_size = 0;
+    Dwarf_Sig8 signature;
+    Dwarf_Unsigned type_offset = 0;
+    Dwarf_Unsigned next_cu_offset = 0;
+
+    int v = dwarf_next_cu_header_c(
+        dbg,
+        true,
+        &cu_header_length,
+        &version_stamp,
+        &abbrev_offset,
+        &address_size,
+        &length_size,
+        &extension_size,
+        &signature,
+        &type_offset,
+        &next_cu_offset,
+        &err);
+    if (v != DW_DLV_OK) break;
+    CHECK_ERROR(err);
+
+    Dwarf_Die die;
+    dwarf_siblingof_b(dbg, nullptr, true, &die, &err);
+    if (err) {
+      err = nullptr;
+      continue;
+    }
+    CHECK_ERROR(err);
+
+    Dwarf_Unsigned version_out;
+    Dwarf_Small table_count;
+    Dwarf_Line_Context line_context;
+    dwarf_srclines_b(die, &version_out, &table_count, &line_context, &err);
+    CHECK_ERROR(err);
+
+    Dwarf_Line* lines;
+    Dwarf_Signed line_count;
+    dwarf_srclines_from_linecontext(line_context, &lines, &line_count, &err);
+    CHECK_ERROR(err);
+    if (line_count > 0) {
+      lineTables.push_back({lines, line_count});
+    }
+  }
+}
+
+bool LoadedDebugInfo::GetInfo(const void* addr, const char** my_symbol, LineInfo* info, size_t load_offset) {
+  if (!*my_symbol) {
+    LookupSymbol(elf, (Elf64_Addr)(addr), load_offset, my_symbol);
+  }
+
+  Dwarf_Addr comp_addr = (Dwarf_Addr)addr - load_offset;
+  Dwarf_Error err = nullptr;
+
+  info->filename = nullptr;
+  for (LineTable line_table : lineTables) {
+    auto line_count = line_table.count;
+    auto lines = line_table.lines;
+    int i = 0;
+    for (; i < line_count; ++i) {
+      auto line = lines[i];
+      Dwarf_Addr addr;
+      dwarf_lineaddr(line, &addr, &err);
+      if (comp_addr <= addr) {
+        i -= 1;
+        break;
+      }
+    }
+    if (i >= line_count) continue;
+    if (i >= 0) {
+      auto line = lines[i];
+      Dwarf_Unsigned offset;
+      dwarf_lineoff_b(line, &offset, &err);
+      Dwarf_Unsigned lineno;
+      dwarf_lineno(line, &lineno, &err);
+      char* name;
+      dwarf_linesrc(line, &name, &err);
+      Dwarf_Addr addr;
+      dwarf_lineaddr(line, &addr, &err);
+      if (lineno != 0) {
+        info->filename = name;
+        info->line = lineno;
+        info->column = offset;
+      }
+    }
+  }
+  if (info->filename) {
+    return true;
+  }
+  return false;
+}
+
+
 int swift::lookupSymbol(const void *address, SymbolInfo *info) {
   Dl_info dlinfo;
+
   if (dladdr(address, &dlinfo) == 0) {
     return 0;
   }
@@ -136,6 +344,21 @@ int swift::lookupSymbol(const void *address, SymbolInfo *info) {
   info->baseAddress = dlinfo.dli_fbase;
   info->symbolName = dlinfo.dli_sname;
   info->symbolAddress = dlinfo.dli_saddr;
+
+  // TODO:
+  // - Cache debug_info.
+  // - Update info->symbolAddress.
+  // - Support 32 bit elf-files.
+  // - Backout better on dwarf / elf errors.
+  LoadedDebugInfo debug_info(dlinfo.dli_fname);
+  const char* my_symbol = dlinfo.dli_sname;
+  LineInfo line_info;
+  debug_info.GetInfo(address, &my_symbol, &line_info, (intptr_t)dlinfo.dli_fbase);
+  info->sourceFileName = line_info.filename;
+  info->line = line_info.line;
+  info->column = line_info.column;
+  info->symbolName = my_symbol;
+
   return 1;
 }
 

@@ -33,6 +33,10 @@ struct SymbolInfo {
   void *baseAddress;
   const char *symbolName;
   void *symbolAddress;
+
+  const char *sourceFileName;
+  int line;
+  int column;
 };
 
 /// Load the metadata from the image necessary to find protocols by name.

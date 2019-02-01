@@ -143,7 +143,7 @@ void swift::dumpStackTraceEntry(unsigned index, void *framePC,
   // library name here. Avoid using StringRef::rsplit because its definition
   // is not provided in the header so that it requires linking with
   // libSupport.a.
-  StringRef libraryName = StringRef(syminfo.fileName);
+  StringRef libraryName = StringRef(syminfo.sourceFileName ? syminfo.sourceFileName : syminfo.fileName);
   libraryName = libraryName.substr(libraryName.rfind('/')).substr(1);
 
   // Next we get the symbol name that we are going to use in our backtrace.
@@ -170,12 +170,22 @@ void swift::dumpStackTraceEntry(unsigned index, void *framePC,
   // from the base address of where the image containing framePC is mapped.
   // This gives enough info to reconstruct identical debugging target after
   // this process terminates.
+
   if (shortOutput) {
-    fprintf(stderr, "%s`%s + %td", libraryName.data(), symbolName.c_str(),
-            offset);
+    if (syminfo.sourceFileName && foundSymbol) {
+      fprintf(stderr, "  from %s:%d:%d in `%s'\n", libraryName.data(), syminfo.line, syminfo.column, symbolName.c_str());
+    } else {
+      fprintf(stderr, "  from %s in `%s' + %td\n", libraryName.data(), symbolName.c_str(),
+              offset);
+    }
   } else {
+    char tmp[128];
+    int len = 128;
+    if (syminfo.sourceFileName) {
+      len = snprintf(&tmp[0], 127, "%s:%d:%d", libraryName.data(), syminfo.line, syminfo.column);
+    }
     constexpr const char *format = "%-4u %-34s 0x%0.16" PRIxPTR " %s + %td\n";
-    fprintf(stderr, format, index, libraryName.data(), symbolAddr,
+    fprintf(stderr, format, index, len >= 128 ? libraryName.data() : &tmp[0], symbolAddr,
             symbolName.c_str(), offset);
   }
 #else

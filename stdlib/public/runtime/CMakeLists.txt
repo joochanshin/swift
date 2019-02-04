@@ -26,6 +26,19 @@ endif()
 list(APPEND swift_runtime_compile_flags
      "-D__SWIFT_CURRENT_DYLIB=swiftCore")
 
+# SWIFT_ENABLE_TENSORFLOW
+# Link libelf/libdwarf for better stack traces.
+find_package(Elf)
+find_package(Dwarf)
+if(LIBELF_LIBRARIES)
+  list(APPEND swift_runtime_compile_flags "-DSWIFT_RUNTIME_LIBELF=1")
+  list(APPEND swift_runtime_linker_flags "-lelf")
+endif()
+if(LIBDWARF_LIBRARIES)
+  list(APPEND swift_runtime_compile_flags "-DSWIFT_RUNTIME_LIBDWARF=1")
+  list(APPEND swift_runtime_linker_flags "-ldwarf")
+endif()
+
 set(swift_runtime_objc_sources
     ErrorObject.mm
     SwiftObject.mm
@@ -254,4 +267,6 @@ foreach(sdk ${SWIFT_CONFIGURED_SDKS})
     endif()
   endforeach()
 endforeach()
+
+
 

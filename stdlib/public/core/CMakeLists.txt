@@ -258,6 +258,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
       ${EXECINFO_LIBRARY})
 endif()
 
+# SWIFT_ENABLE_TENSORFLOW
+# Link libelf/libdwarf for better stack traces.
+find_package(Elf)
+find_package(Dwarf)
+if(LIBELF_LIBRARIES)
+  list(APPEND swift_core_private_link_libraries "-lelf")
+endif()
+if(LIBDWARF_LIBRARIES)
+  list(APPEND swift_core_private_link_libraries "-ldwarf")
+endif()
+
 option(SWIFT_CHECK_ESSENTIAL_STDLIB
     "Check core standard library layering by linking its essential subset"
     FALSE)

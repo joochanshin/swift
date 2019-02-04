@@ -32,6 +32,17 @@ if(("${SWIFT_HOST_VARIANT_SDK}" STREQUAL "${SWIFT_PRIMARY_VARIANT_SDK}") AND
       )
   endif()
 
+  # SWIFT_ENABLE_TENSORFLOW
+  # Link libelf/libdwarf for better stack traces.
+  find_package(Elf)
+  find_package(Dwarf)
+  if(LIBELF_LIBRARIES)
+    list(APPEND PLATFORM_TARGET_LINK_LIBRARIES "-lelf")
+  endif()
+  if(LIBDWARF_LIBRARIES)
+    list(APPEND PLATFORM_TARGET_LINK_LIBRARIES "-ldwarf")
+  endif()
+
   add_swift_unittest(SwiftRuntimeTests
     Array.cpp
     # SWIFT_ENABLE_TENSORFLOW

@@ -2143,7 +2143,7 @@ public:
     auto *origExit = &*original->findReturnBB();
     auto *exit = BBMap.lookup(origExit);
     assert(exit->getParent() == getPrimal());
-    // Get the original's return value's corresponsing value in the primal.
+    // Get the original's return value's corresponding value in the primal.
     auto *origRetInst = cast<ReturnInst>(origExit->getTerminator());
     auto origRetVal = origRetInst->getOperand();
     auto origResInPrimal = getOpValue(origRetVal);
@@ -2158,8 +2158,12 @@ public:
     builder.setInsertionPoint(exit);
     auto structLoweredTy =
         getContext().getTypeConverter().getLoweredType(structTy);
-    auto primValsVal =
-        builder.createStruct(loc, structLoweredTy, primalValues);
+    llvm::errs() << "STRUCT LOWERED TY\n";
+    structLoweredTy.getASTType()->dump();
+    structLoweredTy.getASTType()->getCanonicalType()->dump();
+    // getOpType(getPrimalInfo().getPrimalValueStruct()->getDeclaredInterfaceType())->dump();
+    getOpASTType(getPrimalInfo().getPrimalValueStruct()->getDeclaredInterfaceType()->getCanonicalType())->dump();
+    auto primValsVal = builder.createStruct(loc, structLoweredTy, primalValues);
     // FIXME: Handle tapes.
     //
     // If the original result was a tuple, return a tuple of all elements in the
@@ -2174,7 +2178,7 @@ public:
       elts.push_back(primValsVal);
       for (unsigned i : range(numElts))
         elts.push_back(builder.emitTupleExtract(loc, origResInPrimal, i));
-      retVal = builder.createTuple(loc, elts);
+      retVal = joinElements(elts, builder, loc);
     }
     // If the original result was a single value, return a tuple of the primal
     // value struct value and the original result.
@@ -2493,8 +2497,11 @@ bool PrimalGen::performSynthesis(FunctionSynthesisItem item) {
   // FIXME: If the original function has indirect differentiation
   // parameters/result, bail out since AD does not support function calls with
   // indirect parameters yet.
+  /*
   if (diagnoseUnsupportedControlFlow(context, item.task) ||
       diagnoseIndirectParametersOrResult(context, item.task)) {
+  */
+  if (diagnoseUnsupportedControlFlow(context, item.task)) {
     errorOccurred = true;
     return true;
   }
@@ -2980,13 +2987,16 @@ public:
     auto *origRetBB = &*original.findReturnBB();
     adjointBBMap.insert({origRetBB, adjointEntry});
     SILFunctionConventions origConv(origTy, getModule());
-    // The adjoint function has type (seed, pv) -> ([arg0], ..., [argn]).
+    // OLD: The adjoint function has type (seed, pv) -> ([arg0], ..., [argn]).
+    // The adjoint function has type (seed, [indirect_results], pv) -> ([arg0], ..., [argn]).
     auto adjParamArgs = getAdjoint().getArgumentsWithoutIndirectResults();
-    seed = adjParamArgs[0];
-    primalValueAggregateInAdj = adjParamArgs[1];
+    seed = adjParamArgs.front();
+    // primalValueAggregateInAdj = adjParamArgs[1];
+    primalValueAggregateInAdj = adjParamArgs.back();
     // NOTE: Retaining `seed` below is a temporary hotfix for SR-9804.
     builder.setInsertionPoint(adjointEntry);
-    builder.createRetainValue(adjLoc, seed, builder.getDefaultAtomicity());
+    if (seed->getType().isReferenceCounted(getModule()))
+      builder.createRetainValue(adjLoc, seed, builder.getDefaultAtomicity());
 
     // Assign adjoint to the return value.
     //   y = tuple (y0, ..., yn)
@@ -3046,15 +3056,29 @@ public:
     SmallVector<SILValue, 8> retElts;
     auto origParams = original.getArgumentsWithoutIndirectResults();
 
+    adjoint.dump();
+
     // Materializes the return element corresponding to the parameter
     // `parameterIndex` into the `retElts` vector.
     auto addRetElt = [&](unsigned parameterIndex) -> void {
       auto origParam = origParams[parameterIndex];
+      // TODO: Find right adjoint index
+      auto adjParam = adjParamArgs[parameterIndex];
       auto adjVal = getAdjointValue(origParam);
       if (origParam->getType().isObject())
         retElts.push_back(materializeAdjointDirect(adjVal, adjLoc));
-      else
-        llvm_unreachable("Unimplemented: Handle indirect pullback results");
+      else {
+        assert(origParam->getType().isAddress());
+        // builder.createCopyAddr(adjLoc, adjVal, origParam, IsNotTake, IsNotInitialization);
+        auto matAdj = materializeAdjoint(adjVal, adjLoc);
+        llvm::errs() << "DUMPING TYPES\n";
+        origParam->getType().dump();
+        adjParam->getType().dump();
+        matAdj->getType().dump();
+        // builder.createCopyAddr(adjLoc, matAdj, origParam, IsNotTake, IsInitialization);
+        builder.createCopyAddr(adjLoc, matAdj, adjParam, IsNotTake, IsInitialization);
+        // llvm_unreachable("Unimplemented: Handle indirect pullback results");
+      }
     };
 
     // The original's self parameter, if present, is the last parameter. But we
@@ -3437,6 +3461,38 @@ public:
     materializeZeroIndirect(bufType.getASTType(), adjBuf, si->getLoc());
   }
 
+  // Handle `copy_addr` instruction.
+  //   Original: copy_addr x to y
+  //    Adjoint: adj[x] += adj[y]; adj[y] = 0
+  void visitCopyAddrInst(CopyAddrInst *cai) {
+    auto adjDest =
+        materializeAdjoint(getAdjointValue(cai->getDest()), cai->getLoc());
+    auto bufType = remapType(adjDest->getType());
+    // builder.createLoad(<#SILLocation Loc#>, <#SILValue LV#>, <#LoadOwnershipQualifier Qualifier#>)
+    // auto adjVal = builder.createLoad(cai->getLoc(), adjBuf,
+    //     getBufferLOQ(bufType.getASTType(), getAdjoint()));
+    // addAdjointValue(cai->getSrc(), adjVal);
+    auto loc = cai->getLoc();
+    auto adjSrc = materializeAdjoint(getAdjointValue(cai->getSrc()), cai->getLoc());
+    auto *resultBuf = builder.createAllocStack(loc, bufType);
+    auto *resultBufAccess = builder.createBeginAccess(
+        loc, resultBuf, SILAccessKind::Init, SILAccessEnforcement::Static,
+        /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+    auto *lhsBufReadAccess = builder.createBeginAccess(loc, adjDest,
+        SILAccessKind::Read, SILAccessEnforcement::Static,
+        /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+    auto *rhsBufReadAccess = builder.createBeginAccess(loc, adjSrc,
+        SILAccessKind::Read, SILAccessEnforcement::Static,
+        /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+    accumulateMaterializedAdjointsIndirect(lhsBufReadAccess, rhsBufReadAccess, resultBufAccess);
+    builder.createEndAccess(loc, resultBufAccess, /*aborted*/ false);
+    builder.createEndAccess(loc, rhsBufReadAccess, /*aborted*/ false);
+    builder.createEndAccess(loc, lhsBufReadAccess, /*aborted*/ false);
+    // Deallocate the temporary result buffer.
+    builder.createDeallocStack(loc, resultBuf);
+    materializeZeroIndirect(bufType.getASTType(), adjDest, cai->getLoc());
+  }
+
   // Handle `begin_access` instruction.
   //   Original: y = begin_access x
   //    Adjoint: end_access adj[y]
@@ -3552,13 +3608,14 @@ void AdjointEmitter::materializeZeroIndirect(CanType type,
   assert(zeroDecl->isProtocolRequirement());
   auto *accessorDecl = zeroDecl->getAccessor(AccessorKind::Get);
   SILDeclRef accessorDeclRef(accessorDecl, SILDeclRef::Kind::Func);
-  auto *nomTypeDecl = type->getAnyNominal();
-  assert(nomTypeDecl);
+  // auto *nomTypeDecl = type->getAnyNominal();
+  // assert(nomTypeDecl);
   auto methodType =
       getContext().getTypeConverter().getConstantType(accessorDeclRef);
   // Lookup conformance to `AdditiveArithmetic`.
   auto *swiftMod = getModule().getSwiftModule();
   auto conf = swiftMod->lookupConformance(type, additiveArithmeticProto);
+  // TODO: Diagnose for non-conforming types due to SR-9595.
   assert(conf.hasValue() && "No conformance to AdditiveArithmetic?");
   ProtocolConformanceRef confRef(*conf);
   // %wm = witness_method ...
@@ -3619,6 +3676,9 @@ SILValue AdjointEmitter::materializeAdjointDirect(AdjointValue val,
 void AdjointEmitter::materializeAdjointIndirectHelper(
     AdjointValue val, SILValue destBufferAccess) {
   auto loc = destBufferAccess.getLoc();
+  llvm::errs() << "DEBUG LOC\n";
+  loc.dump(getModule().getSourceManager());
+  llvm::errs() << "\n";
   auto soq = getBufferSOQ(val.getType().getASTType(), builder.getFunction());
   switch (val.getKind()) {
   /// Given a `%buf : *T, emit instructions that produce a zero or an aggregate
@@ -3870,11 +3930,13 @@ void AdjointEmitter::accumulateMaterializedAdjointsIndirect(
   assert(cotangentSpace && "No tangent space for this type");
   switch (cotangentSpace->getKind()) {
   case VectorSpace::Kind::Vector: {
-    auto *adjointDecl = cotangentSpace->getNominal();
+    // auto *adjointDecl = cotangentSpace->getNominal();
     auto *proto = getContext().getAdditiveArithmeticProtocol();
     auto *combinerFuncDecl = getContext().getPlusDecl();
     // Call the combiner function and return.
-    auto adjointParentModule = adjointDecl->getModuleContext();
+    // auto adjointParentModule = cotangentSpace->getModuleContext();
+    // auto confRef = *adjointParentModule->lookupConformance(adjointASTTy, proto);
+    auto *adjointParentModule = getModule().getSwiftModule();
     auto confRef = *adjointParentModule->lookupConformance(adjointASTTy, proto);
     SILDeclRef declRef(combinerFuncDecl, SILDeclRef::Kind::Func);
     auto silFnTy = getContext().getTypeConverter().getConstantType(declRef);

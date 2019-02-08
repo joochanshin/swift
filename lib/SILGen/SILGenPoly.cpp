@@ -3174,6 +3174,13 @@ static ManagedValue createThunk(SILGenFunction &SGF,
                    outputOrigType,
                    outputSubstType);
   }
+  llvm::errs() << "CREATING A REABSTRACTION THUNK!\n";
+  thunkType->dump();
+  thunk->dump();
+  llvm::errs() << "TYPE DUMP\n";
+  sourceType->dump();
+  toType->dump();
+  outputSubstType->dump();
 
   CanSILFunctionType substFnType = thunkType;
 

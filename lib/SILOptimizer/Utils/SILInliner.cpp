@@ -427,6 +427,13 @@ SILInlineCloner::SILInlineCloner(
     Loc = InlinedLocation::getInlinedLocation(apply.getLoc());
   else {
     assert(IKind == InlineKind::MandatoryInline && "Unknown InlineKind.");
+    /*
+    llvm::errs() << "DIAGNOSING WEIRD APPLY\n";
+    apply.getInstruction()->dumpInContext();
+    apply.getInstruction()->getFunction()->dump();
+    apply.getLoc().dump(F.getModule().getSourceManager());
+    llvm::errs() << "\n";
+     */
     Loc = MandatoryInlinedLocation::getMandatoryInlinedLocation(apply.getLoc());
   }
 

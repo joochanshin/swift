@@ -70,9 +70,13 @@ template <typename T> static inline void debugDump(T &v) {
 
 /// Returns true if the module we are compiling is in an LLDB REPL.
 static bool isInLLDBREPL(SILModule &module) {
-  // TODO(SR-9704): Use a more prinicpled way to do this check.
+  // TODO(SR-9704): Use a more principled way to do this check.
   return module.getSwiftModule()->getNameStr().startswith("__lldb_expr_");
 }
+
+//===----------------------------------------------------------------------===//
+// Thunk helpers
+//===----------------------------------------------------------------------===//
 
 /// Creates arguments in the entry block based on the function type.
 static void createEntryArguments(SILFunction *f) {
@@ -475,8 +479,13 @@ public:
     SmallVector<AnyFunctionType::Param, 8> params;
     for (auto &param : silFnTy->getParameters())
       params.push_back(AnyFunctionType::Param(param.getType()));
-    Type astFnTy = FunctionType::get(
-        params, silFnTy->getAllResultsType().getASTType());
+    AnyFunctionType *astFnTy;
+    if (auto genSig = silFnTy->getGenericSignature())
+      astFnTy = GenericFunctionType::get(
+          genSig, params, silFnTy->getAllResultsType().getASTType());
+    else
+      astFnTy = FunctionType::get(
+          params, silFnTy->getAllResultsType().getASTType());
 
     auto *decl = addVarDecl("pullback_" + llvm::itostr(pullbackValueMap.size()),
                             astFnTy);
@@ -1298,7 +1307,8 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
   LLVM_DEBUG(getADDebugStream()
              << "Running activity analysis on @" << function.getName() << '\n');
   // Inputs are just function's arguments, count `n`.
-  auto paramArgs = function.getArgumentsWithoutIndirectResults();
+  // auto paramArgs = function.getArgumentsWithoutIndirectResults();
+  auto paramArgs = function.getArguments();
   for (auto value : paramArgs)
     inputValues.push_back(value);
   LLVM_DEBUG({
@@ -1577,37 +1587,24 @@ static bool diagnoseUnsupportedControlFlow(ADContext &context,
   return false;
 }
 
-/// If the original function in the differentiation task has indirect
-/// differentiation parameters/result, emit a "unknown parameter or result
-/// size" error at appropriate source locations. Returns true if error is
-/// emitted.
-static bool diagnoseIndirectParametersOrResult(CanSILFunctionType fnType,
-                                               ADContext &context,
-                                               DifferentiationTask *task) {
-  auto indices = task->getIndices();
-  // Check whether differentiation result or parameters are indirect.
-  bool hasIndirectParamOrResult =
-      fnType->getResults()[indices.source].isFormalIndirect();
-  for (unsigned i : swift::indices(fnType->getParameters())) {
-    if (!indices.isWrtParameter(i))
-      continue;
-    if (fnType->getParameters()[i].isFormalIndirect()) {
-      hasIndirectParamOrResult = true;
-      break;
-    }
-  }
-  if (hasIndirectParamOrResult) {
-    context.emitNondifferentiabilityError(
-        task->getOriginal()->getLocation().getSourceLoc(),
-        task, diag::autodiff_function_indirect_params_or_result_unsupported);
-    return true;
-  }
-  return false;
-}
-
 //===----------------------------------------------------------------------===//
 // Code emission utilities
 //===----------------------------------------------------------------------===//
+
+/// Given a value, extracts all elements to `result` from this value if it's a
+/// tuple. Otherwise, add this value directly to `result`.
+static void extractAllElementsFromOriginal(SILValue val,
+                                           SmallVectorImpl<SILValue> &result) {
+  if (auto tupleType = val->getType().getAs<TupleType>()) {
+    result.resize(tupleType->getNumElements(), SILValue());
+    for (auto *use : val->getUses()) {
+      if (auto *tupleExtract = dyn_cast<TupleExtractInst>(use->getUser()))
+        result[tupleExtract->getFieldNo()] = tupleExtract;
+    }
+  }
+  else
+    result.push_back(val);
+}
 
 /// Given a value, extracts all elements to `result` from this value if it's a
 /// tuple. Otherwise, add this value directly to `result`.
@@ -1757,6 +1754,10 @@ emitAssociatedFunctionReference(ADContext &context, SILBuilder &builder,
     std::function<void(DifferentiationTask *)> taskCallback) {
 
   SILValue functionSource = original;
+  /*
+  llvm::errs() << "EMIT ASSOC FUNC REF\n";
+  original->dumpInContext();
+  */
 
   // If `original` is itself an `AutoDiffFunctionExtractInst` whose kind matches
   // the given kind and desired differentiation parameter indices, simply
@@ -1815,6 +1816,39 @@ emitAssociatedFunctionReference(ADContext &context, SILBuilder &builder,
     taskCallback(task);
     auto *assocFn = task->getAssociatedFunction(kind);
     auto *ref = builder.createFunctionRef(loc, assocFn);
+    if (originalFn->isThunk() == IsReabstractionThunk) {
+      llvm::errs() << "FOUND REABS THUNK in `emitAssociatedFunctionReference`\n";
+      originalFn->dump();
+      auto *pai = cast<PartialApplyInst>(originalFRI->getSingleUse()->getUser());
+      llvm::errs() << "ORIGINAL\n";
+      original->dumpInContext();
+      llvm::errs() << "PAI FOR REABS THUNK\n";
+      pai->dumpInContext();
+      assert(pai->getNumArguments() == 1);
+      // NOTE: Not necessary a function ref inst?
+      auto trueOriginalFn = pai->getArgument(0);
+      auto *trueOriginalFRI = peerThroughFunctionConversions<FunctionRefInst>(pai->getArgument(0));
+      llvm::errs() << "TRUE ORIGINAL FN";
+      trueOriginalFn->dumpInContext();
+      // auto trueVJP = emitAssociatedFunctionReference(context, builder, parentTask, <#SILAutoDiffIndices desiredIndices#>, kind, trueOriginalFn, invoker, taskCallback);
+      // auto trueVJP = emitAssociatedFunctionReference(context, builder, parentTask, SILAutoDiffIndices(0, {0}), kind, trueOriginalFn, invoker, taskCallback);
+      auto trueVJP = emitAssociatedFunctionReference(context, builder, parentTask, task->getIndices(), kind, trueOriginalFn, invoker, taskCallback);
+      llvm::errs() << "TRUE ORIGINAL " << (kind == AutoDiffAssociatedFunctionKind::JVP ? "JVP" : "VJP") << "\n";
+      trueVJP->first->dumpInContext();
+      llvm::errs() << "THUNK " << (kind == AutoDiffAssociatedFunctionKind::JVP ? "JVP" : "VJP") << "?\n";
+      ref->dumpInContext();
+      // auto convertedTrueVJP = reapplyFunctionConversion(trueVJP->first, trueOriginalFRI, trueOriginalFn, builder, loc, assocFn->getLoweredFunctionType()->getGenericSignature());
+      // llvm::errs() << "CONVERTED TRUE ORIGINAL " << (kind == AutoDiffAssociatedFunctionKind::JVP ? "JVP" : "VJP") << "\n";
+      // convertedTrueVJP->dumpInContext();
+      // reapplyFunctionConversion(<#SILValue newFunc#>, <#SILValue oldFunc#>, <#SILValue oldConvertedFunc#>, <#SILBuilder &builder#>, <#SILLocation loc#>)
+      auto convertedRef = reapplyFunctionConversion(ref, originalFRI, original, builder, loc,
+                                                    assocFn->getLoweredFunctionType()->getGenericSignature(),
+                                                    [&](SILValue operand) { return operand; });
+      llvm::errs() << "CONVERTED REF " << (kind == AutoDiffAssociatedFunctionKind::JVP ? "JVP" : "VJP") << "\n";
+      convertedRef->dumpInContext();
+      // TODO: Change application of stuff
+      return std::make_pair(convertedRef, task->getIndices());
+    }
     auto convertedRef = reapplyFunctionConversion(
         ref, originalFRI, original, builder, loc,
         assocFn->getLoweredFunctionType()->getGenericSignature());
@@ -2121,6 +2155,218 @@ static void collectMinimalIndicesForFunctionCall(
   }
 }
 
+
+  /*
+  static CanGenericSignature
+  buildThunkSignature(SILFunction* fn,
+                      bool inheritGenericSig,
+                      ArchetypeType *openedExistential,
+                      GenericEnvironment *&genericEnv,
+                      SubstitutionMap &contextSubs,
+                      SubstitutionMap &interfaceSubs,
+                      ArchetypeType *&newArchetype) {
+    // auto *mod = fn->getModule().getSwiftModule();
+    // auto &ctx = mod->getASTContext();
+
+    // If there's no opened existential, we just inherit the generic environment
+    // from the parent function.
+    SILFunctionType *ty;
+    // fn->getLowered
+    assert(openedExistential == nullptr);
+    auto genericSig = fn->getLoweredFunctionType()->getGenericSignature();
+    genericEnv = fn->getGenericEnvironment();
+    interfaceSubs = fn->getForwardingSubstitutionMap();
+    contextSubs = interfaceSubs;
+    return genericSig;
+  }
+  */
+
+  static CanGenericSignature
+  buildThunkSignature(SILFunction *fn,
+                      bool inheritGenericSig,
+                      ArchetypeType *openedExistential,
+                      GenericEnvironment *&genericEnv,
+                      SubstitutionMap &contextSubs,
+                      SubstitutionMap &interfaceSubs,
+                      ArchetypeType *&newArchetype) {
+    // auto *mod = fn->getModule().getSwiftModule();
+    // auto &ctx = mod->getASTContext();
+
+    // If there's no opened existential, we just inherit the generic environment
+    // from the parent function.
+    SILFunctionType *ty;
+    // fn->getLowered
+    assert(openedExistential == nullptr);
+    auto genericSig = fn->getLoweredFunctionType()->getGenericSignature();
+    genericEnv = fn->getGenericEnvironment();
+    interfaceSubs = fn->getForwardingSubstitutionMap();
+    contextSubs = interfaceSubs;
+    /*
+    auto genericSig = fnType->getGenericSignature();
+    genericEnv = genericSig->createGenericEnvironment();
+    interfaceSubs = genericEnv->getForwardingSubstitutionMap();
+    contextSubs = interfaceSubs;
+     */
+    return genericSig;
+  }
+
+  /// Build the type of a function transformation thunk.
+  static CanSILFunctionType buildThunkType(SILFunction *fn,
+                                           CanSILFunctionType &sourceType,
+                                           CanSILFunctionType &expectedType,
+                                           /*
+                                           CanType &inputfromType,
+                                           CanType &outputfromType,
+                                            */
+                                           CanType inputfromType,
+                                           CanType outputfromType,
+                                           GenericEnvironment *&genericEnv,
+                                           SubstitutionMap &interfaceSubs,
+                                           bool withoutActuallyEscaping) {
+    assert(!expectedType->isPolymorphic());
+    assert(!sourceType->isPolymorphic());
+
+    auto &module = fn->getModule();
+    auto origType = sourceType;
+
+    // Can't build a thunk without context, so we require ownership semantics
+    // on the result type.
+    assert(expectedType->getExtInfo().hasContext());
+
+    // This may inherit @noescape from the expectedType. The @noescape attribute
+    // is only stripped when using this type to materialize a new decl.
+    auto extInfo = expectedType->getExtInfo()
+    .withRepresentation(SILFunctionType::Representation::Thin);
+
+    if (withoutActuallyEscaping)
+      extInfo = extInfo.withNoEscape(false);
+
+    // Does the thunk type involve archetypes other than opened existentials?
+    bool hasArchetypes = false;
+    // Does the thunk type involve an open existential type?
+    CanArchetypeType openedExistential;
+    auto archetypeVisitor = [&](CanType t) {
+      if (auto archetypeTy = dyn_cast<ArchetypeType>(t)) {
+        if (archetypeTy->getOpenedExistentialType()) {
+          assert((openedExistential == CanArchetypeType() ||
+                  openedExistential == archetypeTy) &&
+                 "one too many open existentials");
+          openedExistential = archetypeTy;
+        } else
+          hasArchetypes = true;
+      }
+    };
+
+    // Use the generic signature from the context if the thunk involves
+    // generic parameters.
+    CanGenericSignature genericSig;
+    SubstitutionMap contextSubs;
+    ArchetypeType *newArchetype = nullptr;
+
+    if (expectedType->hasArchetype() || sourceType->hasArchetype()) {
+      expectedType.visit(archetypeVisitor);
+      sourceType.visit(archetypeVisitor);
+
+      genericSig = buildThunkSignature(fn,
+                                       hasArchetypes,
+                                       openedExistential,
+                                       genericEnv,
+                                       contextSubs,
+                                       interfaceSubs,
+                                       newArchetype);
+    }
+
+    // Utility function to apply contextSubs, and also replace the
+    // opened existential with the new archetype.
+    auto substIntoThunkContext = [&](CanType t) -> CanType {
+      return t.subst(
+                     [&](SubstitutableType *type) -> Type {
+                       if (CanType(type) == openedExistential)
+                         return newArchetype;
+                       return Type(type).subst(contextSubs);
+                     },
+                     LookUpConformanceInSubstitutionMap(contextSubs),
+                     SubstFlags::AllowLoweredTypes)
+      ->getCanonicalType();
+    };
+
+    sourceType = cast<SILFunctionType>(substIntoThunkContext(sourceType));
+    expectedType = cast<SILFunctionType>(substIntoThunkContext(expectedType));
+
+    /*
+    if (inputfromType) {
+      inputfromType = cast<AnyFunctionType>(substIntoThunkContext(inputfromType));
+    }
+
+    if (outputfromType) {
+      outputfromType = cast<AnyFunctionType>(substIntoThunkContext(outputfromType));
+    }
+     */
+
+    // If our parent function was pseudogeneric, this thunk must also be
+    // pseudogeneric, since we have no way to pass generic parameters.
+    if (genericSig)
+      if (origType->isPseudogeneric())
+        extInfo = extInfo.withIsPseudogeneric();
+
+    // Add the function type as the parameter.
+    auto contextConvention =
+        SILType::getPrimitiveObjectType(sourceType).isTrivial(module)
+        ? ParameterConvention::Direct_Unowned
+        : ParameterConvention::Direct_Guaranteed;
+    SmallVector<SILParameterInfo, 4> params;
+    params.append(expectedType->getParameters().begin(),
+                  expectedType->getParameters().end());
+    params.push_back({sourceType,
+      sourceType->getExtInfo().hasContext()
+      ? contextConvention
+      : ParameterConvention::Direct_Unowned});
+
+    // Map the parameter and expected types out of context to get the interface
+    // type of the thunk.
+    SmallVector<SILParameterInfo, 4> interfaceParams;
+    interfaceParams.reserve(params.size());
+    for (auto &param : params) {
+      auto paramIfaceTy = param.getType()->mapTypeOutOfContext();
+      interfaceParams.push_back(
+                                SILParameterInfo(paramIfaceTy->getCanonicalType(genericSig),
+                                                 param.getConvention()));
+    }
+
+    SmallVector<SILYieldInfo, 4> interfaceYields;
+    for (auto &yield : expectedType->getYields()) {
+      auto yieldIfaceTy = yield.getType()->mapTypeOutOfContext();
+      auto interfaceYield =
+      yield.getWithType(yieldIfaceTy->getCanonicalType(genericSig));
+      interfaceYields.push_back(interfaceYield);
+    }
+
+    SmallVector<SILResultInfo, 4> interfaceResults;
+    for (auto &result : expectedType->getResults()) {
+      auto resultIfaceTy = result.getType()->mapTypeOutOfContext();
+      auto interfaceResult =
+      result.getWithType(resultIfaceTy->getCanonicalType(genericSig));
+      interfaceResults.push_back(interfaceResult);
+    }
+
+    Optional<SILResultInfo> interfaceErrorResult;
+    if (expectedType->hasErrorResult()) {
+      auto errorResult = expectedType->getErrorResult();
+      auto errorIfaceTy = errorResult.getType()->mapTypeOutOfContext();
+      interfaceErrorResult = SILResultInfo(
+                                           errorIfaceTy->getCanonicalType(genericSig),
+                                           expectedType->getErrorResult().getConvention());
+    }
+
+    // The type of the thunk function.
+    return SILFunctionType::get(genericSig, extInfo,
+                                expectedType->getCoroutineKind(),
+                                ParameterConvention::Direct_Unowned,
+                                interfaceParams, interfaceYields,
+                                interfaceResults, interfaceErrorResult,
+                                module.getASTContext());
+  }
+
 namespace {
 class PrimalGenCloner final
     : public TypeSubstCloner<PrimalGenCloner, SILOptFunctionBuilder> {
@@ -2263,6 +2509,199 @@ public:
     return;
   }
 
+  SILFunction *createThunk(SILLocation loc,
+                           // CanSILFunctionType thunkType,
+                           SILFunction *caller,
+                           CanSILFunctionType fromType,
+                           CanSILFunctionType toType) {
+    SILOptFunctionBuilder fb(getContext().getTransform());
+
+    SubstitutionMap interfaceSubs;
+    GenericEnvironment *genericEnv = nullptr;
+    auto thunkType = buildThunkType(caller, fromType, toType, fromType->getCanonicalType(), toType->getCanonicalType(), genericEnv, interfaceSubs, /*withoutActuallyEscaping*/ false);
+    llvm::errs() << "THUNK TYPE\n";
+    thunkType->dump();
+
+    auto thunkDeclType =
+    thunkType->getWithExtInfo(thunkType->getExtInfo().withNoEscape(false));
+
+    auto fromInterfaceType = fromType->mapTypeOutOfContext()->getCanonicalType();
+    auto toInterfaceType = toType->mapTypeOutOfContext()->getCanonicalType();
+
+    Mangle::ASTMangler NewMangler;
+    std::string name =
+    NewMangler.mangleReabstractionThunkHelper(thunkType, fromInterfaceType, toInterfaceType, getContext().getModule().getSwiftModule());
+
+    auto *thunk = fb.getOrCreateSharedFunction(loc, name, thunkType,
+                                               IsBare, IsTransparent, IsSerialized, ProfileCounter(), IsReabstractionThunk, IsNotDynamic);
+    if (!thunk->empty())
+      return thunk;
+
+    thunk->setGenericEnvironment(genericEnv);
+
+    auto *entry = thunk->createBasicBlock();
+    SILBuilder builder(entry);
+    createEntryArguments(thunk);
+
+    auto &module = getContext().getModule();
+    SILFunctionConventions toConv(toType, module);
+    (void)toConv;
+    SILFunctionConventions fromConv(fromType, module);
+
+    assert(toConv.useLoweredAddresses());
+
+    auto thunkArgs = thunk->getArgumentsWithoutIndirectResults();
+    assert(thunkArgs.size() == 2);
+    // auto inputArg = thunkArgs[0];
+    auto fnArg = thunkArgs.back();
+
+    thunk->setUnqualifiedOwnership();
+    // assert(inputArg->getType().isAddress());
+    // assert(inputArg->getType().isObject());
+
+    // SmallVector<SILValue, 4> args;
+
+    SmallVector<SILValue, 4> arguments;
+    SmallVector<SILValue, 4> indirectResults;
+
+    auto toArgIter = thunk->getArguments().begin();
+    auto cloneSpecializedArgument = [&]() {
+      // No change to the argument.
+      SILArgument *toArg = *toArgIter++;
+      // SILArgument *NewArg =
+      // entry->createFunctionArgument(toArg->getType(), toArg->getDecl());
+      arguments.push_back(toArg);
+    };
+
+    SmallVector<SILValue, 4> allocStacks;
+    auto createAllocStack = [&](SILType type) {
+      auto buf = builder.createAllocStack(loc, type);
+      allocStacks.push_back(buf);
+      return buf;
+    };
+
+    // ReInfo.NumIndirectResults corresponds to SubstTy's formal indirect
+    // results. SpecTy may have fewer formal indirect results.
+    assert(fromType->getNumIndirectFormalResults()
+           >= toType->getNumIndirectFormalResults());
+    assert(fromType->getResults().size() == toType->getResults().size());
+    SmallVector<unsigned, 4> resIndices;
+    for (auto i : range(toType->getResults().size())) {
+      llvm::errs() << "DUMPING RESULTS\n";
+      auto fromRes = fromConv.getResults()[i];
+      auto toRes = toConv.getResults()[i];
+      fromRes.dump();
+      toRes.dump();
+      if (fromRes.isFormalIndirect()) {
+        if (toRes.isFormalDirect()) {
+          llvm::errs() << "CONVERT RESULT " << i << "\n";
+          resIndices.push_back(i);
+          SILType resultTy = fromConv.getSILType(fromRes);
+          assert(resultTy.isAddress());
+          auto indRes = createAllocStack(resultTy);
+          arguments.push_back(indRes);
+          indirectResults.push_back(indRes);
+          continue;
+        }
+        cloneSpecializedArgument();
+      }
+    }
+
+    unsigned numParams = toType->getNumParameters();
+    assert(numParams == fromType->getNumParameters());
+    unsigned numToIndRes = toType->getNumIndirectFormalResults();
+    unsigned numFromIndRes = fromType->getNumIndirectFormalResults();
+    for (unsigned paramIdx = 0; paramIdx < numParams; ++paramIdx) {
+      if (fromConv.getParameters()[paramIdx].isFormalIndirect() &&
+          !toConv.getParameters()[paramIdx].isFormalIndirect()) {
+        llvm::errs() << "WOW WE ARE CONVERTING PARAM " << paramIdx << "\n";
+        // Convert an originally indirect to direct specialized parameter.
+        assert(!toConv.isSILIndirect(toType->getParameters()[paramIdx]));
+        // Instead of passing the address, pass the loaded value.
+        SILType paramTy = thunk->mapTypeIntoContext(
+                                                    fromConv.getSILType(fromType->getParameters()[paramIdx]));
+        assert(paramTy.isAddress());
+        SILArgument *toArg = *toArgIter++;
+
+        /*
+         SILArgument *NewArg = toArg;
+         // SILArgument *NewArg = entry->createFunctionArgument(paramTy, toArg->getDecl());
+         auto *ArgVal = builder.createLoad(loc, NewArg, LoadOwnershipQualifier::Unqualified);
+         arguments.push_back(ArgVal);
+         */
+
+        auto buf = createAllocStack(toArg->getType());
+        auto bufferSOQ = getBufferSOQ(toArg->getType().getASTType(), *thunk);
+        builder.createStore(loc, toArg, buf, bufferSOQ);
+        arguments.push_back(buf);
+
+        continue;
+      }
+      // Simply clone unconverted direct or indirect parameters.
+      cloneSpecializedArgument();
+    }
+
+    llvm::errs() << "CLONED ARGUMENTS:\n";
+    for (auto arg : arguments)
+      arg->dump();
+
+    // builder.createRetainValue(loc, inputArg, builder.getDefaultAtomicity());
+    builder.createRetainValue(loc, fnArg, builder.getDefaultAtomicity());
+    auto fnArgType = fnArg->getType().getAs<SILFunctionType>();
+    assert(!fnArgType->isPolymorphic());
+    // auto apply = builder.createApply(loc, fnArg, interfaceSubs, arguments, /*isNonThrowing*/ false);
+    auto apply = builder.createApply(loc, fnArg, SubstitutionMap(), arguments, /*isNonThrowing*/ false);
+
+    // Result type conversion
+    // builder.createRetainValue(loc, apply, builder.getDefaultAtomicity());
+    SmallVector<SILValue, 4> loads;
+    // DON'T RETAIN
+    // FILTER SOME INDIRECT RESULTS
+
+    unsigned numIndResCount = 0;
+    for (auto res : apply->getIndirectSILResults()) {
+      if (numIndResCount < numToIndRes) {
+        numIndResCount++;
+        continue;
+      }
+      auto load = builder.createLoad(loc, res, LoadOwnershipQualifier::Unqualified);
+      builder.createRetainValue(loc, load, builder.getDefaultAtomicity());
+      // auto load = builder.createLoad(loc, arg, LoadOwnershipQualifier::Trivial);
+      // auto load = builder.createLoadBorrow(loc, arg);
+      loads.push_back(load);
+    }
+
+    SmallVector<SILValue, 4> results;
+    // TODO: Generalize, check if need to go from indirect -> direct
+    // if (!apply->hasIndirectResults())
+    //   results.push_back(apply);
+    // Extract all results from `ai`.
+    SmallVector<SILValue, 8> origDirResults;
+    extractAllElements(apply, builder, origDirResults);
+    /*
+     // Get all original results in type-defined order.
+     SmallVector<SILValue, 8> origAllResults;
+     collectAllActualResultsInTypeOrder(
+     apply, origDirResults, apply->getIndirectSILResults(),
+     origAllResults);
+     */
+
+    // for (auto dirRes : apply->getResults())
+    for (auto dirRes : origDirResults)
+      results.push_back(dirRes);
+    results.append(loads.begin(), loads.end());
+    auto retVal = joinElements(results, builder, loc);
+
+    for (auto allocStack : reversed(allocStacks))
+      builder.createDeallocStack(loc, allocStack);
+
+    builder.createReturn(loc, retVal);
+
+    llvm::errs() << "THUNK BODY\n";
+    thunk->dump();
+    return thunk;
+  }
+
   void visitStructExtractInst(StructExtractInst *sei) {
     auto &strategies =
         getDifferentiationTask()->getStructExtractDifferentiationStrategies();
@@ -2325,6 +2764,15 @@ public:
     // Checkpoint the pullback.
     SILValue pullback = vjpDirectResults.back();
     getPrimalInfo().addPullbackDecl(sei, pullback->getType());
+    auto loweredType = getContext().getTypeConverter().getLoweredType(pullback->getType().getASTType());
+    // auto loweredType2 = getContext().getModule().getTypeLowering(pullback->getType()).getSemanticType();
+    // getContext().getModule().getTypeLowering(<#SILType t#>)
+    if (loweredType != pullback->getType()) {
+      assert(false && "bad pullback type");
+    }
+    // getContext().getModule().getTypeLowering(pullback->getType().getASTType()).get
+    // if (pullback->getType().getASTType()->getAs<AnyFunctionType>())
+    //   ;
     primalValues.push_back(pullback);
   }
 
@@ -2403,6 +2851,27 @@ public:
         LookUpConformanceInModule(context.getModule().getSwiftModule()));
   }
 
+  /*
+  void visitPartialApplyInst(PartialApplyInst *pai) {
+    auto &context = getContext();
+
+    llvm::errs() << "PRIMAL GEN CHECK PAI\n";
+    pai->dumpInContext();
+    if (auto fn = isPartialApplyOfReabstractionThunk(pai)) {
+      llvm::errs() << "WOAH WE FOUND REABSTRACTION THUNK!";
+      fn->dump();
+    }
+
+    // Special handling logic only applies when `partial_apply` is a
+    // reabstraction thunk. If not, just do standard cloning.
+    if (!activityInfo.isActive(pai, synthesis.indices)) {
+      LLVM_DEBUG(getADDebugStream() << "Not active:\n" << *pai << '\n');
+      SILClonerWithScopes::visitPartialApplyInst(pai);
+      return;
+    }
+  }
+   */
+
   void visitApplyInst(ApplyInst *ai) {
     auto &context = getContext();
     // Special handling logic only applies when `apply` has active results. If
@@ -2411,6 +2880,14 @@ public:
     allResults.push_back(ai);
     allResults.append(ai->getIndirectSILResults().begin(),
                       ai->getIndirectSILResults().end());
+
+    if (getOriginal()->isThunk() == IsReabstractionThunk) {
+      llvm::errs() << "WOAH WE FOUND REABSTRACTION THUNK!\n";
+      auto *origFn = ai->getReferencedFunction();
+      ai->dumpInContext();
+      // origFn->dump();
+    }
+
     if (llvm::none_of(allResults, [&](SILValue result) {
       return activityInfo.isActive(result, synthesis.indices);
     })) {
@@ -2462,15 +2939,6 @@ public:
     }
     auto vjp = vjpAndVJPIndices->first;
 
-    // Emit error if callee type has indirect differentiation parameters/result.
-    // TODO(TF-104): Lift this restriction.
-    if (diagnoseIndirectParametersOrResult(
-            vjp->getType().getAs<SILFunctionType>(), getContext(),
-            getDifferentiationTask())) {
-      errorOccurred = true;
-      return;
-    }
-
     // Record the VJP's indices.
     getDifferentiationTask()->getNestedApplyActivities().insert(
         {ai, {indices, vjpAndVJPIndices->second}});
@@ -2478,10 +2946,18 @@ public:
     // Call the VJP using the original parameters.
     SmallVector<SILValue, 8> newArgs;
     auto vjpFnTy = vjp->getType().castTo<SILFunctionType>();
-    auto numVJPParams = vjpFnTy->getNumParameters();
-    assert(vjpFnTy->getNumIndirectFormalResults() == 0 &&
-           "FIXME: handle vjp with indirect results");
+    // auto numVJPParams = vjpFnTy->getNumParameters();
+    auto numVJPParams = vjpFnTy->getNumParameters() + vjpFnTy->getNumIndirectFormalResults();
+    llvm::errs() << "VFJ FN TYPE, NUM PARAMS: " << numVJPParams << ", NUM FORMAL INDIRECT RESULTS: " << vjpFnTy->getNumIndirectFormalResults() << "\n";
+    vjpFnTy->dump();
+    llvm::errs() << "WHAT AI IS HERE?\n";
+    ai->dumpInContext();
+    // assert(vjpFnTy->getNumIndirectFormalResults() == 0 &&
+    //        "FIXME: handle vjp with indirect results");
     newArgs.reserve(numVJPParams);
+    // Collect indirect results.
+    // if (activeResultIndices[0] > vjpFnTy->getNumIndirectFormalResults())
+    //   newArgs.push_back(getOpValue(origArg));
     // Collect substituted arguments.
     for (auto origArg : ai->getArguments())
       newArgs.push_back(getOpValue(origArg));
@@ -2510,7 +2986,82 @@ public:
     mapValue(ai, originalDirectResult);
 
     // Checkpoint the pullback.
-    getPrimalInfo().addPullbackDecl(ai, pullback->getType());
+    // auto *pullbackDecl = getPrimalInfo().addPullbackDecl(ai, pullback->getType());
+    auto *pullbackDecl = getPrimalInfo().addPullbackDecl(ai, getOpType(pullback->getType()));
+
+    auto actualPullbackType = getOpType(pullback->getType()).getAs<SILFunctionType>();
+    auto canGenSig = SubsMap.getGenericSignature()
+        ? SubsMap.getGenericSignature()->getCanonicalSignature()
+        : nullptr;
+    Lowering::GenericContextScope genericContextScope(
+        context.getTypeConverter(), canGenSig);
+    // auto loweredPullbackType = context.getTypeConverter().getLoweredType(pullbackDecl->getInterfaceType()->getCanonicalType()).castTo<SILFunctionType>();
+    auto loweredPullbackType = getOpType(context.getTypeConverter().getLoweredType(pullbackDecl->getInterfaceType()->getCanonicalType())).castTo<SILFunctionType>();
+    if (!loweredPullbackType->isEqual(actualPullbackType)) {
+      // llvm::errs() << "TYPES UNEQUAL: " << actualPullbackType << ", " << loweredPullbackType << "\n";
+      llvm::errs() << "TYPES UNEQUAL (ACTUAL, LOWERED): " << actualPullbackType->getGenericSignature() << ", " << loweredPullbackType->getGenericSignature() << "\n";
+      actualPullbackType->dump();
+      loweredPullbackType->dump();
+
+    /*
+    auto loweredPullbackType = pullbackDecl->getInterfaceType()->getCanonicalType();
+    auto actualPullbackType = pullback->getType().getASTType();
+    if (!loweredPullbackType->isEqual(actualPullbackType)) {
+     */
+
+      /*
+      context.getTypeConverter().getDarwinBooleanType()
+      // auto anyBuf = getBuilder().createAllocStack(ai->getLoc(), <#SILType elementType#>)
+      auto initExisAddr = getBuilder().createInitExistentialAddr(ai->getLoc(), pullback, actualPullbackType->getCanonicalType(), pullback->getType(), {});
+      */
+
+      /*
+      auto *bridgeAnything = context.getModule().getASTContext().getBridgeAnythingToObjectiveC(nullptr);
+      auto *genericSig = bridgeAnything->getGenericSignature();
+      auto subMap = SubstitutionMap::get(
+                                         genericSig,
+                                         [&](SubstitutableType *t) -> Type {
+                                           // return nativeType;
+                                           // return Type(t);
+                                           return actualPullbackType->getCanonicalType();
+                                         },
+                                         MakeAbstractConformanceForGenericType());
+      auto &module = context.getModule();
+      // auto *bridgeAnythingFn = module.lookUpFunction(SILDeclRef(bridgeAnything, SILDeclRef::Kind::Func));
+      SILOptFunctionBuilder fb(context.getTransform());
+      SILDeclRef fnDeclRef(bridgeAnything);
+      auto fnType = context.getTypeConverter().getLoweredType(bridgeAnything->getInterfaceType()).castTo<SILFunctionType>()->getWithRepresentation(SILFunctionType::Representation::Thin);
+      // auto fnType = context.getTypeConverter().getLoweredType(bridgeAnything->getInterfaceType());
+      // auto fnSILType = fnType.castTo<SILFunctionType>()->getWithRepresentation(SILFunctionType::Representation::Thin);
+      auto *bridgeAnythingFn = fb.createFunction(
+          SILLinkage::PublicExternal, fnDeclRef.mangle(), fnType,
+          nullptr, ai->getLoc(), IsBare, IsNotTransparent,
+          IsSerialized, IsNotDynamic);
+      // NOTE: Setting debug scope is necessary to prevent crash in TFPartition.
+      bridgeAnythingFn->setDebugScope(new (module) SILDebugScope(ai->getLoc(), bridgeAnythingFn));
+
+      // auto *bridgeAnythingFn = context.getModule().lookUpFunction(SILDeclRef(bridgeAnything));
+      assert(bridgeAnythingFn && "Expected 'bridgeAnythingtoObjectiveC' function");
+      // auto buf = getBuilder().createAllocStack(ai->getLoc(), SILType::getPrimitiveObjectType(fnType));
+      auto buf = getBuilder().createAllocStack(ai->getLoc(), SILType::getPrimitiveObjectType(actualPullbackType));
+      auto soq = getBufferSOQ(fnType, *getPrimal());
+      getBuilder().createStore(ai->getLoc(), pullback, buf, soq);
+
+      auto fnRef = getBuilder().createFunctionRef(ai->getLoc(), bridgeAnythingFn);
+      auto result = getBuilder().createApply(ai->getLoc(), fnRef, subMap, {buf}, false);
+      getBuilder().createDestroyAddr(ai->getLoc(), buf);
+      getBuilder().createDeallocStack(ai->getLoc(), buf);
+      llvm::errs() << "BOOYA BRIDGE ANYTHING RESULT\n";
+      result->dumpInContext();
+      */
+
+      auto thunk = createThunk(ai->getLoc(), getPrimal(), actualPullbackType, loweredPullbackType);
+      auto thunkFRI = getBuilder().createFunctionRef(ai->getLoc(), thunk);
+      pullback = getBuilder().createPartialApply(ai->getLoc(), thunkFRI, thunk->getForwardingSubstitutionMap(), {pullback}, actualPullbackType->getCalleeConvention());
+      llvm::errs() << "BOOYA PARTIAL APPLY\n";
+      pullback->dumpInContext();
+    }
+
     primalValues.push_back(pullback);
 
     // Some instructions that produce the callee may have been cloned.
@@ -2549,15 +3100,18 @@ bool PrimalGen::performSynthesis(FunctionSynthesisItem item) {
   LLVM_DEBUG(getADDebugStream() << "Performing primal synthesis for original "
              << item.original->getName() << " and its corresponding primal "
              << item.target->getName() << '\n');
-  // If the original function has multiple basic blocks, bail out since AD does
-  // not support control flow yet.
-  // If the original function has indirect differentiation parameters/result,
-  // bail out since AD does not support function calls with indirect parameters
-  // yet.
-  if (diagnoseNoReturn(context, item.task) ||
-      diagnoseUnsupportedControlFlow(context, item.task) ||
+  // FIXME: If the original function has multiple basic blocks, bail out since
+  // AD does not support control flow yet.
+  // FIXME: If the original function has indirect differentiation
+  // parameters/result, bail out since AD does not support function calls with
+  // indirect parameters yet.
+  /*
+  if (diagnoseUnsupportedControlFlow(context, item.task) ||
       diagnoseIndirectParametersOrResult(
           item.original->getLoweredFunctionType(), context, item.task)) {
+  */
+  if (diagnoseNoReturn(context, item.task) ||
+      diagnoseUnsupportedControlFlow(context, item.task)) {
     errorOccurred = true;
     return true;
   }
@@ -3128,8 +3682,13 @@ private:
         AutoDiffAssociatedVectorSpaceKind::Cotangent,
         LookUpConformanceInModule(getModule().getSwiftModule()));
     // The adjoint value must be in the cotangent space.
-    assert(cotanSpace && newAdjointValue.getType().getASTType()
-               == cotanSpace->getCanonicalType());
+    if (newAdjointValue.getType().getASTType() != cotanSpace->getCanonicalType()) {
+      llvm::errs() << "WE ARE DOOMED\n";
+      newAdjointValue.getType().getASTType()->dump();
+      cotanSpace->getCanonicalType()->dump();
+    }
+    assert(cotanSpace && newAdjointValue.getType().getASTType() ==
+                             cotanSpace->getCanonicalType());
 #endif
     auto insertion =
         valueMap.try_emplace(originalValue, std::move(newAdjointValue));
@@ -3174,6 +3733,19 @@ private:
     builder.createEndAccess(access->getLoc(), access, /*aborted*/ false);
     localAllocations.push_back(newBuf);
     return (insertion.first->getSecond() = ValueWithCleanup(newBuf, nullptr));
+  }
+
+  void addToAdjointBuffer(SILValue originalBuffer,
+                          SILValue newValueBufferAccess) {
+    assert(originalBuffer->getType().isAddress() &&
+           newValueBufferAccess->getType().isAddress());
+    auto buf = getAdjointBuffer(originalBuffer);
+    auto *access = builder.createBeginAccess(
+        newValueBufferAccess.getLoc(), buf, SILAccessKind::Modify,
+        SILAccessEnforcement::Static, /*noNestedConflict*/ true,
+        /*fromBuiltin*/ false);
+    accumulateIndirect(access, newValueBufferAccess);
+    builder.createEndAccess(access->getLoc(), access, /*aborted*/ false);
   }
 
   //--------------------------------------------------------------------------//
@@ -3241,14 +3813,17 @@ public:
     // Prepare seed adjoint.
     builder.setInsertionPoint(adjointEntry);
     if (seed->getType().isAddress()) {
+      /*
       builder.createRetainValueAddr(adjLoc, seed,
                                     builder.getDefaultAtomicity());
       auto cleanupFn = [](SILBuilder &b, SILLocation loc, SILValue v) {
         LLVM_DEBUG(getADDebugStream() << "Cleaning up seed " << v << '\n');
         b.createReleaseValueAddr(loc, v, b.getDefaultAtomicity());
       };
+       */
       setAdjointBuffer(formalResults[srcIdx],
-                       ValueWithCleanup(seed, makeCleanup(seed, cleanupFn)));
+                       // ValueWithCleanup(seed, makeCleanup(seed, cleanupFn)));
+                       ValueWithCleanup(seed, makeCleanup(seed, /*cleanup*/ nullptr)));
     } else {
       builder.createRetainValue(adjLoc, seed, builder.getDefaultAtomicity());
       auto cleanupFn = [](SILBuilder &b, SILLocation loc, SILValue v) {
@@ -3303,13 +3878,27 @@ public:
     // This vector will contain all the materialized return elements.
     SmallVector<SILValue, 8> retElts;
     auto origParams = original.getArgumentsWithoutIndirectResults();
+    auto adjParams = adjoint.getArguments();
+    llvm::errs() << "ORIGINAL ARGUMENTS (NO INDIRECT RESULTS)\n";
+    original.getLoweredFunctionType()->dump();
+    for (auto arg : origParams)
+      arg->dump();
+    llvm::errs() << "ADJOINT ARGUMENTS\n";
+    adjoint.getLoweredFunctionType()->dump();
+    for (auto arg : adjParams)
+      arg->dump();
+
+    for (auto arg : origConv.getParameters()) {
+
+    }
+    SmallVector<ValueWithCleanup, 4> indirectResults;
 
     // Materializes the return element corresponding to the parameter
     // `parameterIndex` into the `retElts` vector.
     auto addRetElt = [&](unsigned parameterIndex) -> void {
       auto origParam = origParams[parameterIndex];
-      auto adjVal = takeAdjointValue(origParam);
       if (origParam->getType().isObject()) {
+        auto adjVal = takeAdjointValue(origParam);
         auto val = materializeAdjointDirect(std::move(adjVal), adjLoc);
         if (auto *cleanup = val.getCleanup()) {
           LLVM_DEBUG(getADDebugStream() << "Disabling cleanup for "
@@ -3321,12 +3910,36 @@ public:
         }
         retElts.push_back(val);
       }
-      else
-        llvm_unreachable("Unimplemented: Handle indirect pullback results");
+      else {
+        auto adjBuf = getAdjointBuffer(origParam);
+        indirectResults.push_back(adjBuf);
+
+        llvm::errs() << "ADJOINT BUFFER, NEED COPY ADDR HERE " << parameterIndex << "\n";
+        adjBuf.getValue()->dump();
+
+        /*
+        auto adjointParameterIndex = parameterIndex == origParams.size() - 1
+            ? 1 : parameterIndex;
+        auto adjRes = adjParams[adjointParameterIndex];
+        llvm::errs() << "ADJOINT PARAM: " << adjointParameterIndex << "\n";
+        adjRes->dump();
+
+        // TODO: Need to handle cleanup
+        indirectResults.push_back(adjBuf);
+        // builder.createCopyAddr(adjLoc, adjBuf, adjRes, IsNotTake, IsInitialization);
+         */
+      }
     };
     // The original's self parameter, if present, is the last parameter. But we
     // want its cotangent, if present, to be the first return element.
     auto selfParamIndex = origParams.size() - 1;
+    llvm::errs() << "ORIG TY HAS SELF PARAM? " << origTy->hasSelfParam() << ", SELF PARAM INDEX: "
+       << selfParamIndex << ", ORIG PARAMS SIZE: " << origParams.size()
+       << ", WRT SELF? " << task->getIndices().isWrtParameter(selfParamIndex) << "\n";
+    task->getIndices().print(llvm::errs());
+    llvm::errs() << "\n";
+    // auto selfParamIndex = origParams.size() - origNumIndRes - 1;
+
     if (origTy->hasSelfParam() &&
         task->getIndices().isWrtParameter(selfParamIndex))
       addRetElt(selfParamIndex);
@@ -3337,6 +3950,13 @@ public:
       if (origTy->hasSelfParam() && i == selfParamIndex)
         continue;
       addRetElt(i);
+    }
+    assert(indirectResults.size() == adjoint.getIndirectResults().size() &&
+           "Original indirect parameter count should equal adjoint indirect result count");
+    for (auto pair : zip(indirectResults, adjoint.getIndirectResults())) {
+      auto &source = std::get<0>(pair);
+      auto &dest = std::get<1>(pair);
+      builder.createCopyAddr(adjLoc, source, dest, IsNotTake, IsInitialization);
     }
     builder.createReturn(adjLoc, joinElements(retElts, builder, adjLoc));
 
@@ -3404,30 +4024,98 @@ public:
     auto *field = getPrimalInfo().lookUpPullbackDecl(ai);
     assert(field);
     auto loc = ai->getLoc();
-    SILValue pullback = builder.createStructExtract(loc,
-                                                    primalValueAggregateInAdj,
-                                                    field);
+    SILValue pullback =
+        builder.createStructExtract(loc, primalValueAggregateInAdj, field);
 
     // Construct the pullback arguments.
     SmallVector<SILValue, 8> args;
-    auto av = takeAdjointValue(ai);
-    ValueWithCleanup seedBuf(builder.createAllocStack(loc, av.getType()),
-                             /*cleanup*/ nullptr);
-    materializeAdjointIndirect(std::move(av), seedBuf);
-    if (av.getType().isAddressOnly(getModule()))
-      args.push_back(seedBuf);
+    // Extract all results from `ai`.
+    SmallVector<SILValue, 8> origDirResults;
+    extractAllElementsFromOriginal(ai, origDirResults);
+    // Get all original results in type-defined order.
+    SmallVector<SILValue, 8> origAllResults;
+    collectAllActualResultsInTypeOrder(
+        ai, origDirResults, ai->getIndirectSILResults(),
+        origAllResults);
+    SILFunctionConventions calleeConvs(
+        ai->getCallee()->getType().castTo<SILFunctionType>(), ai->getModule());
+    llvm::errs() << "ORIG ALL RESULTS! SOURCE " << applyInfo.actualIndices.source << ", NUM DIRECT: " << origDirResults.size() <<  ", NUM INDIRECT: " << ai->getNumIndirectResults() << ", TOTAL: " << origAllResults.size() << "\n";
+
+    auto origResult = origAllResults[applyInfo.actualIndices.source];
+    AdjointValue av;
+    SILType adjointType;
+    SILValue adjValue;
+    if (origResult->getType().isObject()) {
+      llvm::errs() << "ORIG RESULT\n";
+      origResult->dump();
+      av = takeAdjointValue(origResult);
+      // av = takeAdjointValue(ai);
+      adjointType = av.getType();
+    } else {
+      auto adjBuf = getAdjointBuffer(ai->getIndirectSILResults()[applyInfo.actualIndices.source]);
+      adjValue = adjBuf.getValue();
+      adjointType = adjBuf.getValue()->getType();
+    }
+
+    /*
+    AdjointValue av;
+    // TODO: This is a hack. Source index is currently always 0.
+    // HANDLE TUPLE DIRECT RESULTS?
+    if (calleeConvs.getNumDirectSILResults() > 0)
+      av = takeAdjointValue(ai);
     else {
+      auto adjBuf = getAdjointBuffer(ai->getIndirectSILResults()[applyInfo.actualIndices.source]);
+      llvm::errs() << "HELLO ADJOINT BUFFER\n";
+      adjBuf.getValue()->dump();
+      // HOW TO RECONCILE HERE?
+      av = takeAdjointValue(ai->getIndirectSILResults()[applyInfo.actualIndices.source]);
+    }
+    */
+
+    auto pullbackType = pullback->getType().castTo<SILFunctionType>();
+
+    // Register indirect results as arguments.
+    // NOTE: These arguments are discarded?
+    SmallVector<SILValue, 4> indirectResults;
+    for (auto indRes : pullbackType->getIndirectFormalResults()) {
+      auto resType = indRes.getSILStorageType();
+      auto buf = builder.createAllocStack(loc, resType);
+      auto access = builder.createBeginAccess(
+          loc, buf, SILAccessKind::Read, SILAccessEnforcement::Static,
+          /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+      emitZeroIndirect(resType.getASTType(), buf, loc);
+      builder.createEndAccess(loc, access, /*aborted*/ false);
+      args.push_back(buf);
+      indirectResults.push_back(buf);
+    }
+
+    ValueWithCleanup seedBuf(builder.createAllocStack(loc, adjointType),
+                             /*cleanup*/ nullptr);
+    if (av.base) {
+      llvm::errs() << "MATERIALIZE ADJOINT INDIRECT LET'S GO\n";
+      av.print(llvm::errs());
+      materializeAdjointIndirect(std::move(av), seedBuf);
+    } else {
+      auto copyAddr = builder.createCopyAddr(loc, adjValue, seedBuf, IsNotTake,
+                                             IsInitialization);
+      llvm::errs() << "COPY SEED INTO ADJ VALUE\n";
+      copyAddr->dump();
+    }
+    // QUESTION: Can adjoint value ever have address only type?
+    if (adjointType.isAddressOnly(getModule())) {
+      args.push_back(seedBuf);
+    } else {
       auto access = builder.createBeginAccess(
           loc, seedBuf, SILAccessKind::Read, SILAccessEnforcement::Static,
           /*noNestedConflict*/ true, /*fromBuiltin*/ false);
       SILValue seedEltAddr;
-      if (auto tupleTy = av.getType().getAs<TupleType>())
+      if (auto tupleTy = adjointType.getAs<TupleType>())
         seedEltAddr = builder.createTupleElementAddr(
             loc, access, applyInfo.actualIndices.source);
       else
         seedEltAddr = access;
       args.push_back(builder.createLoad(
-          loc, seedEltAddr, getBufferLOQ(av.getSwiftType(), getAdjoint())));
+          loc, seedEltAddr, getBufferLOQ(adjointType.getASTType(), getAdjoint())));
       builder.createEndAccess(loc, access, /*aborted*/ false);
     }
 
@@ -3436,6 +4124,8 @@ public:
                                              SubstitutionMap(), args,
                                              /*isNonThrowing*/ false);
     builder.createDeallocStack(loc, seedBuf);
+    for (auto indRes : reversed(indirectResults))
+      builder.createDeallocStack(loc, indRes);
 
     // Extract all results from `pullbackCall`.
     SmallVector<SILValue, 8> dirResults;
@@ -3447,17 +4137,17 @@ public:
         allResults);
     LLVM_DEBUG({
       auto &s = getADDebugStream();
-      s << "All direct results of the nested pullback call: \n";
+      s << "All direct results of the nested pullback call:\n";
       llvm::for_each(dirResults, [&](SILValue v) { s << v; });
-      s << "All indirect results of the nested pullback call: \n";
+      s << "All indirect results of the nested pullback call:\n";
       llvm::for_each(pullbackCall->getIndirectSILResults(),
                      [&](SILValue v) { s << v; });
-      s << "All results of the nested pullback call: \n";
+      s << "All results of the nested pullback call:\n";
       llvm::for_each(allResults, [&](SILValue v) { s << v; });
     });
 
     // Set adjoints for all original parameters.
-    auto originalParams = ai->getArgumentsWithoutIndirectResults();
+    auto originalParams = ai->getArguments();
     auto origNumIndRes = ai->getNumIndirectResults();
     auto allResultsIt = allResults.begin();
 
@@ -3465,21 +4155,37 @@ public:
       b.createReleaseValue(l, v, b.getDefaultAtomicity());
     };
     auto cleanupFnAddr = [](SILBuilder &b, SILLocation l, SILValue v) {
-      b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
+      // b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
     };
 
     // Emits a release based on the value's type category (address or object).
     auto emitRelease = [&](SILValue v) {
-      if (v->getType().isAddress())
-        builder.createReleaseValueAddr(loc, v, builder.getDefaultAtomicity());
-      else
+      if (v->getType().isAddress()) {
+        // builder.createReleaseValueAddr(loc, v, builder.getDefaultAtomicity());
+      } else
         builder.createReleaseValue(loc, v, builder.getDefaultAtomicity());
     };
+
+    llvm::errs() << "ORIG ARGUMENTS (NUM INDIRECT RESULTS: " << origNumIndRes << ")\n";
+    for (auto arg : originalParams) {
+      arg->dump();
+    }
+    llvm::errs() << "PULLBACK RESULTS (NUM INDIRECT RESULTS: " << origNumIndRes << ")\n";
+    pullbackCall->dumpInContext();
+    for (auto res : allResults) {
+      res->dump();
+    }
+    // getAdjoint().dump();
+    llvm::errs() << "PARAMETER INDICES:";
+    for (unsigned i : applyInfo.actualIndices.parameters.set_bits()) {
+      llvm::errs() << " " << i;
+    }
+    llvm::errs() << "\n";
 
     // If the applied adjoint returns the adjoint of the original self
     // parameter, then it returns it first. Set the adjoint of the original
     // self parameter.
-    auto selfParamIndex = originalParams.size() - 1;
+    auto selfParamIndex = originalParams.size() - origNumIndRes - 1;
     if (ai->hasSelfArgument() &&
         applyInfo.actualIndices.isWrtParameter(selfParamIndex)) {
       auto cotanWrtSelf = *allResultsIt++;
@@ -3489,15 +4195,29 @@ public:
         emitRelease(cotanWrtSelf);
       else {
         auto origArg = ai->getArgument(origNumIndRes + selfParamIndex);
-        if (cotanWrtSelf->getType().isAddress())
+        if (cotanWrtSelf->getType().isAddress()) {
           setAdjointBuffer(origArg, ValueWithCleanup(
               cotanWrtSelf, makeCleanup(cotanWrtSelf, cleanupFnAddr)));
-        else
-          addAdjointValue(origArg,
-              makeConcreteAdjointValue(ValueWithCleanup(
-                  cotanWrtSelf,
-                  makeCleanup(cotanWrtSelf, cleanupFn,
-                              {seedBuf.getCleanup()}))));
+        } else {
+          if (origArg->getType().isAddress()) {
+            auto adjBuf = getAdjointBuffer(origArg);
+            auto tmpBuf = builder.createAllocStack(loc, cotanWrtSelf->getType());
+            builder.createStore(loc, cotanWrtSelf, tmpBuf,
+                getBufferSOQ(tmpBuf->getType().getASTType(), getAdjoint()));
+            auto *readAccess = builder.createBeginAccess(
+                loc, tmpBuf, SILAccessKind::Read, SILAccessEnforcement::Static,
+                /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+            accumulateIndirect(adjBuf, readAccess);
+            builder.createEndAccess(loc, readAccess, /*aborted*/ false);
+            builder.createDeallocStack(loc, tmpBuf);
+          }
+          else {
+            addAdjointValue(origArg, makeConcreteAdjointValue(ValueWithCleanup(
+                    cotanWrtSelf,
+                    makeCleanup(cotanWrtSelf, cleanupFn,
+                                {seedBuf.getCleanup()}))));
+          }
+        }
       }
     }
     // Set adjoints for the remaining non-self original parameters.
@@ -3515,12 +4235,26 @@ public:
         emitRelease(cotan);
         continue;
       }
-      if (cotan->getType().isAddress())
+      if (cotan->getType().isAddress()) {
         setAdjointBuffer(origArg, ValueWithCleanup(
             cotan, makeCleanup(cotan, cleanupFnAddr)));
-      else
-        addAdjointValue(origArg, makeConcreteAdjointValue(ValueWithCleanup(
-            cotan, makeCleanup(cotan, cleanupFn, {seedBuf.getCleanup()}))));
+      } else {
+        if (origArg->getType().isAddress()) {
+          auto adjBuf = getAdjointBuffer(origArg);
+          auto tmpBuf = builder.createAllocStack(loc, cotan->getType());
+          builder.createStore(loc, cotan, tmpBuf,
+                              getBufferSOQ(tmpBuf->getType().getASTType(), getAdjoint()));
+          auto *readAccess = builder.createBeginAccess(
+              loc, tmpBuf, SILAccessKind::Read, SILAccessEnforcement::Static,
+              /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+          accumulateIndirect(adjBuf, readAccess);
+          builder.createEndAccess(loc, readAccess, /*aborted*/ false);
+          builder.createDeallocStack(loc, tmpBuf);
+        }
+        else
+          addAdjointValue(origArg, makeConcreteAdjointValue(ValueWithCleanup(
+              cotan, makeCleanup(cotan, cleanupFn, {seedBuf.getCleanup()}))));
+      }
     }
   }
 
@@ -3685,7 +4419,7 @@ public:
   /// Handle `tuple_extract` instruction.
   ///   y = tuple_extract <n>, x
   ///                      |--- n-th element
-  ///   adj[x] = tuple (0, 0, ..., adj[y], ..., 0, 0)
+  ///   adj[x] += tuple (0, 0, ..., adj[y], ..., 0, 0)
   void visitTupleExtractInst(TupleExtractInst *tei) {
     auto *tupleTy = tei->getTupleType();
     auto tupleCotanTy = getCotangentType(tupleTy->getCanonicalType(),
@@ -3709,6 +4443,9 @@ public:
       }
       addAdjointValue(tei->getOperand(),
           makeAggregateAdjointValue(tupleCotanTy, elements));
+      // NOTE: If I don't readd the adjoint value here (to undo "takeAdjointValue"),
+      // the calculation is incorrect.
+      addAdjointValue(tei, std::move(av));
       break;
     }
     }
@@ -3812,6 +4549,30 @@ public:
       b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
     });
     adjBuf.setCleanup(cleanup);
+  }
+
+  // Handle `copy_addr` instruction.
+  //   Original: copy_addr x to y
+  //    Adjoint: adj[x] += adj[y]; adj[y] = 0
+  void visitCopyAddrInst(CopyAddrInst *cai) {
+    auto adjDest = getAdjointBuffer(cai->getDest());
+    // Disable the buffer's top-level cleanup (which is supposed to operate on
+    // the buffer), create a cleanup for the value that carrys all child
+    // cleanups.
+    auto valueCleanup = makeCleanup(adjDest,
+        [](SILBuilder &b, SILLocation l, SILValue v) {
+          b.createReleaseValue(l, v, b.getDefaultAtomicity());
+        }, adjDest.getCleanup()
+            ? adjDest.getCleanup()->getChildren() : ArrayRef<Cleanup *>());
+    adjDest.setCleanup(valueCleanup);
+    auto *readAccess = builder.createBeginAccess(
+        cai->getLoc(), adjDest, SILAccessKind::Read,
+        SILAccessEnforcement::Static, /*noNestedConflict*/ true,
+        /*fromBuiltin*/ false);
+    addToAdjointBuffer(cai->getSrc(), readAccess);
+    builder.createEndAccess(cai->getLoc(), readAccess, /*aborted*/ false);
+    auto destType = remapType(adjDest.getType());
+    emitZeroIndirect(destType.getASTType(), adjDest, cai->getLoc());
   }
 
   // Handle `begin_access` instruction.
@@ -4045,6 +4806,7 @@ void AdjointEmitter::materializeAdjointIndirectHelper(
   case AdjointValueKind::Concrete:
     auto concreteVal = val.getConcreteValue();
     builder.createStore(loc, concreteVal, destBufferAccess, soq);
+    llvm::errs() << "WEW LAD! JUST MADE A STORE!!!!\n";
     destBufferAccess.setCleanup(makeCleanupFromChildren(
         {destBufferAccess.getCleanup(), concreteVal.getCleanup()}));
     break;

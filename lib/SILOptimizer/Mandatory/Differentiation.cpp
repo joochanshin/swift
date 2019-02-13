@@ -3583,6 +3583,34 @@ public:
                << "Assigned seed " << *seed << " as the adjoint of "
                << formalResults[srcIdx]);
 
+    // Pre-emptively register adjoint buffers for original indirect parameters.
+    auto origParams = original.getArgumentsWithoutIndirectResults();
+    auto selfParamIndex = origParams.size() - 1;
+    SmallVector<ValueWithCleanup, 4> origIndParamAdjBufs;
+    for (auto i : task->getIndices().parameters.set_bits()) {
+      auto origParam = origParams[i];
+      if (!origParam->getType().isAddress())
+        continue;
+      auto *adjBuf = builder.createAllocStack(adjLoc,
+          remapType(getCotangentType(origParam->getType(), getModule())));
+      auto *access = builder.createBeginAccess(adjBuf->getLoc(), adjBuf,
+                                               SILAccessKind::Init,
+                                               SILAccessEnforcement::Static,
+                                               /*noNestedConflict*/ true,
+                                               /*fromBuiltin*/ false);
+      emitZeroIndirect(access->getType().getASTType(), access, access->getLoc());
+      builder.createEndAccess(access->getLoc(), access, /*aborted*/ false);
+      auto cleanupFn = [](SILBuilder &b, SILLocation loc, SILValue v) {
+        LLVM_DEBUG(getADDebugStream()
+                   << "Cleaning up original indirect parameter adjoint buffer "
+                   << v << '\n');
+        b.createDestroyAddr(loc, v);
+      };
+      auto adjVal = ValueWithCleanup(adjBuf, makeCleanup(adjBuf, cleanupFn));
+      setAdjointBuffer(origParam, adjVal);
+      origIndParamAdjBufs.push_back(adjVal);
+    }
+
     // From the original exit, emit a reverse control flow graph and perform
     // differentiation in each block.
     // NOTE: For now we just assume single basic block.
@@ -3625,7 +3653,6 @@ public:
     SmallVector<SILValue, 8> retElts;
     // This vector will contain all indirect parameter adjoint buffers.
     SmallVector<ValueWithCleanup, 4> indParamAdjoints;
-    auto origParams = original.getArgumentsWithoutIndirectResults();
 
     // Materializes the return element corresponding to the parameter
     // `parameterIndex` into the `retElts` vector.
@@ -3658,7 +3685,6 @@ public:
     };
     // The original's self parameter, if present, is the last parameter. But we
     // want its cotangent, if present, to be the first return element.
-    auto selfParamIndex = origParams.size() - 1;
     if (origTy->hasSelfParam() &&
         task->getIndices().isWrtParameter(selfParamIndex))
       addRetElt(selfParamIndex);
@@ -3675,8 +3701,16 @@ public:
     for (auto pair : zip(indParamAdjoints, adjoint.getIndirectResults())) {
       auto &source = std::get<0>(pair);
       auto &dest = std::get<1>(pair);
-      builder.createCopyAddr(adjLoc, source, dest, IsNotTake, IsInitialization);
+      builder.createCopyAddr(adjLoc, source, dest, IsTake, IsInitialization);
     }
+
+    for (auto adjBuf : reversed(origIndParamAdjBufs)) {
+      auto val = adjBuf.getValue();
+      if (auto *cleanup = adjBuf.getCleanup())
+        cleanup->applyRecursively(builder, adjLoc);
+      builder.createDeallocStack(adjLoc, val);
+    }
+
     builder.createReturn(adjLoc, joinElements(retElts, builder, adjLoc));
 
     // For any temporary allocations, emit a deallocation in the right place.

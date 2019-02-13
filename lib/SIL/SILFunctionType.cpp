@@ -255,14 +255,24 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
                             ArrayRef<SILResultInfo> newResults,
                             GenericSignature *genericSignature)
       -> CanSILFunctionType {
-    return SILFunctionType::get(genericSignature
-                                  ? genericSignature
-                                  : base->getGenericSignature(),
+    if (!genericSignature)
+      genericSignature = base->getGenericSignature();
+    ArrayRef<SILResultInfo> results = newResults;
+    if (genericSignature) {
+      results = map<SmallVector<SILResultInfo, 4>>(
+          newResults, [&](SILResultInfo resInfo) {
+            return resInfo.getWithType(
+                resInfo.getType()->getCanonicalType(genericSignature));
+          });
+      // NOTE: The below is incorrect
+      // results = newResults;
+    }
+    return SILFunctionType::get(genericSignature,
                                 base->getExtInfo(),
                                 base->getCoroutineKind(),
                                 base->getCalleeConvention(),
                                 base->getParameters(), base->getYields(),
-                                newResults, base->getOptionalErrorResult(), ctx,
+                                results, base->getOptionalErrorResult(), ctx,
                                 base->getWitnessMethodConformanceOrNone());
   };
 
@@ -271,12 +281,6 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   case AutoDiffAssociatedFunctionKind::JVP: {
     SmallVector<SILParameterInfo, 8> tangentParams;
     for (auto &param : wrtParams) {
-      llvm::errs() << "HI PARAM\n";
-      param.getType()->dump();
-      param.getType()
-        ->getAutoDiffAssociatedVectorSpace(
-                                           AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
-      ->getCanonicalType()->dump();
       tangentParams.push_back(
           {param.getType()
                ->getAutoDiffAssociatedVectorSpace(
@@ -335,7 +339,8 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   results.push_back({closureType, ResultConvention::Owned});
   CanSILFunctionType associatedFunction =
       withNewResults(curryLevels.back(), results,
-                     curryLevels.size() == 1 ? whereClauseGenSig : nullptr);
+                     // curryLevels.size() == 1 ? whereClauseGenSig : nullptr);
+                     whereClauseGenSig);
 
   auto curryLevelsWithoutLast =
       ArrayRef<SILFunctionType *>(curryLevels).drop_back(1);
@@ -344,7 +349,8 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
     auto *curryLevel = pair.value();
     associatedFunction = withNewResults(
         curryLevel, {{associatedFunction, ResultConvention::Owned}},
-        i == curryLevelsWithoutLast.size() - 1 ? whereClauseGenSig : nullptr);
+        // i == curryLevelsWithoutLast.size() - 1 ? whereClauseGenSig : nullptr);
+        whereClauseGenSig);
   }
   return associatedFunction;
 }

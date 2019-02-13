@@ -251,15 +251,26 @@ getAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
   auto originalGenSig =
       original->getLoweredFunctionType()->getGenericSignature();
   if (!originalGenSig)
-    return nullptr;
+    llvm::errs() << "NO ORIG GEN SIG\n";
+  // if (!originalGenSig)
+  //   return nullptr;
+  llvm::errs() << "BUILDING GENERIC SIGS\n";
+  attr->print(llvm::errs());
+  llvm::errs() << "\n";
   GenericSignatureBuilder builder(original->getASTContext());
   // Add original generic signature.
-  builder.addGenericSignature(originalGenSig);
+  if (originalGenSig)
+    builder.addGenericSignature(originalGenSig);
   // Add where clause requirements.
   auto source =
       GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
-  for (auto &req : attr->getRequirements())
+  for (auto &req : attr->getRequirements()) {
+    llvm::errs() << "ATTR REQ\n";
+    req.dump();
     builder.addRequirement(req, source, original->getModule().getSwiftModule());
+  }
+  if (builder.getGenericParams().empty())
+    return nullptr;
   return std::move(builder)
       .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams=*/true)
       ->getCanonicalSignature();
@@ -2625,7 +2636,7 @@ public:
       ApplyInst *ai, CanSILFunctionType assocFnTy) {
     auto &context = getContext();
     auto *swiftModule = context.getModule().getSwiftModule();
-    auto origSubstMap = ai->getSubstitutionMap();
+    auto origSubstMap = getOpSubstitutionMap(ai->getSubstitutionMap());
     auto assocGenSig = assocFnTy->getGenericSignature();
     // If associated derivative has no generic signature, then short-circuit and
     // return original substitution map.
@@ -2638,46 +2649,107 @@ public:
     // If the primal function has a generic environment, use it to update
     // `origSubstMap` (because the primal substitution map may have more
     // requirements).
-    if (auto primalGenEnv = getPrimal()->getGenericEnvironment())
+    if (auto primalGenSig = getPrimal()->getLoweredFunctionType()->getGenericSignature()) {
+      assert(getPrimal()->getGenericEnvironment());
+    }
+    if (auto primalGenEnv = getPrimal()->getGenericEnvironment()) {
+      llvm::errs() << "ORIG ORIG SUBST MAP\n";
+      origSubstMap.dump();
+      origSubstMap.getGenericSignature()->dump();
       origSubstMap = SubstitutionMap::get(
           primalGenEnv->getGenericSignature(),
           QuerySubstitutionMap{origSubstMap},
           LookUpConformanceInModule(swiftModule));
+    }
     // Get the cloner substitution map.
     auto substMap = SubsMap.empty() ? origSubstMap : SubsMap;
+    // CHECK IF GENERIC PARAM CAN BE MAPPED TO CONCRETE TYPE
 
-    // Jointly iterate through requirements and conformances of associated
-    // function.
+    // Jointly iterate through associated function requirements/conformances.
     SmallVector<Requirement, 2> unsatisfiedRequirements;
+    llvm::errs() << "ASSOC GEN ENV\n";
+    assocGenEnv->dump();
+    assocGenSig->dump();
+    llvm::errs() << "SUBST MAP\n";
+    substMap.dump();
+    llvm::errs() << "ORIG SUBST MAP\n";
+    origSubstMap.dump();
+    origSubstMap.getGenericSignature()->dump();
+    llvm::errs() << "CLONER SUBSMAP\n";
+    SubsMap.dump();
+    if (auto *genSig = SubsMap.getGenericSignature())
+      genSig->dump();
+    // SubstMap.dump();
     auto conformances = assocSubstMap.getConformances();
     for (auto req : assocGenSig->getRequirements()) {
-      if (req.getKind() != RequirementKind::Conformance)
-        continue;
-      auto conformance = conformances.front();
-      auto *proto = conformance.getAbstract();
-      assert(proto && "Expected protocol in generic signature requirement");
-      auto reqType = req.getFirstType();
-      // Try substituting requirement type using original substutition map. If
-      // the result type is known to conform to protocol in the current module,
-      // continue.
-      // This handles cases where the primal caller is non-generic (specialized
-      // with concrete types) but the associated derivative callee is generic.
-      if (auto origFirstType = reqType.subst(origSubstMap)) {
-        if (!origFirstType->hasError() &&
-            swiftModule->lookupConformance(origFirstType, proto)) {
+      auto firstType = req.getFirstType();
+      auto secondType = req.getSecondType();
+      switch (req.getKind()) {
+        case RequirementKind::SameType: {
+          if (auto origFirstType = firstType.subst(substMap)) {
+            llvm::errs() << "ORIG FIRST TYPE\n";
+            origFirstType->dump();
+            firstType = origFirstType;
+          }
+          if (auto origSecondType = secondType.subst(substMap)) {
+            llvm::errs() << "ORIG SECOND TYPE\n";
+            origSecondType->dump();
+            secondType = origSecondType;
+          }
+          if (auto depMemType = secondType->getAs<DependentMemberType>()) {
+            if (!firstType->hasTypeParameter()) {
+              auto substType = depMemType->substBaseType(firstType, LookUpConformanceInModule(swiftModule));
+              llvm::errs() << "SUBST TYPE: " << substType << "\n";
+              substType->dump();
+              substType->getCanonicalType()->dump();
+              secondType = substType;
+            }
+          }
+          llvm::errs() << "FIRST TYPE\n";
+          firstType->dump();
+          llvm::errs() << "SECOND TYPE\n";
+          secondType->dump();
+          if (!firstType->isEqual(secondType))
+            unsatisfiedRequirements.push_back(req);
+          continue;
+        }
+        case RequirementKind::Conformance: {
+          auto conformance = conformances.front();
+          auto *proto = conformance.getAbstract();
+          assert(proto && "Expected protocol in generic signature requirement");
+          // Try substituting requirement type using original substutition map.
+          // If the result type is known to conform to protocol in the current
+          // module, continue.
+          // This handles cases where the primal caller is non-generic
+          // (specialized with concrete types) but the associated derivative
+          // callee is generic.
+          if (auto origFirstType = firstType.subst(origSubstMap)) {
+            if (!origFirstType->hasError() &&
+                swiftModule->lookupConformance(origFirstType, proto)) {
+              conformances = conformances.slice(1);
+              continue;
+            }
+          }
+          // Otherwise, try to look up conformance in substitution maps.
+          auto isConformanceMet =
+              origSubstMap.lookupConformance(firstType->getCanonicalType(),
+                                             proto) ||
+              substMap.lookupConformance(firstType->getCanonicalType(), proto);
+          if (!isConformanceMet)
+            unsatisfiedRequirements.push_back(req);
           conformances = conformances.slice(1);
           continue;
         }
+        default:
+          continue;
       }
-      // Otherwise, try to look up conformance in substitution maps.
-      auto isConformanceMet =
-          origSubstMap.lookupConformance(reqType->getCanonicalType(), proto) ||
-          substMap.lookupConformance(reqType->getCanonicalType(), proto);
-      if (!isConformanceMet)
-        unsatisfiedRequirements.push_back(req);
-      conformances = conformances.slice(1);
     }
     // Diagnose unsatisfied requirements.
+    for (auto req : unsatisfiedRequirements) {
+      LLVM_DEBUG(auto &s = getADDebugStream() << "Unsatisfied requirement:\n";
+                 req.print(s, PrintOptions());
+                 s << '\n');
+    }
     if (!unsatisfiedRequirements.empty()) {
       context.emitNondifferentiabilityError(
           ai, getDifferentiationTask(),
@@ -2792,6 +2864,19 @@ public:
     auto *pullbackDecl =
         getPrimalInfo().addPullbackDecl(ai, getOpType(pullback->getType()));
 
+    llvm::errs() << "VJP FN TYPE\n";
+    vjpFnTy->dump();
+    vjpFnTy->mapTypeOutOfContext()->dump();
+
+    auto fnTy = pullback->getType().getAs<SILFunctionType>();
+    llvm::errs() << "PULLBACK TYPE, GEN SIG: " << fnTy->getGenericSignature() << "\n";
+    pullback->getType().dump();
+    fnTy->mapTypeOutOfContext()->dump();
+    if (substMap) {
+      llvm::errs() << "SUBST MAP\n";
+      substMap->dump();
+    }
+    // pullbackDecl->getInterfaceType()->dump();
     // If actual pullback type does not match lowered pullback type, create a
     // reabstraction thunk and partial apply.
     auto actualPullbackType = getOpType(pullback->getType()).getAs<SILFunctionType>();
@@ -2805,7 +2890,8 @@ public:
                       pullbackDecl->getInterfaceType()->getCanonicalType()))
             .castTo<SILFunctionType>();
     if (!loweredPullbackType->isEqual(actualPullbackType)) {
-      auto thunk = createThunk(ai->getLoc(), getPrimal(), actualPullbackType, loweredPullbackType);
+      auto thunk = createThunk(
+          ai->getLoc(), getPrimal(), actualPullbackType, loweredPullbackType);
       auto thunkFRI = getBuilder().createFunctionRef(ai->getLoc(), thunk);
       pullback = getBuilder().createPartialApply(
           ai->getLoc(), thunkFRI, thunk->getForwardingSubstitutionMap(),
@@ -3592,7 +3678,7 @@ public:
       if (!origParam->getType().isAddress())
         continue;
       auto *adjBuf = builder.createAllocStack(adjLoc,
-          remapType(getCotangentType(origParam->getType(), getModule())));
+          getCotangentType(remapType(origParam->getType()), getModule()));
       auto *access = builder.createBeginAccess(adjBuf->getLoc(), adjBuf,
                                                SILAccessKind::Init,
                                                SILAccessEnforcement::Static,
@@ -3793,7 +3879,7 @@ public:
     auto origResult = origAllResults[applyInfo.actualIndices.source];
     auto origNumIndRes = ai->getNumIndirectResults();
 
-    auto pullbackType = pullback->getType().castTo<SILFunctionType>();
+    auto pullbackType = remapType(pullback->getType()).castTo<SILFunctionType>();
     SILFunctionConventions pullbackConvs(pullbackType, getModule());
     auto allPullbackResultsIt = pullbackConvs.getResults().begin();
     auto selfParamIndex = ai->getArgumentsWithoutIndirectResults().size() - 1;
@@ -3858,8 +3944,9 @@ public:
 
     llvm::errs() << "ADJOINT GEN APPLY\n";
     ai->dumpInContext();
-    llvm::errs() << "PULLBACK TYPE\n";
+    llvm::errs() << "ADJOINT GEN PULLBACK TYPE\n";
     pullback->getType().dump();
+    pullbackType->dump();
     // Register indirect results as arguments.
     // FIXME: This logic is crucial and needs to be fixed.
     SILFunctionConventions calleeConvs(
@@ -4965,9 +5052,17 @@ ADContext::declareExternalAssociatedFunction(
   auto originalTy = original->getLoweredFunctionType();
   auto originalLoc = original->getLocation();
   auto assocGenSig = getAssociatedFunctionGenericSignature(attr, original);
+  llvm::errs() << "DECLARE EXTERNAL ASSOC FUN: ASSOC GEN SIG FOR " << name << ", attr: " << attr << "\n";
+  if (assocGenSig) {
+    assocGenSig->dump();
+  } else {
+    llvm::errs() << "ASSOC GEN SIG NONE\n";
+  }
   auto assocFnTy = originalTy->getAutoDiffAssociatedFunctionType(
       indices.parameters, indices.source, /*differentiationOrder*/ 1, kind,
       module, LookUpConformanceInModule(module.getSwiftModule()), assocGenSig);
+  llvm::errs() << "ASSOC FUNC TY FOR " << name << "\n";
+  assocFnTy->dump();
   SILOptFunctionBuilder fb(getTransform());
   // Create external function declaration.
   auto *assocFn = fb.createFunction(
@@ -4984,6 +5079,7 @@ DifferentiationTask::DifferentiationTask(ADContext &context,
                                          SILDifferentiableAttr *&&attr,
                                          DifferentiationInvoker invoker)
     : context(context), original(original), attr(attr), invoker(invoker) {
+      llvm::errs() << "NEW DIFFERENTIATION TASK!\n";
   auto &module = context.getModule();
   // Try to look up JVP only if attribute specifies JVP name or if original
   // function is an external declaration. If JVP function can't be found,
@@ -5068,6 +5164,12 @@ void DifferentiationTask::createEmptyPrimal() {
   results.push_back({pvType, ResultConvention::Owned});
   results.append(origResults.begin(), origResults.end());
   // Create result info for checkpoints.
+  if (primalGenericSig) {
+    llvm::errs() << "PRIMAL GEN SIG: " << primalGenericSig << ", attr: " << attr << "\n";
+    primalGenericSig->dump();
+  } else {
+    llvm::errs() << "NO PRIMAL GEN SIG, attr: " << attr << "\n";
+  }
   auto originalTy = original->getLoweredFunctionType();
   auto primalTy = SILFunctionType::get(
       primalGenericSig, originalTy->getExtInfo(),

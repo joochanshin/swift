@@ -2561,6 +2561,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
 
     RequirementRequest::visitRequirements(
       WhereClauseOwner(original, attr), TypeResolutionStage::Structural,
+      // WhereClauseOwner(original, attr), TypeResolutionStage::Interface,
       [&](const Requirement &req, RequirementRepr *reqRepr) {
         switch (req.getKind()) {
         case RequirementKind::SameType:
@@ -2589,7 +2590,94 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
         attr->getLocation(), /*allowConcreteGenericParams=*/true);
     whereClauseGenEnv = whereClauseGenSig->createGenericEnvironment();
     // Store the resolved requirements in the attribute.
+    SmallVector<Requirement, 4> resolvedRequirements;
+    for (auto req : whereClauseGenSig->getRequirements()) {
+      if (req.getKind() == RequirementKind::SameType) {
+        auto firstType = req.getFirstType();
+        auto secondType = req.getSecondType();
+        if (auto depMemTy = secondType->getAs<DependentMemberType>()) {
+          depMemTy->getAssocType();
+          llvm::errs() << "DEP MEMBER TYPE\n";
+          depMemTy->dump();
+          llvm::errs() << "OTHER TYPE\n";
+          firstType->dump();
+          original->getGenericEnvironment()->getGenericSignature()->getCanonicalTypeInContext(firstType)->dump();
+          whereClauseGenSig->getCanonicalTypeInContext(firstType)->dump();
+          whereClauseGenSig->getCanonicalTypeInContext(secondType)->dump();
+          original->mapTypeIntoContext(firstType)->dump();
+          /*
+          auto conformances = whereClauseGenSig->getConformsTo(firstType);
+          for (auto conf : conformances) {
+            llvm::errs() << "CONF\n";
+            conf->dump();
+          }
+          */
+          auto resolution = TypeResolution::forContextual(original);
+          llvm::errs() << "RESOLVED?\n";
+          whereClauseGenSig->getCanonicalTypeInContext(secondType)->dump();
+          auto newFirstType = whereClauseGenSig->getCanonicalTypeInContext(firstType);
+          auto newSecondType = whereClauseGenSig->getCanonicalTypeInContext(secondType);
+          // depMemTy->substBaseType(original->getModuleContext(), firstType)->dump();
+          // depMemTy->substBaseType(original->getModuleContext(), original->mapTypeIntoContext(firstType))->dump();
+          // TypeChecker::substMemberTypeWithBase(original->getModuleContext(), depMemTy->getAssocType(), firstType)->dump();
+          // // TypeChecker::substMemberTypeWithBase(original->getModuleContext(), depMemTy->getAssocType(), firstType, /*useArchetypes*/ true)->dump();
+          // // resolution.resolveDependentMemberType(firstType, original, SourceRange(), <#ComponentIdentTypeRepr *ref#>)
+          auto newReq = Requirement(RequirementKind::SameType, newFirstType, newSecondType);
+          resolvedRequirements.push_back(newReq);
+          continue;
+        }
+      }
+      resolvedRequirements.push_back(req);
+    }
     attr->setRequirements(ctx, whereClauseGenSig->getRequirements());
+    // attr->setRequirements(ctx, resolvedRequirements);
+
+#if false
+    GenericSignatureBuilder builder2(ctx);
+    for (auto param : whereClauseGenSig->getGenericParams())
+      builder2.addGenericParameter(param);
+
+    for (auto &reqt : whereClauseGenSig->getRequirements())
+      if (reqt.getKind() != RequirementKind::SameType)
+        builder2.addRequirement(reqt, FloatingRequirementSource::forAbstract(), nullptr);
+    for (auto &reqt : whereClauseGenSig->getRequirements())
+      if (reqt.getKind() == RequirementKind::SameType)
+        builder2.addRequirement(reqt, FloatingRequirementSource::forAbstract(), nullptr);
+    // builder2.addGenericSignature(whereClauseGenSig);
+
+    RequirementRequest::visitRequirements(
+                                          // WhereClauseOwner(original, attr), TypeResolutionStage::Structural,
+                                          WhereClauseOwner(original, attr), TypeResolutionStage::Interface,
+                                          [&](const Requirement &req, RequirementRepr *reqRepr) {
+                                            switch (req.getKind()) {
+                                              case RequirementKind::SameType:
+                                              case RequirementKind::Superclass:
+                                              case RequirementKind::Conformance:
+                                                break;
+
+                                                // Layout requirements are not supported.
+                                              case RequirementKind::Layout:
+                                                TC.diagnose(attr->getLocation(),
+                                                            diag::differentiable_attr_unsupported_req_kind)
+                                                .highlight(reqRepr->getSourceRange());
+                                                return false;
+                                            }
+
+                                            // Add requirement to generic signature builder.
+                                            builder2.addRequirement(req, reqRepr,
+                                                                   FloatingRequirementSource::forExplicit(reqRepr),
+                                                                   nullptr, original->getModuleContext());
+                                            return false;
+                                          });
+
+    auto whereClauseGenSig2 = std::move(builder2).computeGenericSignature(
+        attr->getLocation(), /*allowConcreteGenericParams=*/true);
+    llvm::errs() << "WHERE CLAUSE GEN SIG 2\n";
+    whereClauseGenSig2->dump();
+
+    // Store the resolved requirements in the attribute.
+    attr->setRequirements(ctx, whereClauseGenSig2->getRequirements());
+#endif
   }
 
   // Validate the 'wrt:' parameters.

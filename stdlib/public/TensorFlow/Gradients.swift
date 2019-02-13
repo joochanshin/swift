@@ -204,7 +204,7 @@ public func gradient<T, U, V, R>(
 // Elementwise binary
 //===----------------------------------------------------------------------===//
 
-extension Tensor where Scalar : Differentiable & FloatingPoint {
+public extension Tensor where Scalar : Differentiable & FloatingPoint {
   @inlinable
   static func _vjpAdd(
     lhs: Tensor, rhs: Tensor

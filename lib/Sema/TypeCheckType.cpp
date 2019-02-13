@@ -188,6 +188,8 @@ Type TypeResolution::resolveDependentMemberType(
     if (!singleType) {
       Identifier name = ref->getIdentifier();
       SourceLoc nameLoc = ref->getIdLoc();
+      llvm::errs() << "HELLO DEP MEMBER TYPE DIAG\n";
+      baseEquivClass->dump();
       ctx.Diags.diagnose(nameLoc, diag::invalid_member_type, name, baseTy)
         .highlight(baseRange);
       corrections.noteAllCandidates();

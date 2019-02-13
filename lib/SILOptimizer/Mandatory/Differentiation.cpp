@@ -3557,9 +3557,19 @@ public:
           LLVM_DEBUG(getADDebugStream() << "Cleaning up seed " << v << '\n');
           b.createReleaseValueAddr(loc, v, b.getDefaultAtomicity());
         };
+        setAdjointBuffer(formalResults[srcIdx],
+                         ValueWithCleanup(seed, makeCleanup(seed, cleanupFn)));
+      } else {
+        auto adjBuf = builder.createAllocStack(adjLoc, seed->getType());
+        localAllocations.push_back(adjBuf);
+        builder.createCopyAddr(adjLoc, seed, adjBuf, IsNotTake, IsInitialization);
+        cleanupFn = [](SILBuilder &b, SILLocation loc, SILValue v) {
+          LLVM_DEBUG(getADDebugStream() << "Cleaning up seed " << v << '\n');
+          b.createDestroyAddr(loc, v);
+        };
+        setAdjointBuffer(formalResults[srcIdx],
+                         ValueWithCleanup(adjBuf, makeCleanup(adjBuf, cleanupFn)));
       }
-      setAdjointBuffer(formalResults[srcIdx],
-                       ValueWithCleanup(seed, makeCleanup(seed, cleanupFn)));
     } else {
       builder.createRetainValue(adjLoc, seed, builder.getDefaultAtomicity());
       auto cleanupFn = [](SILBuilder &b, SILLocation loc, SILValue v) {
@@ -3634,7 +3644,16 @@ public:
         }
         retElts.push_back(val);
       } else {
-        indParamAdjoints.push_back(getAdjointBuffer(origParam));
+        auto adjBuf = getAdjointBuffer(origParam);
+        indParamAdjoints.push_back(adjBuf);
+        if (auto *cleanup = adjBuf.getCleanup()) {
+          LLVM_DEBUG(getADDebugStream() << "Disabling cleanup for "
+                     << adjBuf.getValue() << "for return\n");
+          cleanup->disable();
+          LLVM_DEBUG(getADDebugStream() << "Applying "
+                     << cleanup->getNumChildren() << " child cleanups\n");
+          cleanup->applyRecursively(builder, adjLoc);
+        }
       }
     };
     // The original's self parameter, if present, is the last parameter. But we
@@ -3665,10 +3684,10 @@ public:
       auto useIt = alloc->use_begin();
       assert(useIt != alloc->use_end());
       SILBasicBlock *deallocationPoint = (useIt++)->getUser()->getParent();
-      do {
+      while (useIt != alloc->use_end()) {
         postDomInfo.findNearestCommonDominator(
             deallocationPoint, (useIt++)->getUser()->getParent());
-      } while (useIt != alloc->use_end());
+      }
       builder.setInsertionPoint(deallocationPoint->getTerminator());
       builder.createDeallocStack(adjLoc, alloc);
     }
@@ -3717,8 +3736,10 @@ public:
       return;
     }
     auto applyInfo = applyInfoLookUp->getSecond();
-    auto origTy = ai->getCallee()->getType().castTo<SILFunctionType>();
-    SILFunctionConventions origConvs(origTy, getModule());
+    // auto origTy = ai->getCallee()->getType().castTo<SILFunctionType>();
+    // SILFunctionConventions origConvs(origTy, getModule());
+    auto origTy = ai->getSubstCalleeType();
+    auto origConvs = ai->getSubstCalleeConv();
 
     // Get the pullback.
     auto *field = getPrimalInfo().lookUpPullbackDecl(ai);
@@ -3736,6 +3757,48 @@ public:
         ai, origDirResults, ai->getIndirectSILResults(),
         origAllResults);
     auto origResult = origAllResults[applyInfo.actualIndices.source];
+    auto origNumIndRes = ai->getNumIndirectResults();
+
+    auto pullbackType = pullback->getType().castTo<SILFunctionType>();
+    SILFunctionConventions pullbackConvs(pullbackType, getModule());
+    auto allPullbackResultsIt = pullbackConvs.getResults().begin();
+    auto selfParamIndex = ai->getArgumentsWithoutIndirectResults().size() - 1;
+    // EXPERIMENT: What if I register original param's adjoint buffers as early
+    // as possible?
+    // CONCLUSION: Failed because calling `getAdjointBuffer` at all (without
+    // freeing locally) disrupts modular allocation.
+    /*
+    if (ai->hasSelfArgument() &&
+        applyInfo.actualIndices.isWrtParameter(selfParamIndex)) {
+      auto cotanWrtSelf = *allPullbackResultsIt++;
+      // If the self cotangent value corresponds to a non-desired self
+      // parameter, it won't be used, so release it.
+      if (!applyInfo.desiredIndices.isWrtParameter(selfParamIndex)) {
+      } else {
+        auto origArg = ai->getArgument(origNumIndRes + selfParamIndex);
+        if (origArg->getType().isAddress() || cotanWrtSelf.isFormalIndirect())
+          (void)getAdjointBuffer(origArg);
+      }
+    }
+    // Set adjoints for the remaining non-self original parameters.
+    for (unsigned i : applyInfo.actualIndices.parameters.set_bits()) {
+      // Do not set the adjoint of the original self parameter because we
+      // already added it at the beginning.
+      if (ai->hasSelfArgument() && i == selfParamIndex)
+        continue;
+      auto origArg = ai->getArgument(origNumIndRes + i);
+      auto cotan = *allPullbackResultsIt++;
+      // If a cotangent value corresponds to a non-desired parameter, it won't
+      // be used, so release it.
+      if (i >= applyInfo.desiredIndices.parameters.size() ||
+          !applyInfo.desiredIndices.parameters[i]) {
+        continue;
+      }
+      if (origArg->getType().isAddress() || cotan.isFormalIndirect()) {
+        (void)getAdjointBuffer(origArg);
+      }
+    }
+     */
 
     // Get adjoint value of the original result.
     SILType adjointType;
@@ -3759,24 +3822,39 @@ public:
       adjointType = adjointBuf.getValue()->getType();
     }
 
+    llvm::errs() << "ADJOINT GEN APPLY\n";
+    ai->dumpInContext();
+    llvm::errs() << "PULLBACK TYPE\n";
+    pullback->getType().dump();
     // Register indirect results as arguments.
     // FIXME: This logic is crucial and needs to be fixed.
-    auto pullbackType = pullback->getType().castTo<SILFunctionType>();
     SILFunctionConventions calleeConvs(
         ai->getCallee()->getType().castTo<SILFunctionType>(), ai->getModule());
+    SmallVector<SILValue, 4> tempAllocations;
     unsigned count = pullbackType->getNumIndirectFormalResults();
     for (auto paramIdx : range(calleeConvs.getNumParameters())) {
       if (count == 0)
         break;
       auto paramInfo = calleeConvs.getParameters()[paramIdx];
       if (paramInfo.isFormalIndirect()) {
-        auto param = ai->getArgument(calleeConvs.getNumIndirectSILResults() + paramIdx);
-        auto buf = getAdjointBuffer(param);
+        auto param = ai->getArgument(
+            calleeConvs.getNumIndirectSILResults() + paramIdx);
         /*
+        auto buf = getAdjointBuffer(param);
+        llvm::errs() << "ADJOINT BUFFER\n";
+        buf.getValue()->dump();
+        */
         auto *buf = builder.createAllocStack(loc,
             remapType(getCotangentType(param->getType(), getModule())));
-        localAllocations.push_back(buf);
-        */
+        // auto *access = builder.createBeginAccess(buf->getLoc(), buf,
+        //     SILAccessKind::Init, SILAccessEnforcement::Static,
+        //     /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+        // emitZeroIndirect(access->getType().getASTType(), access, access->getLoc());
+        // builder.createEndAccess(access->getLoc(), access, /*aborted*/ false);
+        llvm::errs() << "CREATING LOCAL ALLOC:\n";
+        buf->dump();
+        // localAllocations.push_back(buf);
+        tempAllocations.push_back(buf);
         args.push_back(buf);
         ++count;
       }
@@ -3785,6 +3863,8 @@ public:
     // Initialize seed buffer.
     ValueWithCleanup seedBuf(builder.createAllocStack(loc, adjointType),
                              /*cleanup*/ nullptr);
+    llvm::errs() << "SEED BUFFER\n";
+    seedBuf.getValue()->dump();
     if (adjointType.isObject()) {
       ValueWithCleanup access(
           builder.createBeginAccess(
@@ -3822,7 +3902,8 @@ public:
     auto *pullbackCall = builder.createApply(ai->getLoc(), pullback,
                                              SubstitutionMap(), args,
                                              /*isNonThrowing*/ false);
-    builder.createDeallocStack(loc, seedBuf);
+    tempAllocations.push_back(seedBuf.getValue());
+    // builder.createDeallocStack(loc, seedBuf);
 
     // Extract all results from `pullbackCall`.
     SmallVector<SILValue, 8> dirResults;
@@ -3844,7 +3925,6 @@ public:
     });
 
     // Set adjoints for all original parameters.
-    auto origNumIndRes = ai->getNumIndirectResults();
     auto allResultsIt = allResults.begin();
 
     auto cleanupFn = [](SILBuilder &b, SILLocation l, SILValue v) {
@@ -3853,6 +3933,8 @@ public:
     auto cleanupFnAddr = [](SILBuilder &b, SILLocation l, SILValue v) {
       if (v->getType().isLoadable(b.getModule()))
         b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
+      else
+        b.createDestroyAddr(l, v);
     };
 
     // Emits a release based on the value's type category (address or object).
@@ -3860,6 +3942,8 @@ public:
       if (v->getType().isAddress()) {
         if (v->getType().isLoadable(getModule()))
           builder.createReleaseValueAddr(loc, v, builder.getDefaultAtomicity());
+        else
+          builder.createDestroyAddr(loc, v);
       } else {
         builder.createReleaseValue(loc, v, builder.getDefaultAtomicity());
       }
@@ -3868,7 +3952,7 @@ public:
     // If the applied adjoint returns the adjoint of the original self
     // parameter, then it returns it first. Set the adjoint of the original
     // self parameter.
-    auto selfParamIndex = ai->getArgumentsWithoutIndirectResults().size() - 1;
+    // auto selfParamIndex = ai->getArgumentsWithoutIndirectResults().size() - 1;
     if (ai->hasSelfArgument() &&
         applyInfo.actualIndices.isWrtParameter(selfParamIndex)) {
       auto cotanWrtSelf = *allResultsIt++;
@@ -3879,13 +3963,15 @@ public:
       else {
         auto origArg = ai->getArgument(origNumIndRes + selfParamIndex);
         if (cotanWrtSelf->getType().isAddress()) {
-          // FIXME: This logic is crucial and related to the FIXME comment above.
-          setAdjointBuffer(origArg, ValueWithCleanup(
-              cotanWrtSelf, makeCleanup(cotanWrtSelf, cleanupFnAddr)));
-          // addToAdjointBuffer(origArg, cotanWrtSelf);
+          // FIXME: how to fix this `getAdjointBuffer` call to work with modular allocation?
+          addToAdjointBuffer(origArg, ValueWithCleanup(
+            cotanWrtSelf, makeCleanup(cotanWrtSelf, cleanupFnAddr)));
         } else {
           if (origArg->getType().isAddress()) {
+            // FIXME: how to fix this `getAdjointBuffer` call to work with modular allocation?
             auto adjBuf = getAdjointBuffer(origArg);
+            llvm::errs() << "GET ADJOINT BUFFER CALL\n";
+            // adjBuf.print(llvm::errs());
             auto tmpBuf = builder.createAllocStack(loc, cotanWrtSelf->getType());
             builder.createStore(loc, cotanWrtSelf, tmpBuf,
                 getBufferSOQ(tmpBuf->getType().getASTType(), getAdjoint()));
@@ -3894,13 +3980,14 @@ public:
                 /*noNestedConflict*/ true, /*fromBuiltin*/ false);
             accumulateIndirect(adjBuf, readAccess);
             builder.createEndAccess(loc, readAccess, /*aborted*/ false);
-            builder.createDeallocStack(loc, tmpBuf);
+            // builder.createDeallocStack(loc, tmpBuf);
+            tempAllocations.push_back(tmpBuf);
           }
           else {
             addAdjointValue(origArg, makeConcreteAdjointValue(ValueWithCleanup(
-                    cotanWrtSelf,
-                    makeCleanup(cotanWrtSelf, cleanupFn,
-                                {seedBuf.getCleanup()}))));
+                cotanWrtSelf,
+                makeCleanup(cotanWrtSelf, cleanupFn,
+                            {seedBuf.getCleanup()}))));
           }
         }
       }
@@ -3921,12 +4008,12 @@ public:
         continue;
       }
       if (cotan->getType().isAddress()) {
-        // FIXME: This logic is crucial and related to the FIXME comment above.
-        // setAdjointBuffer(origArg, ValueWithCleanup(
-        //     cotan, makeCleanup(cotan, cleanupFnAddr)));
-        addToAdjointBuffer(origArg, cotan);
+        // FIXME: how to fix this `getAdjointBuffer` call to work with modular allocation?
+        addToAdjointBuffer(origArg, ValueWithCleanup(
+          cotan, makeCleanup(cotan, cleanupFnAddr)));
       } else {
         if (origArg->getType().isAddress()) {
+          // FIXME: how to fix this `getAdjointBuffer` call to work with modular allocation?
           auto adjBuf = getAdjointBuffer(origArg);
           auto tmpBuf = builder.createAllocStack(loc, cotan->getType());
           builder.createStore(loc, cotan, tmpBuf,
@@ -3936,12 +4023,18 @@ public:
               /*noNestedConflict*/ true, /*fromBuiltin*/ false);
           accumulateIndirect(adjBuf, readAccess);
           builder.createEndAccess(loc, readAccess, /*aborted*/ false);
-          builder.createDeallocStack(loc, tmpBuf);
+          // builder.createDeallocStack(loc, tmpBuf);
+          tempAllocations.push_back(tmpBuf);
         }
         else
           addAdjointValue(origArg, makeConcreteAdjointValue(ValueWithCleanup(
               cotan, makeCleanup(cotan, cleanupFn, {seedBuf.getCleanup()}))));
       }
+    }
+    for (auto call : reversed(tempAllocations)) {
+      llvm::errs() << "TEMP ALLOCATION\n";
+      auto dealloc = builder.createDeallocStack(loc, call);
+      dealloc->dump();
     }
   }
 
@@ -4162,8 +4255,12 @@ public:
     setAdjointBuffer(dsi->getOperand(),
         ValueWithCleanup(adjBuf, makeCleanup(adjBuf,
             [](SILBuilder &b, SILLocation l, SILValue v) {
-              b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
+              if (v->getType().isLoadable(b.getModule()))
+                b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
+              else
+                b.createDestroyAddr(l, v);
             })));
+    // localAllocations.push_back(adjBuf);
   }
 
   // Handle `load` instruction.
@@ -4230,7 +4327,10 @@ public:
     }
     auto cleanup = makeCleanup(adjBuf,
                                [](SILBuilder &b, SILLocation l, SILValue v) {
-      b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
+      if (v->getType().isLoadable(b.getModule()))
+        b.createReleaseValueAddr(l, v, b.getDefaultAtomicity());
+      else
+        b.createDestroyAddr(l, v);
     });
     adjBuf.setCleanup(cleanup);
   }

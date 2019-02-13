@@ -234,18 +234,17 @@ TensorADTests.testAllBackends("Indirect passing 4") {
                                                          T.CotangentVector : AdditiveArithmetic {
     return (T.add(x, x), T.add(y, 2))
   }
-  expectEqual((1, 0), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).0 }))
+  expectEqual((2, 0), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).0 }))
   expectEqual((0, 1), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).1 }))
 }
 TensorADTests.testAllBackends("Indirect passing 5") {
   func indirect<T : Hi>(_ x: T, _ y: T) -> (T, T) where T.TangentVector : AdditiveArithmetic,
                                                          T.CotangentVector : AdditiveArithmetic {
-    // FIXME: This is broken.
     let first = T.add(x, 1)
     return (T.add(first, first), T.add(y, 2))
   }
-  // expectEqual((1, 0), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).0 }))
-  // expectEqual((0, 1), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).1 }))
+  expectEqual((2, 0), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).0 }))
+  expectEqual((0, 1), gradient(at: Double(3), 3, in: { x, y in indirect(x, y).1 }))
 }
 
 runAllTests()

@@ -270,13 +270,20 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   switch (kind) {
   case AutoDiffAssociatedFunctionKind::JVP: {
     SmallVector<SILParameterInfo, 8> tangentParams;
-    for (auto &param : wrtParams)
+    for (auto &param : wrtParams) {
+      llvm::errs() << "HI PARAM\n";
+      param.getType()->dump();
+      param.getType()
+        ->getAutoDiffAssociatedVectorSpace(
+                                           AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
+      ->getCanonicalType()->dump();
       tangentParams.push_back(
           {param.getType()
                ->getAutoDiffAssociatedVectorSpace(
                    AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
                ->getCanonicalType(),
            param.getConvention()});
+    }
     SmallVector<SILResultInfo, 8> tangentResults;
     auto &result = curryLevels.back()->getResults()[resultIndex];
     tangentResults.push_back(

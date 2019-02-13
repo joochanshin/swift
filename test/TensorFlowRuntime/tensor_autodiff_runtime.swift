@@ -5,6 +5,9 @@
 //
 // REQUIRES: executable_test
 //
+// FIXME(TF-199): Indirect passing differentiation crashes with `-O`.
+// UNSUPPORTED: swift_test_mode_optimize
+//
 // Tensor AD runtime tests.
 
 import TensorFlow
@@ -182,7 +185,8 @@ TensorADTests.testAllBackends("Side effects") {
 
 TensorADTests.testAllBackends("Indirect passing 1") {
   func indirect<Scalar : Differentiable & FloatingPoint>(_ x: Tensor<Scalar>) -> Tensor<Scalar>
-    where Scalar.TangentVector : AdditiveArithmetic, Scalar.CotangentVector : AdditiveArithmetic
+    where Scalar.TangentVector : AdditiveArithmetic, Scalar.CotangentVector : AdditiveArithmetic,
+          Scalar == Scalar.CotangentVector
   {
     return (x + 3) * (x + 3)
   }

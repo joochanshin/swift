@@ -255,14 +255,22 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
                             ArrayRef<SILResultInfo> newResults,
                             GenericSignature *genericSignature)
       -> CanSILFunctionType {
-    return SILFunctionType::get(genericSignature
-                                  ? genericSignature
-                                  : base->getGenericSignature(),
+    if (!genericSignature)
+      genericSignature = base->getGenericSignature();
+    ArrayRef<SILResultInfo> results =
+        genericSignature
+            ? map<SmallVector<SILResultInfo, 4>>(
+                  newResults, [&](SILResultInfo resInfo) {
+                    return resInfo.getWithType(
+                        resInfo.getType()->getCanonicalType(genericSignature));
+                  })
+            : newResults;
+    return SILFunctionType::get(genericSignature,
                                 base->getExtInfo(),
                                 base->getCoroutineKind(),
                                 base->getCalleeConvention(),
                                 base->getParameters(), base->getYields(),
-                                newResults, base->getOptionalErrorResult(), ctx,
+                                results, base->getOptionalErrorResult(), ctx,
                                 base->getWitnessMethodConformanceOrNone());
   };
 
@@ -271,12 +279,6 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   case AutoDiffAssociatedFunctionKind::JVP: {
     SmallVector<SILParameterInfo, 8> tangentParams;
     for (auto &param : wrtParams) {
-      llvm::errs() << "HI PARAM\n";
-      param.getType()->dump();
-      param.getType()
-        ->getAutoDiffAssociatedVectorSpace(
-                                           AutoDiffAssociatedVectorSpaceKind::Tangent, lookupConformance)
-      ->getCanonicalType()->dump();
       tangentParams.push_back(
           {param.getType()
                ->getAutoDiffAssociatedVectorSpace(

@@ -547,6 +547,10 @@ SILDeserializer::readSILFunctionChecked(DeclID FID, SILFunction *existingFn,
   if (fn) {
     if (fn->getLoweredType() != ty) {
       LLVM_DEBUG(llvm::dbgs() << "SILFunction type mismatch.\n");
+      llvm::errs() << "FUNCTION NAME: " << fn->getName() << "\n";
+      fn->getLoweredType().dump();
+      ty.dump();
+      // astType.get()->dump();
       MF->error();
       return nullptr;
     }

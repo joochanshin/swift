@@ -1,4 +1,5 @@
-// RUN: %target-run-eager-swift
+// FIXME: Passing arbitrary arguments after `%target-run-eager-swift` doesn't work.
+// RUN: %target-run-eager-swift -Xllvm -indirect-passing-differentiation
 //
 // Note: GPE testing is disabled because GPE does not interact well with
 // VJP-based AD. See SR-9638.

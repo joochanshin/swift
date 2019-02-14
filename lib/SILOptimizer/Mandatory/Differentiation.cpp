@@ -47,12 +47,20 @@
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/BreadthFirstIterator.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace swift;
 using llvm::DenseMap;
 using llvm::SmallDenseMap;
 using llvm::SmallDenseSet;
 using llvm::SmallSet;
+
+// NOTE(TF-104): Disable differentiation indirect passing support until it is
+// more robust.
+static llvm::cl::opt<bool> EnableIndirectPassing(
+    "indirect-passing-differentiation", llvm::cl::init(false),
+    llvm::cl::desc("When true, enable differentiation of functoins with "
+                   "indirect parameters/results."));
 
 //===----------------------------------------------------------------------===//
 // Helpers
@@ -1583,6 +1591,34 @@ static bool diagnoseUnsupportedControlFlow(ADContext &context,
   return false;
 }
 
+/// If the original function in the differentiation task has indirect
+/// differentiation parameters/result, emit a "unknown parameter or result
+/// size" error at appropriate source locations. Returns true if error is
+/// emitted.
+static bool diagnoseIndirectParametersOrResult(CanSILFunctionType fnType,
+                                               ADContext &context,
+                                               DifferentiationTask *task) {
+  auto indices = task->getIndices();
+  // Check whether differentiation result or parameters are indirect.
+  bool hasIndirectParamOrResult =
+      fnType->getResults()[indices.source].isFormalIndirect();
+  for (unsigned i : swift::indices(fnType->getParameters())) {
+    if (!indices.isWrtParameter(i))
+      continue;
+    if (fnType->getParameters()[i].isFormalIndirect()) {
+      hasIndirectParamOrResult = true;
+      break;
+    }
+  }
+  if (hasIndirectParamOrResult) {
+    context.emitNondifferentiabilityError(
+        task->getOriginal()->getLocation().getSourceLoc(),
+        task, diag::autodiff_function_indirect_params_or_result_unsupported);
+    return true;
+  }
+  return false;
+}
+
 //===----------------------------------------------------------------------===//
 // Code emission utilities
 //===----------------------------------------------------------------------===//
@@ -2797,6 +2833,15 @@ public:
       return;
     }
     auto vjp = vjpAndVJPIndices->first;
+    auto vjpFnTy = vjp->getType().castTo<SILFunctionType>();
+
+    // Emit error if callee type has indirect differentiation parameters/result
+    // and indirect passing flag is not true.
+    if (!EnableIndirectPassing && diagnoseIndirectParametersOrResult(
+        vjpFnTy, getContext(), getDifferentiationTask())) {
+      errorOccurred = true;
+      return;
+    }
 
     // Record desired/actual VJP indices.
     // Temporarily set original pullback type to `None`.
@@ -2809,7 +2854,6 @@ public:
 
     // Call the VJP using the original parameters.
     SmallVector<SILValue, 8> newArgs;
-    auto vjpFnTy = vjp->getType().castTo<SILFunctionType>();
     auto numVJPArgs =
         vjpFnTy->getNumParameters() + vjpFnTy->getNumIndirectFormalResults();
     newArgs.reserve(numVJPArgs);
@@ -2912,8 +2956,12 @@ bool PrimalGen::performSynthesis(FunctionSynthesisItem item) {
              << item.target->getName() << '\n');
   // FIXME: If the original function has multiple basic blocks, bail out since
   // AD does not support control flow yet.
+  // Bail out if original function has indirect differentiation
+  // parameters/results and indirect passing flag is not true.
   if (diagnoseNoReturn(context, item.task) ||
-      diagnoseUnsupportedControlFlow(context, item.task)) {
+      diagnoseUnsupportedControlFlow(context, item.task) ||
+      (!EnableIndirectPassing && diagnoseIndirectParametersOrResult(
+          item.original->getLoweredFunctionType(), context, item.task))) {
     errorOccurred = true;
     return true;
   }

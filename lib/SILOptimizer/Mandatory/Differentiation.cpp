@@ -574,7 +574,8 @@ private:
   DenseMap<ApplyInst *, NestedApplyInfo> nestedApplyInfo;
 
   /// Mapping from original `struct_extract` instructions to their strategies.
-  DenseMap<StructExtractInst *, StructExtractDifferentiationStrategy>
+  // DenseMap<StructExtractInst *, StructExtractDifferentiationStrategy>
+  DenseMap<SILInstruction *, StructExtractDifferentiationStrategy>
       structExtractDifferentiationStrategies;
 
   /// Cache for associated functions.
@@ -684,7 +685,8 @@ public:
     return nestedApplyInfo;
   }
 
-  DenseMap<StructExtractInst *, StructExtractDifferentiationStrategy> &
+  // DenseMap<StructExtractInst *, StructExtractDifferentiationStrategy> &
+  DenseMap<SILInstruction *, StructExtractDifferentiationStrategy> &
   getStructExtractDifferentiationStrategies() {
     return structExtractDifferentiationStrategies;
   }
@@ -2629,6 +2631,72 @@ public:
     primalValues.push_back(pullback);
   }
 
+  void visitStructElementAddrInst(StructElementAddrInst *seai) {
+    auto &strategies =
+        getDifferentiationTask()->getStructExtractDifferentiationStrategies();
+    // Special handling logic only applies when the `struct_extract` is active.
+    // If not, just do standard cloning.
+    if (!activityInfo.isActive(seai, synthesis.indices)) {
+      LLVM_DEBUG(getADDebugStream() << "Not active:\n" << *seai << '\n');
+      strategies.insert(
+          {seai, StructExtractDifferentiationStrategy::Inactive});
+      SILClonerWithScopes::visitStructElementAddrInst(seai);
+      return;
+    }
+    // This instruction is active. Determine the appropriate differentiation
+    // strategy, and use it.
+    auto *structDecl = seai->getStructDecl();
+    if (structDecl->getAttrs().hasAttribute<FieldwiseDifferentiableAttr>()) {
+      strategies.insert(
+          {seai, StructExtractDifferentiationStrategy::Fieldwise});
+      SILClonerWithScopes::visitStructElementAddrInst(seai);
+      return;
+    }
+    // The FieldwiseProductSpace strategy is not appropriate, so use the Getter
+    // strategy.
+    strategies.insert(
+        {seai, StructExtractDifferentiationStrategy::Getter});
+    // Find the corresponding getter and its VJP.
+    auto *getterDecl = seai->getField()->getGetter();
+    assert(getterDecl);
+    auto *getterFn = getContext().getModule().lookUpFunction(
+        SILDeclRef(getterDecl, SILDeclRef::Kind::Func));
+    if (!getterFn) {
+      getContext().emitNondifferentiabilityError(
+          seai, synthesis.task, diag::autodiff_property_not_differentiable);
+      errorOccurred = true;
+      return;
+    }
+    SILAutoDiffIndices indices(/*source*/ 0, /*parameters*/ {0});
+    auto *task = getContext().lookUpDifferentiationTask(getterFn, indices);
+    if (!task) {
+      getContext().emitNondifferentiabilityError(
+          seai, synthesis.task, diag::autodiff_property_not_differentiable);
+      errorOccurred = true;
+      return;
+    }
+    // Reference and apply the VJP.
+    auto loc = seai->getLoc();
+    auto *getterVJPRef = getBuilder().createFunctionRef(loc, task->getVJP());
+    auto *getterVJPApply = getBuilder().createApply(
+        loc, getterVJPRef, /*substitutionMap*/ {},
+        /*args*/ {getMappedValue(seai->getOperand())}, /*isNonThrowing*/ false);
+    SmallVector<SILValue, 8> vjpDirectResults;
+    extractAllElements(getterVJPApply, getBuilder(), vjpDirectResults);
+    // Map original results.
+    auto originalDirectResults =
+        ArrayRef<SILValue>(vjpDirectResults).drop_back(1);
+    SILValue originalDirectResult = joinElements(originalDirectResults,
+                                                 getBuilder(),
+                                                 getterVJPApply->getLoc());
+    mapValue(seai, originalDirectResult);
+    // Checkpoint the pullback.
+    SILValue pullback = vjpDirectResults.back();
+    // TODO: Check whether it's necessary to reabstract getter pullbacks.
+    getPrimalInfo().addPullbackDecl(seai, getOpType(pullback->getType()));
+    primalValues.push_back(pullback);
+  }
+
   // Return the substitution map for the associated function of an `apply`
   // instruction. If the associated derivative has generic requirements that are
   // unfulfilled by the primal function, emit "callee requirements unmet"
@@ -4148,6 +4216,106 @@ public:
 
       // Set adjoint for the `struct_extract` operand.
       addAdjointValue(sei->getOperand(),
+          makeConcreteAdjointValue(
+              ValueWithCleanup(pullbackCall, vector.getCleanup())));
+      break;
+    }
+    }
+  }
+
+  void visitStructElementAddrInst(StructElementAddrInst *seai) {
+    auto loc = seai->getLoc();
+    auto &differentiationStrategies =
+        getDifferentiationTask()->getStructExtractDifferentiationStrategies();
+    auto strategy = differentiationStrategies.lookup(seai);
+    switch (strategy) {
+    case StructExtractDifferentiationStrategy::Inactive:
+      assert(!activityInfo.isActive(seai, synthesis.indices));
+      return;
+    case StructExtractDifferentiationStrategy::Fieldwise: {
+      // Compute adjoint as follows:
+      //   y = struct_element_addr <key>, x
+      //   adj[x] = struct (0, ..., key': adj[y], ..., 0)
+      // where `key'` is the field in the cotangent space corresponding to
+      // `key`.
+      auto structTy = remapType(seai->getOperand()->getType()).getASTType();
+      auto cotangentVectorTy = structTy->getAutoDiffAssociatedVectorSpace(
+          AutoDiffAssociatedVectorSpaceKind::Cotangent,
+          LookUpConformanceInModule(getModule().getSwiftModule()))
+              ->getType()->getCanonicalType();
+      // assert(!getModule().Types.getTypeLowering(cotangentVectorTy)
+      //            .isAddressOnly());
+      /*
+      auto cotangentVectorSILTy =
+          SILType::getPrimitiveObjectType(cotangentVectorTy);
+      */
+      auto *cotangentVectorDecl =
+          cotangentVectorTy->getStructOrBoundGenericStruct();
+      assert(cotangentVectorDecl);
+      // Find the corresponding field in the cotangent space.
+      VarDecl *correspondingField = nullptr;
+      // If the cotangent space is the original sapce, then it's the same field.
+      if (cotangentVectorDecl == seai->getStructDecl())
+        correspondingField = seai->getField();
+      // Otherwise we just look it up by name.
+      else {
+        auto correspondingFieldLookup =
+            cotangentVectorDecl->lookupDirect(seai->getField()->getName());
+        assert(correspondingFieldLookup.size() == 1);
+        correspondingField = cast<VarDecl>(correspondingFieldLookup.front());
+      }
+      // Compute adjoint.
+      auto adjBuf = getAdjointBuffer(seai);
+      addToAdjointBuffer(seai->getOperand(), adjBuf);
+      llvm::errs() << "STRUCT ELEMENT ADDR ADJ BUFF";
+      adjBuf.getValue()->dump();
+      /*
+      auto av = takeAdjointValue(seai);
+      switch (av.getKind()) {
+      case AdjointValueKind::Zero:
+        addAdjointValue(seai->getOperand(),
+                        makeZeroAdjointValue(cotangentVectorSILTy));
+        break;
+      case AdjointValueKind::Concrete:
+      case AdjointValueKind::Aggregate: {
+        SmallVector<AdjointValue, 8> eltVals;
+        for (auto *field : cotangentVectorDecl->getStoredProperties()) {
+          if (field == correspondingField)
+            eltVals.push_back(av);
+          else
+            eltVals.push_back(makeZeroAdjointValue(
+                SILType::getPrimitiveObjectType(
+                    field->getType()->getCanonicalType())));
+        }
+        addAdjointValue(seai->getOperand(),
+            makeAggregateAdjointValue(cotangentVectorSILTy, eltVals));
+      }
+      }
+      */
+      return;
+    }
+    case StructExtractDifferentiationStrategy::Getter: {
+      // Get the pullback.
+      auto *pullbackField = getPrimalInfo().lookUpPullbackDecl(seai);
+      assert(pullbackField);
+      SILValue pullback = builder.createStructExtract(loc,
+                                                      primalValueAggregateInAdj,
+                                                      pullbackField);
+
+      // Construct the pullback arguments.
+      SmallVector<SILValue, 8> args;
+      auto av = takeAdjointValue(seai);
+      assert(av.getType().isObject());
+      auto vector = materializeAdjointDirect(std::move(av), loc);
+      args.push_back(vector);
+
+      // Call the pullback.
+      auto *pullbackCall = builder.createApply(loc, pullback, SubstitutionMap(),
+                                               args, /*isNonThrowing*/ false);
+      assert(!pullbackCall->hasIndirectResults());
+
+      // Set adjoint for the `struct_element_addr` operand.
+      addAdjointValue(seai->getOperand(),
           makeConcreteAdjointValue(
               ValueWithCleanup(pullbackCall, vector.getCleanup())));
       break;

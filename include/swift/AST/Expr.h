@@ -2338,7 +2338,13 @@ public:
   }
   
   SourceLoc getLoc() const { return Index->getStartLoc(); }
-  SourceLoc getStartLoc() const { return getBase()->getStartLoc(); }
+  SourceLoc getStartLoc() const {
+    // SWIFT_ENABLE_TENSORFLOW
+    // Resolves TF-198.
+    return getBase()->getStartLoc();
+    auto start = getBase()->getStartLoc();
+    return start.isValid() ? start : getIndex()->getStartLoc();
+  }
   SourceLoc getEndLoc() const {
     auto end = Index->getEndLoc();
     return end.isValid() ? end : getBase()->getEndLoc();

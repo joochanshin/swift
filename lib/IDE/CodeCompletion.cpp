@@ -5136,6 +5136,22 @@ namespace  {
     std::pair<bool, Expr *> walkToExprPre(Expr *E) override {
       // Finish if we found the target. 'ChildExpr' might have been replaced
       // with typechecked expression. In that case, match the position.
+      llvm::errs() << "ExprParentFinder WALK TO EXPR PRE\n";
+      llvm::errs() << "DUMP CHILD EXPR\n";
+      ChildExpr->dump();
+      llvm::errs() << "DUMP E: " << E << "\n";
+      E->getStartLoc().dump(E->getType()->getASTContext().SourceMgr);
+      E->getEndLoc().dump(E->getType()->getASTContext().SourceMgr);
+      llvm::errs() << "\n";
+      if (auto callExpr = dyn_cast<CallExpr>(E)) {
+        llvm::errs() << "FN EXPR: " << callExpr->getFn() << "\n";
+        callExpr->getFn()->getStartLoc().dump(E->getType()->getASTContext().SourceMgr);
+        callExpr->getFn()->getEndLoc().dump(E->getType()->getASTContext().SourceMgr);
+        llvm::errs() << "\n";
+      }
+      // llvm::errs() << E->getStartLoc() << "\n";
+      // llvm::errs() << E->getEndLoc() << "\n";
+      E->dump();
       if (E == ChildExpr || arePositionsSame(E, ChildExpr))
         return { false, nullptr };
 

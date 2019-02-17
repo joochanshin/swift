@@ -102,4 +102,14 @@ SimpleMathTests.test("SideEffects") {
   expectEqual(108, gradient(at: 3, in: foo))
 }
 
+SimpleMathTests.test("TupleSideEffects") {
+  func foo(_ x: Float) -> Float {
+    var tuple = (x, x)
+    tuple.0 += x
+    tuple.1 += x
+    return x + tuple.0
+  }
+  expectEqual(1, gradient(at: 3, in: foo))
+}
+
 runAllTests()

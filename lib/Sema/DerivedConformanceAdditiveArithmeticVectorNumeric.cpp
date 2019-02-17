@@ -195,6 +195,8 @@ static void deriveBodyMathOperator(AbstractFunctionDecl *funcDecl,
   auto *proto = getAssociatedProtocol(op, C);
   auto operatorId = C.getIdentifier(getMathOperatorName(op));
   auto *operatorReq = getProtocolRequirement(proto, operatorId);
+  // llvm::errs() << "OPERATOR ID: " << operatorId << "\n";
+  // proto->dump();
 
   // Create reference to operator parameters: lhs and rhs.
   auto params = funcDecl->getParameters();

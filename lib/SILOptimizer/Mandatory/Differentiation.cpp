@@ -1411,7 +1411,7 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
         // Handle `copy_addr`.
         else if (auto *cai = dyn_cast<CopyAddrInst>(&inst)) {
           if (isUseful(cai->getDest(), i))
-            setUsefulIfDifferentiable(cai->getSrc(), i);
+            propagateUsefulThroughBuffer(cai->getSrc(), i);
         }
         // Handle reads.
         else if (inst.mayReadFromMemory()) {
@@ -1462,6 +1462,9 @@ void DifferentiableActivityInfo::recursivelySetVariedIfDifferentiable(
 void DifferentiableActivityInfo::propagateUsefulThroughBuffer(
     SILValue value, unsigned dependentVariableIndex) {
   assert(value->getType().isAddress());
+  // NOTE: Check might be problematic?
+  if (isUseful(value, dependentVariableIndex))
+    return;
   if (!setUsefulIfDifferentiable(value, dependentVariableIndex))
     return;
   if (auto *inst = value->getDefiningInstruction())
@@ -1475,11 +1478,20 @@ void DifferentiableActivityInfo::propagateUsefulThroughBuffer(
         [&](Operand &op) { return op.get()->getType().isAddress(); });
     return hasAddrResults && hasAddrOperands;
   };
-  for (auto use : value->getUses())
-    if (isProjectingMemory(use->getUser()))
+  llvm::errs() << "HELLO PROPAGATE USEFULNESS\n";
+  value->dumpInContext();
+  for (auto use : value->getUses()) {
+    llvm::errs() << "USE:\n";
+    use->getUser()->dump();
+    if (isProjectingMemory(use->getUser())) {
+      llvm::errs() << "IS USEFUL!\n";
       for (auto res : use->getUser()->getResults())
-        if (res->getType().isAddress())
-          setUsefulIfDifferentiable(res, dependentVariableIndex);
+        if (res->getType().isAddress()) {
+          propagateUsefulThroughBuffer(res, dependentVariableIndex); // recursive call crucial
+          // setUsefulIfDifferentiable(res, dependentVariableIndex); // old
+        }
+    }
+  }
 }
 
 bool DifferentiableActivityInfo::isVaried(
@@ -2252,8 +2264,8 @@ static SILFunction *getOrCreateReabstractionThunk(SILOptFunctionBuilder &fb,
   builder.createReturn(loc, retVal);
 
   LLVM_DEBUG(auto &s = getADDebugStream() << "Created reabstraction thunk.\n";
-             s << "From type: " << fromType << '\n';
-             s << "To type: " << toType << '\n';
+             s << "  From type: " << fromType << '\n';
+             s << "  To type: " << toType << '\n';
              s << '\n' << *thunk);
 
   return thunk;
@@ -2549,7 +2561,6 @@ public:
                 << getPrimalInfo().getPrimalValueStruct()->getName() << ":\n";
       for (auto *var : getPrimalInfo().getPrimalValueStruct()->getMembers()) {
         var->dump(s);
-        s << '\n';
       }
     });
     LLVM_DEBUG(getADDebugStream() << "Finished PrimalGen for function "
@@ -3819,9 +3830,9 @@ public:
     for (auto pair : zip(indParamAdjoints, adjoint.getIndirectResults())) {
       auto &source = std::get<0>(pair);
       auto &dest = std::get<1>(pair);
-      builder.createCopyAddr(adjLoc, source, dest, IsTake, IsInitialization);
       if (auto *cleanup = source.getCleanup())
         cleanup->disable();
+      builder.createCopyAddr(adjLoc, source, dest, IsTake, IsInitialization);
     }
 
     // Deallocate local allocations.
@@ -4240,8 +4251,7 @@ public:
       // Construct pullback arguments.
       // Allocate buffer for pullback indirect result.
       auto *pullbackResultBuf = builder.createAllocStack(
-          loc, remapType(getCotangentType(seai->getOperand()->getType(),
-                                          getModule())));
+          loc, remapType(seai->getOperand()->getType()));
       auto adjElt = getAdjointBuffer(seai);
 
       // Get the pullback.
@@ -4276,7 +4286,7 @@ public:
 
   /// Handle `tuple` instruction.
   ///   y = tuple (x0, x1, x2, ...)
-  ///   adj[x0] += tuple_extract 0, adj[y]
+  ///   adj[x0] += tuple_extract adj[y], 0
   ///   ...
   void visitTupleInst(TupleInst *ti) {
     auto av = takeAdjointValue(ti);
@@ -4303,8 +4313,8 @@ public:
   }
 
   /// Handle `tuple_extract` instruction.
-  ///   y = tuple_extract <n>, x
-  ///                      |--- n-th element
+  ///   y = tuple_extract x, <n>
+  ///                         |--- n-th element
   ///   adj[x] += tuple (0, 0, ..., adj[y], ..., 0, 0)
   void visitTupleExtractInst(TupleExtractInst *tei) {
     auto *tupleTy = tei->getTupleType();
@@ -4332,6 +4342,31 @@ public:
       break;
     }
     }
+  }
+
+  /// Handle `tuple_element_addr` instruction.
+  ///   y = tuple_element_addr x, <n>
+  ///                              |--- n-th element
+  ///   adj[x]#n = tuple_element_addr adj[y], <n>
+  ///   adj[x]#n += adj[y]
+  ///   adj[x] += tuple (0, 0, ..., adj[y], ..., 0, 0)
+  void visitTupleElementAddrInst(TupleElementAddrInst *teai) {
+    auto loc = teai->getLoc();
+    auto adjElt = getAdjointBuffer(teai);
+    auto adjTupleElt = builder.createTupleElementAddr(
+        loc, getAdjointBuffer(teai->getOperand()), teai->getFieldNo());
+    // Accumulate element address's adjoint buffer into the corresponding
+    // element address of `struct_element_addr` operand's adjoint buffer:
+    // `adj[x]#n += adj[y]`.
+    auto *destAccess = builder.createBeginAccess(
+        loc, adjTupleElt, SILAccessKind::Modify, SILAccessEnforcement::Static,
+        /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+    auto *readAccess = builder.createBeginAccess(
+        loc, adjElt, SILAccessKind::Read, SILAccessEnforcement::Static,
+        /*noNestedConflict*/ true, /*fromBuiltin*/ false);
+    accumulateIndirect(destAccess, readAccess);
+    builder.createEndAccess(loc, readAccess, /*aborted*/ false);
+    builder.createEndAccess(loc, destAccess, /*aborted*/ false);
   }
 
   // Handle `alloc_stack` instruction.
@@ -4646,6 +4681,7 @@ void AdjointEmitter::materializeAdjointIndirectHelper(
   /// since we need indirect passing for aggregate instruction, we just use
   /// `tuple_element_addr` to get element buffers and write elements to them.
   case AdjointValueKind::Zero:
+    /*
     if (auto tupleTy = val.getType().getAs<TupleType>()) {
       SmallVector<SILValue, 8> eltVals;
       for (unsigned i : range(tupleTy->getNumElements())) {
@@ -4656,6 +4692,8 @@ void AdjointEmitter::materializeAdjointIndirectHelper(
     } else {
       emitZeroIndirect(val.getSwiftType(), destBufferAccess, loc);
     }
+    */
+    emitZeroIndirect(val.getSwiftType(), destBufferAccess, loc);
     break;
   /// Given a `%buf : *(T0, T1, T2, ...)` or `%buf : *Struct` recursively emit
   /// instructions to materialize the symbolic tuple or struct, filling the
@@ -4717,6 +4755,46 @@ void AdjointEmitter::emitZeroIndirect(CanType type, SILValue bufferAccess,
   auto confRef = swiftMod->lookupConformance(type, additiveArithmeticProto);
   // TODO(TF-202): Diagnose no `AdditiveArithmetic` due to generic signature
   // minimization bug.
+  if (!confRef) {
+    llvm::errs() << "MISSING CONFORMANCE\n";
+    type->dump();
+  }
+  auto cotangentSpace = type->getAutoDiffAssociatedVectorSpace(
+      AutoDiffAssociatedVectorSpaceKind::Cotangent,
+      LookUpConformanceInModule(swiftMod));
+  assert(cotangentSpace && "No tangent space for this type");
+  switch (cotangentSpace->getKind()) {
+  case VectorSpace::Kind::Vector: {
+    assert(confRef.hasValue() && "Missing conformance to `AdditiveArithmetic`");
+    // %wm = witness_method ...
+    auto *getter = builder.createWitnessMethod(
+        loc, type, *confRef, accessorDeclRef, methodType);
+    // %metatype = metatype $T
+    auto metatypeType = CanMetatypeType::get(type, MetatypeRepresentation::Thick);
+    auto metatype = builder.createMetatype(
+        loc, SILType::getPrimitiveObjectType(metatypeType));
+    auto subMap = SubstitutionMap::getProtocolSubstitutions(
+        additiveArithmeticProto, type, *confRef);
+    builder.createApply(loc, getter, subMap, {bufferAccess, metatype},
+                        /*isNonThrowing*/ false);
+    return;
+  }
+  case VectorSpace::Kind::Tuple: {
+    auto tupleType = cotangentSpace->getTuple();
+    SmallVector<SILValue, 8> zeroElements;
+    for (unsigned i : range(tupleType->getNumElements())) {
+      auto eltAddr = builder.createTupleElementAddr(loc, bufferAccess, i);
+      emitZeroIndirect(tupleType->getElementType(i)->getCanonicalType(),
+                       eltAddr, loc);
+    }
+    return;
+  }
+  case VectorSpace::Kind::Function: {
+    llvm_unreachable(
+      "Unimplemented: Emit thunks for abstracting adjoint accumulation");
+  }
+  }
+#if false
   assert(confRef.hasValue() && "Missing conformance to `AdditiveArithmetic`");
   // %wm = witness_method ...
   auto *getter = builder.createWitnessMethod(loc, type, *confRef,
@@ -4729,6 +4807,7 @@ void AdjointEmitter::emitZeroIndirect(CanType type, SILValue bufferAccess,
       additiveArithmeticProto, type, *confRef);
   builder.createApply(loc, getter, subMap, {bufferAccess, metatype},
                       /*isNonThrowing*/ false);
+#endif
 }
 
 SILValue AdjointEmitter::emitZeroDirect(CanType type, SILLocation loc) {

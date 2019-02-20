@@ -259,18 +259,18 @@ AutoDiffParameterIndices::getLowered(AnyFunctionType *functionType) const {
   return result;
 }
 
-static unsigned getNumAutoDiffParameterIndices(AnyFunctionType *fnTy) {
-  unsigned numAutoDiffParameterIndices = 0;
+static unsigned getNumParameterIndices(AnyFunctionType *fnTy) {
+  unsigned numParameterIndices = 0;
   while (fnTy != nullptr) {
-    numAutoDiffParameterIndices += fnTy->getNumParams();
+    numParameterIndices += fnTy->getNumParams();
     fnTy = fnTy->getResult()->getAs<AnyFunctionType>();
   }
-  return numAutoDiffParameterIndices;
+  return numParameterIndices;
 }
 
 AutoDiffParameterIndicesBuilder::AutoDiffParameterIndicesBuilder(
     AnyFunctionType *functionType, bool setAllParams) :
-    parameters(getNumAutoDiffParameterIndices(functionType), setAllParams) {
+    parameters(getNumParameterIndices(functionType), setAllParams) {
 }
 
 AutoDiffParameterIndices *

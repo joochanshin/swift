@@ -3287,6 +3287,7 @@ void Serializer::writeDecl(const Decl *D) {
         addTypeRef(interfaceType),
         param->isVariadic(),
         param->isAutoClosure(),
+        param->isNonDifferentiable(),
         getRawStableDefaultArgumentKind(param->getDefaultArgumentKind()),
         defaultArgumentText);
 

@@ -164,6 +164,16 @@ ConstructorDecl *createDesignatedInitOverride(TypeChecker &TC,
                                               ConstructorDecl *superclassCtor,
                                               DesignatedInitKind kind);
 
+/// SWIFT_ENABLE_TENSORFLOW
+ConstructorDecl *createMemberwiseInitializer(TypeChecker &tc,
+                                             NominalTypeDecl *decl);
+
+/// SWIFT_ENABLE_TENSORFLOW
+void getStoredPropertiesForDifferentiation(NominalTypeDecl *nominal,
+                                           DeclContext *DC,
+                                           SmallVectorImpl<VarDecl *> &result);
+
+
 } // end namespace swift
 
 #endif

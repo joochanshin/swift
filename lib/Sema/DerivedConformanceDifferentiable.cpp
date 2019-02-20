@@ -48,10 +48,9 @@ static ValueDecl *getProtocolRequirement(ProtocolDecl *proto, Identifier name) {
 
 // Get the stored properties of a nominal type that are relevant for
 // differentiation, except the ones tagged `@noDerivative`.
-static void
-getStoredPropertiesForDifferentiation(NominalTypeDecl *nominal,
-                                      DeclContext *DC,
-                                      SmallVectorImpl<VarDecl *> &result) {
+void swift::getStoredPropertiesForDifferentiation(
+    NominalTypeDecl *nominal, DeclContext *DC,
+    SmallVectorImpl<VarDecl *> &result) {
   auto &C = nominal->getASTContext();
   auto *diffableProto = C.getProtocol(KnownProtocolKind::Differentiable);
   for (auto *vd : nominal->getStoredProperties()) {
@@ -401,19 +400,48 @@ static ValueDecl *deriveDifferentiable_method(
 
   // Returned nominal type must define a memberwise initializer.
   // Add memberwise initializer if necessary.
-  auto returnNominal = returnType->getAnyNominal();
-  assert(returnNominal && "Return type must be a nominal type");
-  if (!returnNominal->getEffectiveMemberwiseInitializer()) {
+  auto retNominal = returnType->getAnyNominal();
+  assert(retNominal && "Return type must be a nominal type");
+  auto *retNominalInit = retNominal->getEffectiveMemberwiseInitializer();
+  if (!retNominalInit) {
     // The implicit memberwise constructor must be explicitly created so that
     // it can called in `Differentiable` methods. Normally, the memberwise
     // constructor is synthesized during SILGen, which is too late.
+    /*
     auto *initDecl = createImplicitConstructor(
-        TC, returnNominal, ImplicitConstructorKind::Memberwise);
-    if (nominal == returnNominal)
-      derived.addMembersToConformanceContext(initDecl);
+        TC, retNominal, ImplicitConstructorKind::Memberwise);
+    */
+    retNominalInit = createMemberwiseInitializer(TC, retNominal);
+    if (nominal == retNominal)
+      derived.addMembersToConformanceContext(retNominalInit);
     else
-      returnNominal->addMember(initDecl);
-    C.addSynthesizedDecl(initDecl);
+      retNominal->addMember(retNominalInit);
+    C.addSynthesizedDecl(retNominalInit);
+  }
+  auto *initMethodType = retNominalInit->getMethodInterfaceType()->castTo<AnyFunctionType>();
+  unsigned diffParamCount = initMethodType->getNumParams();
+  if (!retNominalInit->getAttrs().hasAttribute<DifferentiableAttr>() &&
+      diffParamCount > 0) {
+    llvm::errs() << "FINAL STRETCH HERE\n";
+    auto loc = retNominalInit->getLoc();
+    // TODO: arg labels
+    auto *diffableAttr = DifferentiableAttr::create(
+        C, /*implicit*/ true, loc, loc, {}, None, None, nullptr);
+    auto *ctorType = retNominalInit->getInterfaceType()->castTo<AnyFunctionType>();
+    AutoDiffParameterIndicesBuilder builder(ctorType);
+    for (unsigned i : range(initMethodType->getNumParams())) {
+      auto param = initMethodType->getParams()[i];
+      if (!param.isNonDifferentiable())
+        builder.setParameter(i);
+    }
+    auto indices = builder.build(C);
+    diffableAttr->setParameterIndices(indices);
+    retNominalInit->getAttrs().add(diffableAttr);
+    llvm::errs() << "MADE THIS ATTR\n";
+    diffableAttr->print(llvm::errs(), retNominalInit);
+    assert(!diffableAttr->getParameterIndices()->isEmpty() &&
+           "Must have at least one differentiation parameter");
+    llvm::errs() << "\n";
   }
 
   return funcDecl;
@@ -767,8 +795,8 @@ getOrSynthesizeSingleAssociatedStruct(DerivedConformance &derived,
     if (member->getEffectiveAccess() > AccessLevel::Internal &&
         !member->getAttrs().hasAttribute<DifferentiableAttr>()) {
       auto *diffableAttr = DifferentiableAttr::create(
-          C, /*implicit*/ true, SourceLoc(), SourceLoc(), {}, None,
-          None, nullptr);
+          C, /*implicit*/ true, SourceLoc(), SourceLoc(), {}, None, None,
+          nullptr);
       member->getAttrs().add(diffableAttr);
       auto *getterType =
           member->getGetter()->getInterfaceType()->castTo<AnyFunctionType>();
@@ -786,8 +814,26 @@ getOrSynthesizeSingleAssociatedStruct(DerivedConformance &derived,
   // The implicit memberwise constructor must be explicitly created so that it
   // can called in `AdditiveArithmetic` and `Differentiable` methods. Normally,
   // the memberwise constructor is synthesized during SILGen, which is too late.
+  /*
   auto *initDecl = createImplicitConstructor(
       TC, structDecl, ImplicitConstructorKind::Memberwise);
+  */
+  auto *initDecl = createMemberwiseInitializer(TC, structDecl);
+  if (!initDecl->getAttrs().hasAttribute<DifferentiableAttr>() &&
+      // initDecl->getMethodInterfaceType()->getAs<AnyFunctionType>()->getNumParams() > 0) {
+      !diffProperties.empty()) {
+    auto *diffableAttr = DifferentiableAttr::create(
+        C, /*implicit*/ true, initDecl->getLoc(), initDecl->getSourceRange(), {}, None, None, nullptr);
+    auto *initType = initDecl->getInterfaceType()->castTo<AnyFunctionType>();
+    auto *initMethodType = initDecl->getMethodInterfaceType()->castTo<AnyFunctionType>();
+    AutoDiffParameterIndicesBuilder builder(initType);
+    for (unsigned i : range(initMethodType->getNumParams()))
+      builder.setParameter(i);
+    auto indices = builder.build(C);
+    diffableAttr->setParameterIndices(indices);
+    initDecl->getAttrs().add(diffableAttr);
+  }
+
   structDecl->addMember(initDecl);
   C.addSynthesizedDecl(initDecl);
 
@@ -996,6 +1042,43 @@ deriveDifferentiable_AssociatedStruct(DerivedConformance &derived,
       std::distance(nominal->getStoredProperties().begin(),
                     nominal->getStoredProperties().end());
   bool hasNoDerivativeStoredProp = diffProperties.size() != numStoredProperties;
+
+  // Add `@differentiable` to memberwise initializer, if it has at least one
+  // parameter.
+  auto *initDecl = nominal->getEffectiveMemberwiseInitializer();
+  if (!initDecl) {
+  }
+  if (initDecl) {
+    if (!initDecl->getAttrs().hasAttribute<DifferentiableAttr>() &&
+        !diffProperties.empty()) {
+      // TC.resolveDeclSignature(initDecl);
+      auto *initMethodType =
+          initDecl->getMethodInterfaceType()->castTo<AnyFunctionType>();
+      auto *initType = initDecl->getInterfaceType()->castTo<AnyFunctionType>();
+      auto *diffableAttr = DifferentiableAttr::create(
+          C, /*implicit*/ true, initDecl->getLoc(), initDecl->getSourceRange(),
+          {}, None, None, nullptr);
+      AutoDiffParameterIndicesBuilder builder(initType);
+      // assert(initMethodType->getNumParams() == diffProperties.size());
+      llvm::errs() << "INIT METHOD TYPE PARAM COUNT: " << initMethodType->getNumParams() << ", " << numStoredProperties << "\n";
+      initMethodType->dump();
+      // assert(initMethodType->getNumParams() == numStoredProperties);
+      // Add @nondiff to non-differentiable parameters.
+      // TODO: Move this logic to `createImplicitConstructor`? Then validateDecl.
+      unsigned diffPropIdx = 0;
+      for (auto prop : nominal->getStoredProperties()) {
+        if (prop != diffProperties[diffPropIdx])
+          continue;
+        builder.setParameter(diffPropIdx);
+        ++diffPropIdx;
+        if (diffPropIdx == diffProperties.size())
+          break;
+      }
+      auto indices = builder.build(C);
+      diffableAttr->setParameterIndices(indices);
+      initDecl->getAttrs().add(diffableAttr);
+    }
+  }
 
   // Check conditions for returning `Self`.
   // - No `@noDerivative` stored properties exist.

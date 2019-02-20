@@ -23,6 +23,8 @@ extension DiffReq {
   }
 }
 
+// @_fixed_layout
+// @usableFromInline
 struct Quadratic : DiffReq, Equatable {
   typealias TangentVector = Quadratic
   typealias CotangentVector = Quadratic

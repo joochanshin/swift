@@ -2290,6 +2290,132 @@ ConstructorDecl *swift::createImplicitConstructor(TypeChecker &tc,
   return ctor;
 }
 
+ConstructorDecl *swift::createMemberwiseInitializer(TypeChecker &tc,
+                                                    NominalTypeDecl *decl) {
+  assert(!decl->hasClangNode());
+
+  ASTContext &context = tc.Context;
+  SourceLoc Loc = decl->getLoc();
+  // auto accessLevel = AccessLevel::Internal;
+  auto accessLevel = AccessLevel::Public;
+
+  // Determine the parameter type of the implicit constructor.
+  SmallVector<ParamDecl*, 8> params;
+  assert(isa<StructDecl>(decl) && "Only struct have memberwise constructor");
+
+  // Special logic for types conforming to `Differentiable` protocol.
+  SmallVector<VarDecl *, 4> diffProperties;
+  bool conformsToDifferentiable = false;
+  auto *structDecl = cast<StructDecl>(decl);
+  auto *differentiableProto =
+      tc.getProtocol(Loc, KnownProtocolKind::Differentiable);
+  llvm::errs() << "CREATING MEMBERWISE INIT FOR " << decl->getFullName() << "\n";
+  auto diffPropertiesIt = diffProperties.begin();
+  if (tc.conformsToProtocol(structDecl->getDeclaredInterfaceType(),
+                            differentiableProto, decl,
+                            ConformanceCheckFlags::Used)) {
+    llvm::errs() << "ATTEMPING MEMBERWISE INIT FOR DIFFERENTIABLE TYPE " << decl->getName() << "\n";
+    conformsToDifferentiable = true;
+    getStoredPropertiesForDifferentiation(decl, decl, diffProperties);
+    // diffPropertiesIt = diffProperties.begin();
+  }
+
+  for (auto member : decl->getMembers()) {
+    auto var = dyn_cast<VarDecl>(member);
+    if (!var)
+      continue;
+
+    // Implicit, computed, and static properties are not initialized.
+    // The exception is lazy properties, which due to batch mode we may or
+    // may not have yet finalized, so they may currently be "stored" or
+    // "computed" in the current AST state.
+    if (var->isImplicit() || var->isStatic())
+      continue;
+    tc.validateDecl(var);
+    if (!var->hasStorage() && !var->getAttrs().hasAttribute<LazyAttr>())
+      continue;
+
+    // Initialized 'let' properties have storage, but don't get an argument
+    // to the memberwise initializer since they already have an initial
+    // value that cannot be overridden.
+    if (var->isLet() && var->getParentInitializer())
+      continue;
+
+    accessLevel = std::min(accessLevel, var->getFormalAccess());
+
+    auto varInterfaceType = var->getValueInterfaceType();
+
+    // If var is a lazy property, its value is provided for the underlying
+    // storage.  We thus take an optional of the properties type.  We only
+    // need to do this because the implicit constructor is added before all
+    // the properties are type checked.  Perhaps init() synth should be moved
+    // later.
+    if (var->getAttrs().hasAttribute<LazyAttr>())
+      varInterfaceType = OptionalType::get(varInterfaceType);
+
+    // Create the parameter.
+    auto *arg = new (context)
+    ParamDecl(VarDecl::Specifier::Default, SourceLoc(), Loc,
+              var->getName(), Loc, var->getName(), decl);
+    if (conformsToDifferentiable) {
+      llvm::errs() << "HELLO YES WE CONFORM TO DIFFABLE\n";
+      if (diffPropertiesIt == diffProperties.end() ||
+          var != *diffPropertiesIt)
+        arg->setNonDifferentiable();
+      else
+        ++diffPropertiesIt;
+    }
+
+    arg->setInterfaceType(varInterfaceType);
+    arg->setImplicit();
+
+    params.push_back(arg);
+  }
+
+  auto paramList = ParameterList::create(context, params);
+
+  // Create the constructor.
+  DeclName name(context, DeclBaseName::createConstructor(), paramList);
+  auto *ctor =
+    new (context) ConstructorDecl(name, Loc,
+                                  OTK_None, /*FailabilityLoc=*/SourceLoc(),
+                                  /*Throws=*/false, /*ThrowsLoc=*/SourceLoc(),
+                                  paramList, /*GenericParams=*/nullptr, decl);
+
+  // Mark implicit.
+  ctor->setImplicit();
+  ctor->setAccess(accessLevel);
+
+  ctor->setIsMemberwiseInitializer();
+
+  // Type-check the constructor declaration.
+  tc.validateDecl(ctor);
+
+  // Add `@differentiable` attribute to memberwise initializer.
+  // This must be done after type-checking.
+  if (conformsToDifferentiable && !diffProperties.empty()) {
+    llvm::errs() << "FINAL STRETCH HERE\n";
+    auto *diffableAttr = DifferentiableAttr::create(
+        context, /*implicit*/ true, Loc, Loc, {}, None, None, nullptr);
+    auto *ctorType = ctor->getInterfaceType()->castTo<AnyFunctionType>();
+    auto *initMethodType = ctor->getMethodInterfaceType()->castTo<AnyFunctionType>();
+    AutoDiffParameterIndicesBuilder builder(ctorType);
+    for (unsigned i : range(initMethodType->getNumParams())) {
+      auto param = initMethodType->getParams()[i];
+      if (!param.isNonDifferentiable())
+        builder.setParameter(i);
+    }
+    auto indices = builder.build(context);
+    diffableAttr->setParameterIndices(indices);
+    ctor->getAttrs().add(diffableAttr);
+    llvm::errs() << "MADE THIS ATTR\n";
+    diffableAttr->print(llvm::errs(), ctor);
+    llvm::errs() << "\n";
+  }
+
+  return ctor;
+}
+
 /// Create a stub body that emits a fatal error message.
 static void createStubBody(TypeChecker &tc, ConstructorDecl *ctor) {
   auto unimplementedInitDecl = tc.Context.getUnimplementedInitializerDecl(&tc);

@@ -3627,6 +3627,81 @@ private:
     else
       localAllocBuilder.setInsertionPoint(
           localAllocations.back().getValue()->getDefiningInstruction());
+
+#if false
+    // Check if original is a projection
+    // No need to deallocate adj[source_buffer]
+    if (auto *inst = originalBuffer->getDefiningInstruction()) {
+      auto isProjectingMemory = [](SILInstruction *inst) -> bool {
+        bool hasAddrResults = llvm::any_of(inst->getResults(),
+          [&](SILValue res) { return res->getType().isAddress(); });
+        bool hasAddrOperands = llvm::any_of(inst->getAllOperands(),
+          [&](Operand &op) { return op.get()->getType().isAddress(); });
+        return hasAddrResults && hasAddrOperands;
+      };
+
+      auto loc = inst->getLoc();
+      if (auto *bai = dyn_cast<BeginAccessInst>(inst)) {
+        auto adjSrc = getAdjointBuffer(bai->getOperand());
+        auto newProj = builder.createBeginAccess(loc, adjSrc, bai->getAccessKind(), bai->getEnforcement(), bai->hasNoNestedConflict(), bai->isFromBuiltin());
+        ValueWithCleanup newProjWithCleanup(newProj, makeCleanup(newProj, emitCleanup));
+        setAdjointBuffer(bai, newProjWithCleanup);
+#if false
+      } else if (auto *eai = dyn_cast<EndAccessInst>(inst)) {
+        auto adjSrc = getAdjointBuffer(bai->getOperand());
+        auto newProj = builder.createEndAccess(loc, adjSrc, /*aborted*/ false);
+        setAdjointBuffer(eai, newProjWithCleanup);
+#endif
+      } else if (auto *teai = dyn_cast<TupleElementAddrInst>(inst)) {
+        auto adjSrc = getAdjointBuffer(teai->getOperand());
+        llvm::errs() << "FOUND TEAI!\n";
+        auto newProj = builder.createTupleElementAddr(loc, adjSrc, teai->getFieldNo());
+        ValueWithCleanup newProjWithCleanup(newProj, makeCleanup(newProj, emitCleanup));
+        setAdjointBuffer(teai, newProjWithCleanup);
+      }
+      else if (auto *seai = dyn_cast<StructElementAddrInst>(inst)) {
+        auto &differentiationStrategies =
+          getDifferentiationTask()->getStructExtractDifferentiationStrategies();
+        auto strategy = differentiationStrategies.lookup(seai);
+        switch (strategy) {
+          case StructExtractDifferentiationStrategy::Inactive:
+            assert(!activityInfo.isActive(seai, synthesis.indices));
+            break;
+          case StructExtractDifferentiationStrategy::Fieldwise: {
+            auto structTy = remapType(seai->getOperand()->getType()).getASTType();
+            auto cotangentVectorTy = structTy->getAutoDiffAssociatedVectorSpace(
+                AutoDiffAssociatedVectorSpaceKind::Cotangent,
+                LookUpConformanceInModule(getModule().getSwiftModule()))
+                    ->getType()->getCanonicalType();
+            auto *cotangentVectorDecl =
+                cotangentVectorTy->getStructOrBoundGenericStruct();
+            assert(cotangentVectorDecl);
+            // Find the corresponding field in the cotangent space.
+            VarDecl *cotanField = nullptr;
+            // If the cotangent space is the original struct, then field is the same.
+            if (cotangentVectorDecl == seai->getStructDecl())
+              cotanField = seai->getField();
+            // Otherwise, look up the field by name.
+            else {
+              auto cotanFieldLookup =
+              cotangentVectorDecl->lookupDirect(seai->getField()->getName());
+              assert(cotanFieldLookup.size() == 1);
+              cotanField = cast<VarDecl>(cotanFieldLookup.front());
+            }
+            auto adjSrc = getAdjointBuffer(seai->getOperand());
+            auto newProj = builder.createStructElementAddr(loc, adjSrc, cotanField);
+            ValueWithCleanup newProjWithCleanup(newProj, makeCleanup(newProj, emitCleanup));
+            setAdjointBuffer(seai, newProjWithCleanup);
+            break;
+          }
+          case StructExtractDifferentiationStrategy::Getter: {
+            // TODO: Create new zero buffer
+          }
+        }
+      }
+    }
+#endif
+
     // Allocate local buffer and initialize to zero.
     auto *newBuf = localAllocBuilder.createAllocStack(originalBuffer.getLoc(),
         remapType(getCotangentType(originalBuffer->getType(), getModule())));
@@ -4089,17 +4164,25 @@ public:
         assert(cotangentVectorDecl);
 
         // Accumulate adjoints for the fields of the `struct` operand.
+        // TODO: simplify
         for (auto *field : structDecl->getStoredProperties()) {
+        // for (auto *field : cotangentVectorDecl->getStoredProperties()) {
           // Find the corresponding field in the cotangent space.
           VarDecl *cotanField = nullptr;
           if (cotangentVectorDecl == structDecl)
             cotanField = field;
           // Otherwise, look up the field by name.
           else {
-            auto correspondingFieldLookup =
-            cotangentVectorDecl->lookupDirect(field->getName());
-            assert(correspondingFieldLookup.size() == 1);
-            cotanField = cast<VarDecl>(correspondingFieldLookup.front());
+            auto cotanFieldLookup =
+                cotangentVectorDecl->lookupDirect(field->getName());
+            if (cotanFieldLookup.empty()) {
+              llvm::errs() << "EMPTY COTAN FIELD " << field->getName() << "\n";
+              llvm::errs() << "COTAN TYPE: " << cotangentVectorDecl->getFullName() << "\n";
+              // cotangentVectorDecl->dump();
+              continue;
+            }
+            assert(cotanFieldLookup.size() == 1);
+            cotanField = cast<VarDecl>(cotanFieldLookup.front());
           }
           auto *adjStructElt =
               builder.createStructExtract(loc, adjStruct, cotanField);
@@ -4240,16 +4323,16 @@ public:
           cotangentVectorTy->getStructOrBoundGenericStruct();
       assert(cotangentVectorDecl);
       // Find the corresponding field in the cotangent space.
-      VarDecl *correspondingField = nullptr;
+      VarDecl *cotanField = nullptr;
       // If the cotangent space is the original struct, then field is the same.
       if (cotangentVectorDecl == seai->getStructDecl())
-        correspondingField = seai->getField();
+        cotanField = seai->getField();
       // Otherwise, look up the field by name.
       else {
-        auto correspondingFieldLookup =
+        auto cotanFieldLookup =
         cotangentVectorDecl->lookupDirect(seai->getField()->getName());
-        assert(correspondingFieldLookup.size() == 1);
-        correspondingField = cast<VarDecl>(correspondingFieldLookup.front());
+        assert(cotanFieldLookup.size() == 1);
+        cotanField = cast<VarDecl>(cotanFieldLookup.front());
       }
       // Extract:
       // - Adjoint buffer of `struct_element_addr`: `adj[y]`.
@@ -4258,7 +4341,7 @@ public:
       auto adjElt = getAdjointBuffer(seai);
       auto adjStructElt =
           builder.createStructElementAddr(loc,
-              getAdjointBuffer(seai->getOperand()), correspondingField);
+              getAdjointBuffer(seai->getOperand()), cotanField);
       // Accumulate element address's adjoint buffer into the corresponding
       // element address of `struct_element_addr` operand's adjoint buffer:
       // `adj[x]#key' += adj[y]`.

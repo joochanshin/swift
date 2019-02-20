@@ -3116,12 +3116,16 @@ ModuleFile::getDeclCheckedImpl(DeclID DID) {
     TypeID interfaceTypeID;
     bool isVariadic;
     bool isAutoClosure;
+    // SWIFT_ENABLE_TENSORFLOW
+    bool isNonDifferentiable;
     uint8_t rawDefaultArg;
 
     decls_block::ParamLayout::readRecord(scratch, argNameID, paramNameID,
                                          contextID, rawSpecifier,
                                          interfaceTypeID, isVariadic,
-                                         isAutoClosure, rawDefaultArg);
+                                         // SWIFT_ENABLE_TENSORFLOW
+                                         isAutoClosure, isNonDifferentiable,
+                                         rawDefaultArg);
 
     auto DC = getDeclContext(contextID);
     if (declOrOffset.isComplete())

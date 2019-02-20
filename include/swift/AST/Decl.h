@@ -4891,6 +4891,10 @@ class ParamDecl : public VarDecl {
 
     /// Whether or not this parameter is `@autoclosure`.
     IsAutoClosure = 1 << 1,
+
+    // SWIFT_ENABLE_TENSORFLOW
+    /// Whether or not this parameter is `@nondiff`.
+    IsNonDifferentiable = 1 << 2,
   };
 
   /// The default value, if any, along with flags.
@@ -4995,6 +4999,17 @@ public:
     auto flags = DefaultValueAndFlags.getInt();
     DefaultValueAndFlags.setInt(value ? flags | Flags::IsAutoClosure
                                       : flags - Flags::IsAutoClosure);
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Whether or not this parameter is marked with `@nondiff`.
+  bool isNonDifferentiable() const {
+    return DefaultValueAndFlags.getInt().contains(Flags::IsNonDifferentiable);
+  }
+  void setNonDifferentiable(bool value = true) {
+    auto flags = DefaultValueAndFlags.getInt();
+    DefaultValueAndFlags.setInt(value ? flags | Flags::IsNonDifferentiable
+                                      : flags - Flags::IsNonDifferentiable);
   }
 
   /// Remove the type of this varargs element designator, without the array

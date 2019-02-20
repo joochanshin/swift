@@ -262,6 +262,7 @@ AutoDiffParameterIndices::getLowered(AnyFunctionType *functionType) const {
 static unsigned getNumAutoDiffParameterIndices(AnyFunctionType *fnTy) {
   unsigned numAutoDiffParameterIndices = 0;
   while (fnTy != nullptr) {
+    // NOTE: Add only the parameters without @nondiff?
     numAutoDiffParameterIndices += fnTy->getNumParams();
     fnTy = fnTy->getResult()->getAs<AnyFunctionType>();
   }

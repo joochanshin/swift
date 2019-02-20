@@ -3090,6 +3090,12 @@ ConstructorDecl *NominalTypeDecl::getEffectiveMemberwiseInitializer() {
     unsigned numStoredProperties =
         std::distance(getStoredProperties().begin(),
                       getStoredProperties().end());
+    if (!ctorDecl->hasInterfaceType()) {
+      llvm::errs() << "WOW WE HAVE A HUGE PROBLEM! NO MEMBER INIT TYPE FOR TYPE " << getName() << "\n";
+      ctorDecl->dump();
+    }
+    if (!ctorDecl->hasInterfaceType())
+      return false;
     auto ctorType =
         ctorDecl->getMethodInterfaceType()->castTo<AnyFunctionType>();
     // Return false if stored property/initializer parameter count do not match.

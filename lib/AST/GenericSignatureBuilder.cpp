@@ -3508,6 +3508,7 @@ void GenericSignatureBuilder::Implementation::minimizeRewriteTreeRhs(
 
       // We have a canonical replacement path. Determine its encoding and
       // perform the replacement.
+      rhs.dump();
       ++NumRewriteRhsSimplified;
 
       // Determine replacement path, which might be relative to the anchor.
@@ -6016,6 +6017,13 @@ Constraint<T> GenericSignatureBuilder::checkConstraintList(
   auto representativeConstraint =
     findRepresentativeConstraint<T>(constraints, isSuitableRepresentative);
 
+  if (representativeConstraint) {
+    llvm::errs() << "REPRESENTATIVE CONSTRAINT:\n";
+    representativeConstraint->source->dump();
+  } else {
+    llvm::errs() << "NO REPRESENTATIVE CONSTRAINT\n";
+  }
+
   // Local function to provide a note describing the representative constraint.
   auto noteRepresentativeConstraint = [&] {
     if (representativeConstraint->source->getLoc().isInvalid()) return;
@@ -6037,6 +6045,8 @@ Constraint<T> GenericSignatureBuilder::checkConstraintList(
 
     switch (checkConstraint(constraint)) {
     case ConstraintRelation::Unrelated:
+      llvm::errs() << "UNRELATED\n";
+      constraint.source->dump();
       continue;
 
     case ConstraintRelation::Conflicting: {
@@ -6102,6 +6112,11 @@ Constraint<T> GenericSignatureBuilder::checkConstraintList(
     case ConstraintRelation::Redundant:
       // If this requirement is not derived or inferred (but has a useful
       // location) complain that it is redundant.
+        llvm::errs() << "REDUNDANT: "<<
+          constraint.source->isDerivedRequirement() << " " <<
+          constraint.source->shouldDiagnoseRedundancy(true) << " " <<
+          (bool)representativeConstraint << " " <<
+          representativeConstraint->source->shouldDiagnoseRedundancy(false) << "\n";
       Impl->HadAnyRedundantConstraints = true;
       if (constraint.source->shouldDiagnoseRedundancy(true) &&
           representativeConstraint &&
@@ -6111,6 +6126,9 @@ Constraint<T> GenericSignatureBuilder::checkConstraintList(
                        constraint.getSubjectDependentType(genericParams),
                        diagValue(constraint.value));
 
+        llvm::errs() << "CONFIRMED REDUNDANT\n";
+        representativeConstraint->source->dump();
+        constraint.source->dump();
         noteRepresentativeConstraint();
       }
       break;
@@ -6184,6 +6202,14 @@ void GenericSignatureBuilder::checkConformanceConstraints(
         // conform to itself, don't complain here.
         auto source = constraint.source;
         auto rootSource = source->getRoot();
+
+        llvm::errs() << "SOURCE: " << source->getAffectedType() << "\n";
+        source->dump();
+        llvm::errs() << "ROOT SOURCE: " << rootSource->getRootType() << "\n";
+        rootSource->dump();
+        llvm::errs() << "PROTO: " << proto->getFullName() << ", ROOT PROTO: " << rootSource->getProtocolDecl()->getFullName() << "\n";
+        llvm::errs() << "SAME EQUIV CLASS? " << areInSameEquivalenceClass(rootSource->getRootType(), source->getAffectedType()) << "\n";
+
         if (rootSource->kind == RequirementSource::RequirementSignatureSelf &&
             source != rootSource &&
             proto == rootSource->getProtocolDecl() &&
@@ -6197,6 +6223,8 @@ void GenericSignatureBuilder::checkConformanceConstraints(
         // conformance.
         if (isRedundantlyInheritableObjCProtocol(proto, constraint.source))
           return ConstraintRelation::Unrelated;
+
+        llvm::errs() << "REDUNDANT!\n";
 
         return ConstraintRelation::Redundant;
       },

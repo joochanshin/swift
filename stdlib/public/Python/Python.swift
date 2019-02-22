@@ -701,24 +701,8 @@ public struct PythonInterface {
 }
 
 //===----------------------------------------------------------------------===//
-// Helpers for Python slice and tuple types
+// Helpers for Python tuple types
 //===----------------------------------------------------------------------===//
-
-private func pySlice(_ start: PythonConvertible?,
-                     _ stop: PythonConvertible?,
-                     _ step: PythonConvertible? = nil) -> OwnedPyObjectPointer {
-  let startP = start?.ownedPyObject
-  let stopP = stop?.ownedPyObject
-  let stepP = step?.ownedPyObject
-
-  // `PySlice_New` takes each operand at +0, and returns +1.
-  let result = PySlice_New(startP, stopP, stepP)!
-
-  Py_DecRef(startP)
-  Py_DecRef(stopP)
-  Py_DecRef(stepP) // `Py_DecRef` is `nil` safe.
-  return result
-}
 
 // Create a Python tuple object with the specified elements.
 private func pyTuple<T : Collection>(_ vals: T) -> OwnedPyObjectPointer
@@ -733,23 +717,6 @@ private func pyTuple<T : Collection>(_ vals: T) -> OwnedPyObjectPointer
 }
 
 public extension PythonObject {
-  // FIXME: This should be subsumed by Swift ranges and strides. Python has a
-  // very extravagant model though, it isn't clear how best to represent this
-  // in Swift.
-  //
-  // Initial thoughts are that we should sugar the obvious cases (so you can
-  // use 0...100 in a subscript) but then provide this method for the fully
-  // general case.
-  //
-  // We also need conditional conformances to allow range if PythonObject is to
-  // be a Slice. We can probably get away with a bunch of overloads for now
-  // given that slices are typically used with concrete operands.
-  init(sliceStart start: PythonConvertible?,
-                  stop: PythonConvertible?,
-                  step: PythonConvertible? = nil) {
-    self.init(owning: pySlice(start, stop, step))
-  }
-
   // Tuples require explicit support because tuple types cannot conform to
   // protocols.
   init(tupleOf elements: PythonConvertible...) {

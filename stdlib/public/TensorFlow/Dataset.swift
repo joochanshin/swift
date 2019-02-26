@@ -195,9 +195,15 @@ extension DatasetIterator : IteratorProtocol {
 
 /// A 2-tuple-like struct that conforms to TensorGroup that represents the 
 /// result type of a zip operation between two datasets.
+@_fixed_layout
 public struct ZippedTensors<T: TensorGroup, U: TensorGroup> : TensorGroup {
   public var first: T
   public var second: U
+
+  public init(_ first: T, _ second: U) {
+    self.first = first
+    self.second = second
+  }
 }
 
 // TODO(SR-9156): This does not work in graph mode.

@@ -61,6 +61,7 @@ public protocol ShapedVectorNumeric : VectorNumeric {
 ///
 /// - Note: Do not use this protocol directly. Use `Differentiable` instead.
 ///
+/// :nodoc:
 // TODO(TF-213): Merge this into `Differentiable` when the generic signature
 // minimization bug (SR-9595) is fixed.
 public protocol __Differentiable {
@@ -71,7 +72,7 @@ public protocol __Differentiable {
   /// The type of all differentiable variables in this type.
   associatedtype AllDifferentiableVariables : Differentiable
 
-  /// All differentiable variables in this type.
+  /// All differentiable variables of this value.
   var allDifferentiableVariables: AllDifferentiableVariables { get set }
 
   /// Returns `self` moved along the value space towards the given tangent
@@ -88,6 +89,7 @@ public protocol __Differentiable {
 ///
 /// - Note: Do not use this protocol directly. Use `Differentiable` instead.
 ///
+/// :nodoc:
 // TODO(TF-213): Merge this into `Differentiable` when the generic signature
 // minimization bug (SR-9595) is fixed.
 public protocol _Differentiable : __Differentiable
@@ -96,6 +98,8 @@ public protocol _Differentiable : __Differentiable
 
 /// A type that mathematically represents a differentiable manifold whose
 /// tangent spaces are finite-dimensional.
+///
+/// :nodoc:
 public protocol Differentiable : _Differentiable
   where TangentVector.TangentVector == TangentVector,
         TangentVector.CotangentVector == CotangentVector,

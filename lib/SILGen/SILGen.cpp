@@ -834,6 +834,29 @@ void SILGenModule::emitFunction(FuncDecl *fd) {
   }
 }
 
+void SILGenModule::emitCallMethod(CallDecl *cd) {
+  SILDeclRef::Loc decl = cd;
+
+  emitAbstractFuncDecl(cd);
+
+  // FIXME: need `hasSILBody` check.
+  // if (hasSILBody(cd)) {
+    FrontendStatsTracer Tracer(getASTContext().Stats, "SILGen-calldecl", cd);
+    PrettyStackTraceDecl stackTrace("emitting SIL for", cd);
+
+    SILDeclRef constant(decl);
+
+    bool ForCoverageMapping = doesASTRequireProfiling(M, cd);
+
+    emitOrDelayFunction(*this, constant, [this,constant,cd](SILFunction *f){
+      preEmitFunction(constant, cd, f, cd);
+      PrettyStackTraceSILFunction X("silgen emitFunction", f);
+      SILGenFunction(*this, *f, cd).emitCallMethod(cd);
+      postEmitFunction(constant, f);
+    }, /*forceEmission=*/ForCoverageMapping);
+  // }
+}
+
 void SILGenModule::addGlobalVariable(VarDecl *global) {
   // We create SILGlobalVariable here.
   getSILGlobalVariable(global, ForDefinition);
@@ -1197,6 +1220,24 @@ void SILGenModule::emitObjCMethodThunk(FuncDecl *method) {
 
   // ObjC entry points are always externally usable, so can't be delay-emitted.
 
+  SILFunction *f = getFunction(thunk, ForDefinition);
+  preEmitFunction(thunk, method, f, method);
+  PrettyStackTraceSILFunction X("silgen emitObjCMethodThunk", f);
+  f->setBare(IsBare);
+  f->setThunk(IsThunk);
+  SILGenFunction(*this, *f, method).emitNativeToForeignThunk(thunk);
+  postEmitFunction(thunk, f);
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+void SILGenModule::emitObjCMethodThunk(CallDecl *method) {
+  auto thunk = SILDeclRef(method).asForeign();
+
+  // Don't emit the thunk if it already exists.
+  if (hasFunction(thunk))
+    return;
+
+  // ObjC entry points are always externally usable, so can't be delay-emitted.
   SILFunction *f = getFunction(thunk, ForDefinition);
   preEmitFunction(thunk, method, f, method);
   PrettyStackTraceSILFunction X("silgen emitObjCMethodThunk", f);

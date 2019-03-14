@@ -405,6 +405,23 @@ void SILGenFunction::emitFunction(FuncDecl *fd) {
   mergeCleanupBlocks();
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+void SILGenFunction::emitCallMethod(CallDecl *cd) {
+  MagicFunctionName = SILGenModule::getMagicFunctionName(cd);
+
+  emitProlog(cd, cd->getParameters(), cd->getImplicitSelfDecl(),
+             cd->getResultInterfaceType(), cd->hasThrows());
+  Type resultTy = cd->mapTypeIntoContext(cd->getResultInterfaceType());
+  prepareEpilog(resultTy, cd->hasThrows(), CleanupLocation(cd));
+
+  emitProfilerIncrement(cd->getBody());
+  emitStmt(cd->getBody());
+
+  emitEpilog(cd);
+
+  mergeCleanupBlocks();
+}
+
 void SILGenFunction::emitClosure(AbstractClosureExpr *ace) {
   MagicFunctionName = SILGenModule::getMagicFunctionName(ace);
 

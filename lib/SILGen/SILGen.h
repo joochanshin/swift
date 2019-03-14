@@ -203,6 +203,8 @@ public:
   void visitTypeAliasDecl(TypeAliasDecl *d) {}
   void visitAbstractTypeParamDecl(AbstractTypeParamDecl *d) {}
   void visitSubscriptDecl(SubscriptDecl *d) {}
+  // SWIFT_ENABLE_TENSORFLOW
+  void visitCallDecl(CallDecl *d) {}
   void visitConstructorDecl(ConstructorDecl *d) {}
   void visitDestructorDecl(DestructorDecl *d) {}
   void visitModuleDecl(ModuleDecl *d) { }
@@ -229,6 +231,13 @@ public:
   /// curried functions, curried entry point Functions are also generated and
   /// added to the current SILModule.
   void emitFunction(FuncDecl *fd);
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Generates code for the given CallDecl and adds the
+  /// SILFunction to the current SILModule under the name SILDeclRef(decl). For
+  /// curried functions, curried entry point Functions are also generated and
+  /// added to the current SILModule.
+  void emitCallMethod(CallDecl *cd);
   
   /// \brief Generates code for the given closure expression and adds the
   /// SILFunction to the current SILModule under the name SILDeclRef(ce).
@@ -284,6 +293,10 @@ public:
 
   /// Emit the ObjC-compatible entry point for a method.
   void emitObjCMethodThunk(FuncDecl *method);
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Emit the ObjC-compatible entry point for a callable method.
+  void emitObjCMethodThunk(CallDecl *method);
   
   /// Emit the ObjC-compatible getter and setter for a property.
   void emitObjCPropertyMethodThunks(AbstractStorageDecl *prop);
@@ -324,6 +337,10 @@ public:
   /// True if the given function requires an entry point for ObjC method
   /// dispatch.
   bool requiresObjCMethodEntryPoint(FuncDecl *method);
+
+  /// True if the given callable method requires an entry point for ObjC method
+  /// dispatch.
+  bool requiresObjCMethodEntryPoint(CallDecl *method);
 
   /// True if the given constructor requires an entry point for ObjC method
   /// dispatch.

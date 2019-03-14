@@ -353,6 +353,10 @@ static void doDynamicLookup(VisibleDeclConsumer &Consumer,
         break;
       }
 
+      // SWIFT_ENABLE_TENSORFLOW
+      case DeclKind::Call:
+        return;
+
       case DeclKind::Subscript: {
         auto Signature = D->getInterfaceType()->getCanonicalType();
         if (!SubscriptsReported.insert(Signature).second)

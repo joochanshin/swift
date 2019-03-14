@@ -162,6 +162,11 @@ bool SILGenModule::requiresObjCMethodEntryPoint(FuncDecl *method) {
   return method->isObjC() || method->getAttrs().hasAttribute<IBActionAttr>();
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+bool SILGenModule::requiresObjCMethodEntryPoint(CallDecl *method) {
+  return method->isObjC();
+}
+
 bool SILGenModule::requiresObjCMethodEntryPoint(ConstructorDecl *constructor) {
   return constructor->isObjC();
 }
@@ -878,6 +883,13 @@ public:
         !isa<ProtocolDecl>(fd->getDeclContext()))
       SGM.emitObjCMethodThunk(fd);
   }
+  void visitCallDecl(CallDecl *cd) {
+    SGM.emitCallMethod(cd);
+    // FIXME: Default implementations in protocols.
+    if (SGM.requiresObjCMethodEntryPoint(cd) &&
+        !isa<ProtocolDecl>(cd->getDeclContext()))
+      SGM.emitObjCMethodThunk(cd);
+  }
   void visitConstructorDecl(ConstructorDecl *cd) {
     SGM.emitConstructor(cd);
 
@@ -974,6 +986,12 @@ public:
     SGM.emitFunction(fd);
     if (SGM.requiresObjCMethodEntryPoint(fd))
       SGM.emitObjCMethodThunk(fd);
+  }
+  // SWIFT_ENABLE_TENSORFLOW
+  void visitCallDecl(CallDecl *cd) {
+    SGM.emitCallMethod(cd);
+    if (SGM.requiresObjCMethodEntryPoint(cd))
+      SGM.emitObjCMethodThunk(cd);
   }
   void visitConstructorDecl(ConstructorDecl *cd) {
     SGM.emitConstructor(cd);

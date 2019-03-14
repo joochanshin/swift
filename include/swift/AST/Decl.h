@@ -139,6 +139,8 @@ enum class DescriptiveDeclKind : uint8_t {
   Subscript,
   Constructor,
   Destructor,
+  // SWIFT_ENABLE_TENSORFLOW
+  Call,
   LocalFunction,
   GlobalFunction,
   OperatorFunction,
@@ -6288,6 +6290,61 @@ public:
 
   static bool classof(const Decl *D) {
     return D->getKind() == DeclKind::Destructor;
+  }
+  static bool classof(const AbstractFunctionDecl *D) {
+    return classof(static_cast<const Decl*>(D));
+  }
+  static bool classof(const DeclContext *DC) {
+    if (auto D = DC->getAsDecl())
+      return classof(D);
+    return false;
+  }
+};
+
+// SWIFT_ENABLE_TENSORFLOW
+/// CallDecl - Declares a call method for a type. For example:
+///
+/// \code
+/// struct AddOperation {
+///   call(x: Int, y: Int) -> Int {
+///      return x + y
+///   }
+/// }
+/// \endcode
+class CallDecl : public AbstractFunctionDecl {
+  ParamDecl *SelfDecl;
+
+  /// The interface type of the call declaration.
+  // Type InterfaceType;
+
+  TypeLoc ReturnType;
+
+public:
+  CallDecl(DeclName Name, SourceLoc CallLoc, 
+           bool Throws, SourceLoc ThrowsLoc,
+           ParameterList *BodyParams,
+           GenericParamList *GenericParams, 
+           DeclContext *Parent);
+
+  // SourceLoc getCallLoc() const { return getNameLoc(); }
+  SourceLoc getStartLoc() const { return getNameLoc(); }
+  SourceRange getSourceRange() const;
+
+  /// \brief Get the interface type of the constructed object.
+  Type getResultInterfaceType() const;
+
+  /*
+  /// Get the interface type of the initializing constructor.
+  Type getInitializerInterfaceType();
+  */
+
+  TypeLoc &getBodyResultTypeLoc() { return ReturnType; }
+  const TypeLoc &getBodyResultTypeLoc() const { return ReturnType; }
+
+  ParamDecl **getImplicitSelfDeclStorage() { return &SelfDecl; }
+
+  static bool classof(const Decl *D) {
+    return D->getKind() == DeclKind::Call;
   }
   static bool classof(const AbstractFunctionDecl *D) {
     return classof(static_cast<const Decl*>(D));

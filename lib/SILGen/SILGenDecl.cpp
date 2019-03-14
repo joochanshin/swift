@@ -1450,6 +1450,8 @@ void SILGenModule::emitExternalDefinition(Decl *d) {
   case DeclKind::Param:
   case DeclKind::Import:
   case DeclKind::Subscript:
+  // SWIFT_ENABLE_TENSORFLOW
+  case DeclKind::Call:
   case DeclKind::Destructor:
   case DeclKind::InfixOperator:
   case DeclKind::PrefixOperator:

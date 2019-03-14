@@ -561,6 +561,9 @@ public:
   
   /// \brief Generates code for a FuncDecl.
   void emitFunction(FuncDecl *fd);
+  // SWIFT_ENABLE_TENSORFLOW
+  /// \brief Generates code for a CallDecl.
+  void emitCallMethod(CallDecl *cd);
   /// \brief Emits code for a ClosureExpr.
   void emitClosure(AbstractClosureExpr *ce);
   /// Generates code for a class destroying destructor. This

@@ -308,6 +308,8 @@ void ProvidesEmitter::emitTopLevelDecl(const Decl *const D,
   case DeclKind::AssociatedType:
   case DeclKind::Param:
   case DeclKind::Subscript:
+  // SWIFT_ENABLE_TENSORFLOW
+  case DeclKind::Call:
   case DeclKind::Constructor:
   case DeclKind::Destructor:
   case DeclKind::EnumElement:

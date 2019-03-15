@@ -153,6 +153,8 @@ DescriptiveDeclKind Decl::getDescriptiveKind() const {
   TRIVIAL_KIND(Subscript);
   TRIVIAL_KIND(Constructor);
   TRIVIAL_KIND(Destructor);
+  // SWIFT_ENABLE_TENSORFLOW
+  TRIVIAL_KIND(Call);
   TRIVIAL_KIND(EnumElement);
   TRIVIAL_KIND(Param);
   TRIVIAL_KIND(Module);
@@ -281,6 +283,8 @@ StringRef Decl::getDescriptiveKindName(DescriptiveDeclKind K) {
   ENTRY(Subscript, "subscript");
   ENTRY(Constructor, "initializer");
   ENTRY(Destructor, "deinitializer");
+  // SWIFT_ENABLE_TENSORFLOW
+  ENTRY(Call, "call method");
   ENTRY(LocalFunction, "local function");
   ENTRY(GlobalFunction, "global function");
   ENTRY(OperatorFunction, "operator function");
@@ -861,6 +865,8 @@ ImportKind ImportDecl::getBestImportKind(const ValueDecl *VD) {
   case DeclKind::AssociatedType:
   case DeclKind::Constructor:
   case DeclKind::Destructor:
+  // SWIFT_ENABLE_TENSORFLOW
+  case DeclKind::Call:
   case DeclKind::GenericTypeParam:
   case DeclKind::Subscript:
   case DeclKind::EnumElement:
@@ -1900,6 +1906,11 @@ bool ValueDecl::isInstanceMember() const {
   case DeclKind::Param:
     // enum elements and function parameters are not instance members.
     return false;
+
+  // SWIFT_ENABLE_TENSORFLOW
+  case DeclKind::Call:
+    // Call methods are always instance members.
+    return true;
 
   case DeclKind::Subscript:
     // Subscripts are always instance members.
@@ -5863,6 +5874,45 @@ bool FuncDecl::isBinaryOperator() const {
   return params->size() == 2 &&
     !params->get(0)->isVariadic() &&
     !params->get(1)->isVariadic();
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+CallDecl *CallDecl::createImpl(ASTContext &ctx, SourceLoc declLoc,
+                               SourceLoc staticLoc,
+                               StaticSpellingKind staticSpelling, bool throws,
+                               SourceLoc throwsLoc,
+                               GenericParamList *genericParams,
+                               DeclContext *parent, ClangNode clangNode) {
+  bool hasImplicitSelfDecl = parent->isTypeContext();
+  size_t size = sizeof(CallDecl) + (hasImplicitSelfDecl
+                                        ? sizeof(ParamDecl *)
+                                        : 0);
+  void *buffer =
+      allocateMemoryForDecl<CallDecl>(ctx, size, !clangNode.isNull());
+  auto D = ::new (buffer)
+      CallDecl(declLoc, staticLoc, staticSpelling, throws, throwsLoc,
+               hasImplicitSelfDecl, genericParams, parent);
+  if (clangNode)
+    D->setClangNode(clangNode);
+  if (hasImplicitSelfDecl)
+    *D->getImplicitSelfDeclStorage() = nullptr;
+
+  return D;
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+CallDecl *CallDecl::create(ASTContext &ctx, SourceLoc declLoc,
+                           SourceLoc staticLoc,
+                           StaticSpellingKind staticSpelling, bool throws,
+                           SourceLoc throwsLoc, GenericParamList *genericParams,
+                           ParameterList * bodyParams, TypeLoc fnRetType,
+                           DeclContext *parent, ClangNode clangNode) {
+  auto *D = CallDecl::createImpl(
+      ctx, declLoc, staticLoc, staticSpelling, throws, throwsLoc, genericParams,
+      parent, clangNode);
+  D->setParameters(bodyParams);
+  D->getBodyResultTypeLoc() = fnRetType;
+  return D;
 }
 
 ConstructorDecl::ConstructorDecl(DeclName Name, SourceLoc ConstructorLoc,

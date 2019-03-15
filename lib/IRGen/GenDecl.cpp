@@ -210,6 +210,35 @@ public:
   }
 
   // Can't be added in an extension.
+  void visitCallDecl(CallDecl *method) {
+    if (!requiresObjCMethodDescriptor(method)) return;
+
+    // Don't emit getters/setters for @NSManaged methods.
+    if (method->getAttrs().hasAttribute<NSManagedAttr>())
+      return;
+
+    llvm::Constant *name, *imp, *types;
+    emitObjCMethodDescriptorParts(IGM, method,
+                                  /*extended*/false,
+                                  /*concrete*/true,
+                                  name, types, imp);
+
+    // When generating JIT'd code, we need to call sel_registerName() to force
+    // the runtime to unique the selector.
+    llvm::Value *sel = Builder.CreateCall(IGM.getObjCSelRegisterNameFn(),
+                                          name);
+
+    llvm::Value *args[] = {
+      method->isStatic() ? metaclassMetadata : classMetadata,
+      sel,
+      imp,
+      types
+    };
+
+    Builder.CreateCall(class_replaceMethod, args);
+  }
+
+  // Can't be added in an extension.
   void visitDestructorDecl(DestructorDecl *dtor) {}
 
   void visitConstructorDecl(ConstructorDecl *constructor) {
@@ -1719,6 +1748,10 @@ void IRGenModule::emitGlobalDecl(Decl *D) {
 
   case DeclKind::Subscript:
     llvm_unreachable("there are no global subscript operations");
+
+  // SWIFT_ENABLE_TENSORFLOW
+  case DeclKind::Call:
+    llvm_unreachable("there are no global callable methods");
       
   case DeclKind::EnumCase:
   case DeclKind::EnumElement:
@@ -3668,6 +3701,8 @@ void IRGenModule::emitNestedTypeDecls(DeclRange members) {
 
     case DeclKind::Var:
     case DeclKind::Subscript:
+    // SWIFT_ENABLE_TENSORFLOW
+    case DeclKind::Call:
     case DeclKind::PatternBinding:
     case DeclKind::Func:
     case DeclKind::Accessor:

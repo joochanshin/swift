@@ -985,6 +985,13 @@ void Remangler::mangleFunction(Node *node, EntityContext &ctx) {
   mangleNamedAndTypedEntity(node, 'F', "", ctx);
 }
 
+void Remangler::mangleCallableMethod(Node *node, EntityContext &ctx) {
+  // TODO: FIX THIS
+  Out << 'F';
+  mangleEntityContext(node->getChild(0), ctx);
+  Out << 'F';
+}
+
 void Remangler::mangleVariable(Node *node, EntityContext &ctx) {
   mangleNamedAndTypedEntity(node, 'v', "", ctx);
 }

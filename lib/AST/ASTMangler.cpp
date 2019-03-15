@@ -2239,6 +2239,34 @@ void ASTMangler::appendEntity(const ValueDecl *decl) {
         getCodeForAccessorKind(accessor->getAccessorKind()),
         accessor->getStorage(), accessor->isStatic());
   }
+  // SWIFT_ENABLE_TENSORFLOW
+  // Handle callable methods specially, they are mangled as modifiers on the
+  // accessed declaration.
+  if (auto callMethod = dyn_cast<CallDecl>(decl)) {
+    // appendEntity(callMethod, "fF", callMethod->isStatic());
+    appendContextOf(decl);
+    bindGenericParameters(decl->getDeclContext());
+    appendDeclType(decl);
+    StringRef privateDiscriminator = getPrivateDiscriminatorIfNecessary(decl);
+    if (!privateDiscriminator.empty()) {
+      appendIdentifier(privateDiscriminator);
+      appendOperator("Ll");
+    }
+    appendOperator("fF");
+    if (callMethod->isStatic())
+      appendOperator("Z");
+    /*
+    auto accessorKindCode = "c";
+    appendOperator("i", accessorKindCode);
+    */
+    return;
+
+    /*
+    return appendAccessorEntity(
+        getCodeForAccessorKind(callMethod->getAccessorKind()),
+        callMethod->getStorage(), callMethod->isStatic());
+    */
+  }
 
   if (auto storageDecl = dyn_cast<AbstractStorageDecl>(decl))
     return appendAccessorEntity("p", storageDecl, decl->isStatic());

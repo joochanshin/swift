@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "llvm/Support/raw_ostream.h"
 #include "swift/Demangling/Demangler.h"
 #include "swift/Demangling/ManglingUtils.h"
 #include "swift/Demangling/ManglingMacros.h"
@@ -591,7 +592,10 @@ NodePointer Demangler::demangleSymbolicReference(unsigned char rawKind,
 }
 
 NodePointer Demangler::demangleOperator() {
-  switch (char c = nextChar()) {
+  char c = nextChar();
+  // llvm::errs() << "DEMANGLING OPERATOR: '" << c << "', FULL TEXT: " << Text << "\n";
+  switch (c) {
+  // switch (char c = nextChar()) {
     case '\1':
     case '\2':
     case '\3':
@@ -2704,6 +2708,9 @@ NodePointer Demangler::demangleFunctionEntity() {
       Args = TypeAndMaybePrivateName; Kind = Node::Kind::Allocator; break;
     case 'c':
       Args = TypeAndMaybePrivateName; Kind = Node::Kind::Constructor; break;
+    // SWIFT_ENABLE_TENSORFLOW
+    case 'F':
+      Args = TypeAndMaybePrivateName; Kind = Node::Kind::CallableMethod; break;
     case 'U': Args = TypeAndIndex; Kind = Node::Kind::ExplicitClosure; break;
     case 'u': Args = TypeAndIndex; Kind = Node::Kind::ImplicitClosure; break;
     case 'A': Args = Index; Kind = Node::Kind::DefaultArgumentInitializer; break;
@@ -2745,6 +2752,8 @@ NodePointer Demangler::demangleFunctionEntity() {
       Entity = addChild(Entity, ParamType);
       break;
   }
+  // llvm::errs() << "DUMPING FUNCTION ENTITY\n";
+  // Entity->dump();
   return Entity;
 }
 

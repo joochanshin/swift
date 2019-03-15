@@ -120,6 +120,8 @@ static void toDisplayString(CodeCompletionResult *Result,
           continue;
 
         case CodeCompletionDeclKind::Subscript:
+        // SWIFT_ENABLE_TENSORFLOW
+        case CodeCompletionDeclKind::CallableMethod:
         case CodeCompletionDeclKind::StaticMethod:
         case CodeCompletionDeclKind::InstanceMethod:
         case CodeCompletionDeclKind::PrefixOperatorFunction:

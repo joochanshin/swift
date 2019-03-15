@@ -3071,6 +3071,14 @@ Parser::parseDecl(ParseDeclOptions Flags,
     StaticLoc = SourceLoc(); // we handled static if present.
     MayNeedOverrideCompletion = true;
     break;
+  // SWIFT_ENABLE_TENSORFLOW
+  case tok::kw_call:
+    // Collect all modifiers into a modifier list.
+    DeclParsingContext.setCreateSyntax(SyntaxKind::CallDecl);
+    DeclResult = parseDeclCall(StaticLoc, StaticSpelling, Flags, Attributes);
+    StaticLoc = SourceLoc(); // we handled static if present.
+    MayNeedOverrideCompletion = true;
+    break;
   case tok::kw_subscript: {
     DeclParsingContext.setCreateSyntax(SyntaxKind::SubscriptDecl);
     if (StaticLoc.isValid()) {
@@ -5778,6 +5786,189 @@ Parser::parseDeclFunc(SourceLoc StaticLoc, StaticSpellingKind StaticSpelling,
 
   addToScope(FD);
   return DCC.fixupParserResult(FD);
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+/// \brief Parse a 'func' declaration, returning null on error.  The caller
+/// handles this case and does recovery as appropriate.
+///
+/// \verbatim
+///   decl-call:
+///     attribute-list? ('static' | 'class')? 'mutating'? 'call' 
+///               generic-params? func-signature where-clause?
+///               stmt-brace?
+/// \endverbatim
+///
+/// \note The caller of this method must ensure that the next token is 'func'.
+ParserResult<CallDecl>
+Parser::parseDeclCall(SourceLoc StaticLoc, StaticSpellingKind StaticSpelling,
+                      ParseDeclOptions Flags, DeclAttributes &Attributes) {
+  assert(StaticLoc.isInvalid() || StaticSpelling != StaticSpellingKind::None);
+
+  if (StaticLoc.isValid()) {
+    if (!Flags.contains(PD_HasContainerType)) {
+      // Reject static functions at global scope.
+      diagnose(Tok, diag::static_func_decl_global_scope, StaticSpelling)
+          .fixItRemove(StaticLoc);
+      StaticLoc = SourceLoc();
+      StaticSpelling = StaticSpellingKind::None;
+    } else if (Flags.contains(PD_InStruct) || Flags.contains(PD_InEnum) ||
+               Flags.contains(PD_InProtocol)) {
+      if (StaticSpelling == StaticSpellingKind::KeywordClass) {
+        diagnose(Tok, diag::class_func_not_in_class,
+                 Flags.contains(PD_InProtocol))
+            .fixItReplace(StaticLoc, "static");
+
+        StaticSpelling = StaticSpellingKind::KeywordStatic;
+      }
+    }
+  }
+
+  SourceLoc FuncLoc = consumeToken(tok::kw_call);
+
+  // Parse function name.
+  Identifier SimpleName;
+  SourceLoc NameLoc;
+/*
+  if (Tok.isAnyOperator() || Tok.isAny(tok::exclaim_postfix, tok::amp_prefix)) {
+    // If the name is an operator token that ends in '<' and the following token
+    // is an identifier, split the '<' off as a separate token. This allows
+    // things like 'func ==<T>(x:T, y:T) {}' to parse as '==' with generic type
+    // variable '<T>' as expected.
+    auto NameStr = Tok.getText();
+    if (NameStr.size() > 1 && NameStr.back() == '<' &&
+        peekToken().is(tok::identifier)) {
+      NameStr = NameStr.slice(0, NameStr.size() - 1);
+    }
+    SimpleName = Context.getIdentifier(NameStr);
+    NameLoc = consumeStartingCharacterOfCurrentToken(tok::oper_binary_spaced,
+                                                     NameStr.size());
+    // Within a protocol, recover from a missing 'static'.
+    if (Flags & PD_InProtocol) {
+      switch (StaticSpelling) {
+      case StaticSpellingKind::None: {
+        diagnose(NameLoc, diag::operator_static_in_protocol, SimpleName.str())
+            .fixItInsert(FuncLoc, "static ");
+        StaticSpelling = StaticSpellingKind::KeywordStatic;
+        break;
+      }
+
+      case StaticSpellingKind::KeywordStatic:
+        // Okay, this is correct.
+        break;
+
+      case StaticSpellingKind::KeywordClass:
+        llvm_unreachable("should have been fixed above");
+      }
+    }
+  } else {
+    // This non-operator path is quite accepting of what tokens might be a name,
+    // because we're aggressive about recovering/providing good diagnostics for
+    // beginners.
+    auto NameStatus = parseIdentifierDeclName(
+        *this, SimpleName, NameLoc, "function", tok::l_paren, tok::arrow,
+        tok::l_brace, TokenProperty::StartsWithLess);
+    if (NameStatus.isError())
+      return nullptr;
+  }
+
+  DebuggerContextChange DCC(*this, SimpleName, DeclKind::Func);
+*/
+  DebuggerContextChange DCC(*this, SimpleName, DeclKind::Call);
+
+  // Parse the generic-params, if present.
+  Optional<Scope> GenericsScope;
+  GenericsScope.emplace(this, ScopeKind::Generics);
+  GenericParamList *GenericParams;
+  bool SignatureHasCodeCompletion = false;
+  auto GenericParamResult = maybeParseGenericParams();
+  GenericParams = GenericParamResult.getPtrOrNull();
+  SignatureHasCodeCompletion |= GenericParamResult.hasCodeCompletion();
+  if (SignatureHasCodeCompletion && !CodeCompletion)
+    return makeParserCodeCompletionStatus();
+
+  DefaultArgumentInfo DefaultArgs;
+  TypeRepr *FuncRetTy = nullptr;
+  DeclName FullName;
+  ParameterList *BodyParams;
+  SourceLoc throwsLoc;
+  bool rethrows;
+  ParserStatus SignatureStatus =
+      parseFunctionSignature(Identifier(), FullName, BodyParams, DefaultArgs,
+                             throwsLoc, rethrows, FuncRetTy);
+
+  SignatureHasCodeCompletion |= SignatureStatus.hasCodeCompletion();
+  if (SignatureStatus.hasCodeCompletion() && !CodeCompletion) {
+    // Trigger delayed parsing, no need to continue.
+    return SignatureStatus;
+  }
+
+  diagnoseWhereClauseInGenericParamList(GenericParams);
+
+  // Create the decl for the func and add it to the parent scope.
+#if 0
+  auto *FD = FuncDecl::create(Context, StaticLoc, StaticSpelling,
+                              FuncLoc, FullName, NameLoc,
+                              /*Throws=*/throwsLoc.isValid(), throwsLoc,
+                              /*GenericParams=*/nullptr,
+                              BodyParams, FuncRetTy,
+                              CurDeclContext);
+#endif
+  auto *CD = CallDecl::create(Context, FuncLoc, StaticLoc, StaticSpelling,
+                              /*throws*/ throwsLoc.isValid(), throwsLoc,
+                              /*genericParams*/ nullptr, BodyParams, FuncRetTy,
+                              CurDeclContext);
+
+  // Parse a 'where' clause if present, adding it to our GenericParamList.
+  if (Tok.is(tok::kw_where)) {
+    ContextChange CC(*this, CD);
+
+    auto whereStatus = parseFreestandingGenericWhereClause(GenericParams);
+    SignatureHasCodeCompletion |= whereStatus.hasCodeCompletion();
+    if (whereStatus.hasCodeCompletion() && !CodeCompletion) {
+      // Trigger delayed parsing, no need to continue.
+      return whereStatus;
+    }
+  }
+
+  CD->setGenericParams(GenericParams);
+  
+  // Protocol method arguments may not have default values.
+  if (Flags.contains(PD_InProtocol) && DefaultArgs.HasDefaultArgument) {
+    diagnose(FuncLoc, diag::protocol_method_argument_init);
+    return nullptr;
+  }
+
+  // Add the 'rethrows' attribute.
+  if (rethrows) {
+    Attributes.add(new (Context) RethrowsAttr(throwsLoc));
+  }
+
+  // Add the attributes here so if we need them while parsing the body
+  // they are available.
+  CD->getAttrs() = Attributes;
+
+  // Pass the function signature to code completion.
+  if (SignatureHasCodeCompletion)
+    CodeCompletion->setParsedDecl(CD);
+
+  DefaultArgs.setFunctionContext(CD, CD->getParameters());
+  setLocalDiscriminator(CD);
+
+  if (Flags.contains(PD_InProtocol)) {
+    if (Tok.is(tok::l_brace)) {
+      diagnose(Tok, diag::protocol_method_with_body);
+      skipSingle();
+    }
+  } else {
+    parseAbstractFunctionBody(CD);
+  }
+
+  // Exit the scope introduced for the generic parameters.
+  GenericsScope.reset();
+
+  addToScope(CD);
+  return DCC.fixupParserResult(CD);
 }
 
 /// Parse function body into \p AFD.

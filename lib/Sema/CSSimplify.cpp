@@ -4585,6 +4585,47 @@ ConstraintSystem::simplifyApplicableFnConstraint(
     return simplified;
   }
 
+  if (auto nominal = desugar2->getAnyNominal()) {
+    SmallVector<CallDecl *, 4> callableMethods;
+    for (auto member : nominal->getMembers())
+      if (auto callableMethod = dyn_cast<CallDecl>(member))
+        callableMethods.push_back(callableMethod);
+    /*
+    auto callableMethods = llvm::make_filter_range(nominal->getMembers(), [](Decl *decl) {
+      // return isa<CallDecl>(decl);
+      return dyn_cast<CallDecl>(decl);
+    });
+    */
+    /*
+    llvm::transform(nominal->getMembers(), std::back_inserter(callableMethods), [](Decl *decl) {
+      return dyn_cast<CallDecl>(decl);
+    });
+    */
+    llvm::errs() << "CALLABLE METHODS: " << std::distance(callableMethods.begin(), callableMethods.end()) << "\n";
+    func1->dump();
+    desugar2->dump();
+
+    // Create a type variable for the `dynamicallyCall` method.
+    auto loc = getConstraintLocator(locator);
+    auto tv = createTypeVariable(loc, TVO_CanBindToLValue);
+
+    // Record the 'dynamicallyCall` method overload set.
+    SmallVector<OverloadChoice, 4> choices;
+    for (auto candidate : callableMethods) {
+      TC.validateDecl(candidate);
+      if (candidate->isInvalid()) continue;
+      choices.push_back(
+          OverloadChoice(type2, candidate, FunctionRefKind::SingleApply));
+    }
+    if (choices.empty()) return SolutionKind::Error;
+    addOverloadSet(tv, choices, DC, loc);
+
+    addConstraint(ConstraintKind::ApplicableFunction, tv,
+                  func1, locator);
+
+    return SolutionKind::Solved;
+  }
+
   // Handle applications of @dynamicCallable types.
   return simplifyDynamicCallableApplicableFnConstraint(type1, origType2,
                                                        subflags, locator);

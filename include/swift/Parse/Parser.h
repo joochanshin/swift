@@ -950,6 +950,11 @@ public:
                                        StaticSpellingKind StaticSpelling,
                                        ParseDeclOptions Flags,
                                        DeclAttributes &Attributes);
+  // SWIFT_ENABLE_TENSORFLOW
+  ParserResult<CallDecl> parseDeclCall(SourceLoc StaticLoc,
+                                       StaticSpellingKind StaticSpelling,
+                                       ParseDeclOptions Flags,
+                                       DeclAttributes &Attributes);
   void parseAbstractFunctionBody(AbstractFunctionDecl *AFD);
   bool parseAbstractFunctionBodyDelayed(AbstractFunctionDecl *AFD);
   ParserResult<ProtocolDecl> parseDeclProtocol(ParseDeclOptions Flags,

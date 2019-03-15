@@ -240,6 +240,7 @@ SYNTAX_NODE_SERIALIZATION_CODES = {
     'DifferentiableAttributeDiffParam': 234,
     'DifferentiationIndexParam': 235,
     'DifferentiableAttributeFuncSpecifier': 236,
+    'CallDecl': 237,
 }
 
 

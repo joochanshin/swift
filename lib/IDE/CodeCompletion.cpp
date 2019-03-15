@@ -625,6 +625,9 @@ CodeCompletionResult::getCodeCompletionDeclKind(const Decl *D) {
     return CodeCompletionDeclKind::EnumElement;
   case DeclKind::Subscript:
     return CodeCompletionDeclKind::Subscript;
+  // SWIFT_ENABLE_TENSORFLOW
+  case DeclKind::Call:
+    return CodeCompletionDeclKind::CallableMethod;
   }
   llvm_unreachable("invalid DeclKind");
 }
@@ -667,6 +670,10 @@ void CodeCompletionResult::print(raw_ostream &OS) const {
       break;
     case CodeCompletionDeclKind::Subscript:
       Prefix.append("[Subscript]");
+      break;
+    // SWIFT_ENABLE_TENSORFLOW
+    case CodeCompletionDeclKind::CallableMethod:
+      Prefix.append("[CallableMethod]");
       break;
     case CodeCompletionDeclKind::StaticMethod:
       Prefix.append("[StaticMethod]");
@@ -5984,6 +5991,8 @@ void swift::ide::copyCodeCompletionResults(CodeCompletionResultSink &targetSink,
       case CodeCompletionDeclKind::Constructor:
       case CodeCompletionDeclKind::Destructor:
       case CodeCompletionDeclKind::Subscript:
+      // SWIFT_ENABLE_TENSORFLOW
+      case CodeCompletionDeclKind::CallableMethod:
       case CodeCompletionDeclKind::StaticMethod:
       case CodeCompletionDeclKind::InstanceMethod:
       case CodeCompletionDeclKind::PrefixOperatorFunction:

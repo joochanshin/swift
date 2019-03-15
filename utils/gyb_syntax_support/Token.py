@@ -139,6 +139,8 @@ class Misc(Token):
 SYNTAX_TOKENS = [
     # Keywords that start decls
     DeclKeyword('Associatedtype', 'associatedtype', serialization_code=1),
+    # SWIFT_ENABLE_TENSORFLOW
+    DeclKeyword('Call', 'call', serialization_code=119),
     DeclKeyword('Class', 'class', serialization_code=2),
     DeclKeyword('Deinit', 'deinit', serialization_code=3),
     DeclKeyword('Enum', 'enum', serialization_code=4),

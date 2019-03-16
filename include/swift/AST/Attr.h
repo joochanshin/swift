@@ -1489,7 +1489,7 @@ public:
   }
   size_t numTrailingObjects(OverloadToken<ParsedAutoDiffParameter>) const {
     return NumParsedParameters;
- }
+  }
 
   TrailingWhereClause *getWhereClause() const { return WhereClause; }
 
@@ -1518,12 +1518,16 @@ public:
 /// Examples:
 ///   @differentiating(sin(_:_:))
 ///   @differentiating(+)
-class DifferentiatingAttr final : public DeclAttribute {
-private:
+class DifferentiatingAttr final
+    : public DeclAttribute,
+      private llvm::TrailingObjects<DifferentiableAttr,
+                                    ParsedAutoDiffParameter> {
   /// The original function name.
   DeclNameWithLoc Original;
   /// The original function, resolved by the type checker.
   FuncDecl *OriginalFunction = nullptr;
+  /// The number of parameters specified in 'wrt:'.
+  unsigned NumParsedParameters = 0;
 
   explicit DifferentiatingAttr(ASTContext &context, bool implicit,
                                SourceLoc atLoc, SourceRange baseRange,
@@ -1538,6 +1542,18 @@ public:
 
   FuncDecl *getOriginalFunction() const { return OriginalFunction; }
   void setOriginalFunction(FuncDecl *decl) { OriginalFunction = decl; }
+
+  /// The parsed differentiation parameters, i.e. the list of parameters
+  /// specified in 'wrt:'.
+  ArrayRef<ParsedAutoDiffParameter> getParsedParameters() const {
+    return {getTrailingObjects<ParsedAutoDiffParameter>(), NumParsedParameters};
+  }
+  MutableArrayRef<ParsedAutoDiffParameter> getParsedParameters() {
+    return {getTrailingObjects<ParsedAutoDiffParameter>(), NumParsedParameters};
+  }
+  size_t numTrailingObjects(OverloadToken<ParsedAutoDiffParameter>) const {
+    return NumParsedParameters;
+  }
 
   static bool classof(const DeclAttribute *DA) {
     return DA->getKind() == DAK_Differentiating;

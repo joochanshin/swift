@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "swift/AST/AutoDiff.h"
+#include "swift/AST/Module.h"
 #include "swift/AST/Types.h"
 #include "swift/Basic/LLVM.h"
 #include "swift/Basic/Range.h"
@@ -261,10 +262,59 @@ static unsigned getNumAutoDiffParameterIndices(AnyFunctionType *fnTy) {
   return numAutoDiffParameterIndices;
 }
 
+/// Returns true if the given type conforms to `Differentiable` in the given
+/// module.
+static bool conformsToDifferentiableInModule(Type type, ModuleDecl *module) {
+  auto &ctx = module->getASTContext();
+  auto *differentiableProto =
+      ctx.getProtocol(KnownProtocolKind::Differentiable);
+  return LookUpConformanceInModule(module)(
+      differentiableProto->getDeclaredInterfaceType()->getCanonicalType(),
+      type, differentiableProto).hasValue();
+};
+
 AutoDiffParameterIndicesBuilder::AutoDiffParameterIndicesBuilder(
-    AnyFunctionType *functionType, bool setAllParams)
-    : parameters(getNumAutoDiffParameterIndices(functionType), setAllParams) {
+    AnyFunctionType *functionType)
+    : parameters(getNumAutoDiffParameterIndices(functionType)) {}
+
+AutoDiffParameterIndicesBuilder
+AutoDiffParameterIndicesBuilder::inferParameters(AnyFunctionType *functionType,
+                                                 ModuleDecl *module) {
+  AutoDiffParameterIndicesBuilder builder(functionType);
+  SmallVector<Type, 4> allParamTypes;
+
+  // Returns true if the i-th parameter type is differentiable.
+  auto isDifferentiableParam = [&](unsigned i) -> bool {
+    if (i >= allParamTypes.size())
+      return false;
+    auto paramType = allParamTypes[i];
+    // Return false for class/existential types.
+    if ((paramType->getKind() != TypeKind::GenericTypeParam &&
+         paramType->isAnyClassReferenceType()) ||
+        paramType->isExistentialType())
+      return false;
+    // Return false for function types.
+    if (paramType->is<AnyFunctionType>())
+      return false;
+    // Return true if the type conforms to `Differentiable`.
+    return conformsToDifferentiableInModule(paramType, module);
+  };
+
+  // Get all parameter types.
+  if (auto resultFnType = functionType->getResult()->getAs<AnyFunctionType>())
+    for (auto &param : resultFnType->getParams())
+      allParamTypes.push_back(param.getPlainType());
+  for (auto &param : functionType->getParams())
+    allParamTypes.push_back(param.getPlainType());
+
+  // Set differentiation parameters.
+  for (unsigned i : range(builder.parameters.size()))
+    if (isDifferentiableParam(i))
+      builder.setParameter(i);
+
+  return builder;
 }
+
 
 AutoDiffParameterIndices *
 AutoDiffParameterIndicesBuilder::build(ASTContext &C) const {
@@ -279,10 +329,6 @@ void AutoDiffParameterIndicesBuilder::setParameter(unsigned paramIndex) {
 void AutoDiffParameterIndicesBuilder::setParameters(unsigned lowerBound,
                                                     unsigned upperBound) {
   parameters.set(lowerBound, upperBound);
-}
-
-void AutoDiffParameterIndicesBuilder::setAllParameters() {
-  parameters.set();
 }
 
 Type VectorSpace::getType() const {

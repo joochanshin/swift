@@ -839,6 +839,107 @@ Parser::parseDifferentiableAttribute(SourceLoc atLoc, SourceLoc loc) {
                                params, jvpSpec, vjpSpec, whereClause));
 }
 
+bool Parser::parseDifferentiationParametersClause(
+    SmallVectorImpl<ParsedAutoDiffParameter> &params) {
+  StringRef AttrName = "differentiable";
+
+  // Set parse error, skip until ')' and parse it.
+  auto errorAndSkipToEnd = [&](int parenDepth = 1) -> bool {
+    for (int i = 0; i < parenDepth; i++) {
+      skipUntil(tok::r_paren);
+      if (!consumeIf(tok::r_paren))
+        diagnose(Tok, diag::attr_expected_rparen, AttrName,
+                 /*DeclModifier=*/false);
+    }
+    return true;
+  };
+
+  // Parse trailing comma, if it exists, and check for errors.
+  auto consumeIfTrailingComma = [&]() -> bool {
+    if (!consumeIf(tok::comma)) return false;
+    // Diagnose trailing comma before 'where' or ')'.
+    if (Tok.is(tok::kw_where) || Tok.is(tok::r_paren)) {
+      diagnose(Tok, diag::unexpected_separator, ",");
+      return true;
+    }
+    // Check that token after comma is a function specifier label.
+    if (!Tok.is(tok::identifier) || !(Tok.getText() == "jvp" ||
+                                      Tok.getText() == "vjp")) {
+      diagnose(Tok, diag::attr_differentiable_expected_label);
+      return true;
+    }
+    return false;
+  };
+
+  SyntaxParsingContext DiffParamsClauseContext(
+       SyntaxContext, SyntaxKind::DifferentiationParamsClause);
+  consumeToken(tok::identifier);
+  if (!consumeIf(tok::colon)) {
+    diagnose(Tok, diag::attr_differentiable_expected_colon_after_label,
+             "wrt");
+    return errorAndSkipToEnd();
+  }
+
+  // Function that parses a parameter into `params`. Returns true if error
+  // occurred.
+  auto parseParam = [&](bool parseTrailingComma = true) -> bool {
+    SyntaxParsingContext DiffParamContext(
+        SyntaxContext, SyntaxKind::DifferentiationParam);
+    SourceLoc paramLoc;
+    switch (Tok.getKind()) {
+      case tok::identifier: {
+        Identifier paramName;
+        if (parseIdentifier(paramName, paramLoc,
+                            diag::attr_differentiable_expected_parameter))
+          return true;
+        params.push_back(ParsedAutoDiffParameter::getNamedParameter(
+            paramLoc, paramName));
+        break;
+      }
+      case tok::kw_self: {
+        paramLoc = consumeToken(tok::kw_self);
+        params.push_back(ParsedAutoDiffParameter::getSelfParameter(paramLoc));
+        break;
+      }
+      default:
+        diagnose(Tok, diag::attr_differentiable_expected_parameter);
+        return true;
+    }
+    if (parseTrailingComma && Tok.isNot(tok::r_paren))
+      return parseToken(tok::comma, diag::attr_expected_comma, AttrName,
+                        /*isDeclModifier=*/false);
+    return false;
+  };
+
+  // Parse opening '(' of the parameter list.
+  if (Tok.is(tok::l_paren)) {
+    SyntaxParsingContext DiffParamsContext(
+        SyntaxContext, SyntaxKind::DifferentiationParams);
+    consumeToken(tok::l_paren);
+    // Parse first parameter. At least one is required.
+    if (parseParam())
+      return errorAndSkipToEnd(2);
+    // Parse remaining parameters until ')'.
+    while (Tok.isNot(tok::r_paren))
+      if (parseParam())
+        return errorAndSkipToEnd(2);
+    SyntaxContext->collectNodesInPlace(SyntaxKind::DifferentiationParamList);
+    // Parse closing ')' of the parameter list.
+    consumeToken(tok::r_paren);
+  }
+  // If no opening '(' for parameter list, parse a single parameter.
+  else {
+    if (parseParam(/*parseTrailingComma*/ false))
+      return errorAndSkipToEnd();
+  }
+  // If no trailing comma or 'where' clause, terminate parsing arguments.
+  if (Tok.isNot(tok::comma) && Tok.isNot(tok::kw_where))
+    return false;
+  if (consumeIfTrailingComma())
+    return errorAndSkipToEnd();
+  return false;
+}
+
 bool Parser::parseDifferentiableAttributeArguments(
     SmallVectorImpl<ParsedAutoDiffParameter> &params,
     Optional<DeclNameWithLoc> &jvpSpec, Optional<DeclNameWithLoc> &vjpSpec,
@@ -887,6 +988,13 @@ bool Parser::parseDifferentiableAttributeArguments(
         .fixItReplace(withRespectToRange, "wrt:");
     return errorAndSkipToEnd();
   }
+
+  if (Tok.is(tok::identifier) && Tok.getText() == "wrt" &&
+      parseDifferentiationParametersClause(params))
+    // return errorAndSkipToEnd();
+    return true;
+
+#if 0
   if (Tok.is(tok::identifier) && Tok.getText() == "wrt") {
     SyntaxParsingContext DiffParamsClauseContext(
         SyntaxContext, SyntaxKind::DifferentiationParamsClause);
@@ -955,6 +1063,7 @@ bool Parser::parseDifferentiableAttributeArguments(
     if (consumeIfTrailingComma())
       return errorAndSkipToEnd();
   }
+#endif
 
   // Function that parses a label and a function specifier,
   // e.g. 'vjp: foo(_:)'.
@@ -1057,6 +1166,15 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
         /*afterDot*/ false, original.Loc,
         diag::attr_differentiating_expected_original_name,
         /*allowOperators*/ true, /*allowZeroArgCompoundNames*/ true);
+
+    // Parse the optional `wrt` differentiation parameter list.
+    if (consumeIf(tok::comma)) {
+      SmallVector<ParsedAutoDiffParameter, 8> params;
+      if (Tok.is(tok::identifier) && Tok.getText() == "wrt" &&
+          parseDifferentiationParametersClause(params))
+        // return errorAndSkipToEnd();
+        return makeParserError();
+    }
   }
 
   // Parse ')'.

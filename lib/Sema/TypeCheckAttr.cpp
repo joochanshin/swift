@@ -2524,10 +2524,6 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     return;
   }
 
-  auto originalParamTypes = map<SmallVector<TupleTypeElt, 8>>(
-      originalParams.getArray(),
-      [&](ParamDecl *decl) { return decl->getInterfaceType(); });
-
   // Start type-checking the arguments of the @differentiable attribute. This
   // covers 'wrt:', 'jvp:', and 'vjp:', all of which are optional.
 
@@ -2621,76 +2617,28 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   // If checked wrt param indices are not specified, compute them using parsed
   // wrt param indices.
   if (!checkedWrtParamIndices) {
-    AutoDiffParameterIndicesBuilder autoDiffParameterIndicesBuilder(
-        originalFnTy);
+    // If parsed wrt param indices are not specified, infer differentiation
+    // parameters.
     if (parsedWrtParams.empty()) {
-      SmallVector<Type, 4> allWrtParamTypes;
-
-      // Returns true if the i-th parameter type is differentiable.
-      auto isDifferentiableParam = [&](unsigned i) {
-        if (i >= allWrtParamTypes.size())
-          return false;
-        auto wrtParamType = original->mapTypeIntoContext(allWrtParamTypes[i]);
-        // Return false for class/existential types.
-        if (wrtParamType->isAnyClassReferenceType() ||
-            wrtParamType->isExistentialType())
-          return false;
-        // Return false for function types.
-        if (wrtParamType->is<AnyFunctionType>())
-          return false;
-        if (whereClauseGenEnv) {
-          auto wrtParamInterfaceType = !wrtParamType->hasTypeParameter()
-                                           ? wrtParamType->mapTypeOutOfContext()
-                                           : wrtParamType;
-          wrtParamType =
-              whereClauseGenEnv->mapTypeIntoContext(wrtParamInterfaceType);
-        }
-        // Return true if the type conforms to `Differentiable`.
-        return conformsToDifferentiable(wrtParamType);
-      };
-
-      // The wrt types listed when verifying are in (T1) -> (T2, T3) -> R order,
-      // but the bits are in T2, T3, T1 order.
-      //
-      // That works out to three cases:
-      // Static function on a type:
-      // Check: (T2, T3).
-      //
-      // Method function:
-      // Check: (T2, T3, T1).
-      //
-      // Free standing function: (This will be: (T1, T2, T3) -> R)
-      // Check (T1, T2, T3).
-      // TODO: Clean all this up.
-      bool isStaticSelf =
-          original->isStatic() || isa<ConstructorDecl>(original);
-      if (auto *fnTy = originalResultTy->getAs<AnyFunctionType>()) {
-        if ((!isInstanceMethod && !isStaticSelf) ||
-            fnTy->getResult()->is<AnyFunctionType>()) {
-          TC.diagnose(attr->getLocation(),
-                      diag::differentiable_attr_no_currying);
-          return;
-        }
-        for (auto &param : fnTy->getParams())
-          allWrtParamTypes.push_back(param.getPlainType());
-        assert(originalFnTy->getNumParams() == 1 &&
-               "This must be in the form (Self) -> (Args...) -> R");
+      auto derivativeFnTy = originalFnTy;
+      if (whereClauseGenEnv) {
+        llvm::errs() << "BEFORE AND AFTER\n";
+        derivativeFnTy->dump();
+        /*
+        auto derivativeFnInterfaceTy = derivativeFnTy->hasTypeParameter()
+            ? derivativeFnTy
+            : derivativeFnTy->mapTypeOutOfContext();
+        derivativeFnTy = whereClauseGenEnv->mapTypeIntoContext(derivativeFnInterfaceTy)->castTo<AnyFunctionType>();
+        */
+        // derivativeFnTy = whereClauseGenEnv->mapTypeIntoContext(derivativeFnTy)->castTo<AnyFunctionType>();
+        derivativeFnTy->dump();
       }
-
-      if (isStaticSelf) {
-        auto *methodTy = originalResultTy->castTo<AnyFunctionType>();
-        for (unsigned i : range(methodTy->getNumParams()))
-          if (isDifferentiableParam(i))
-            autoDiffParameterIndicesBuilder.setParameter(i);
-      } else {
-        for (auto &param : originalFnTy->getParams())
-          allWrtParamTypes.push_back(param.getPlainType());
-
-        for (unsigned i : range(autoDiffParameterIndicesBuilder.size()))
-          if (isDifferentiableParam(i))
-            autoDiffParameterIndicesBuilder.setParameter(i);
-      }
+      checkedWrtParamIndices = AutoDiffParameterIndicesBuilder::inferParameters(
+          derivativeFnTy, original->getModuleContext())
+          .build(ctx);
     } else {
+      AutoDiffParameterIndicesBuilder autoDiffParameterIndicesBuilder(
+          originalFnTy);
       // 'wrt:' is specified. Validate and collect the selected parameters.
       int lastIndex = -1;
       for (unsigned i : indices(parsedWrtParams)) {
@@ -2738,8 +2686,8 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
         }
         }
       }
+      checkedWrtParamIndices = autoDiffParameterIndicesBuilder.build(ctx);
     }
-    checkedWrtParamIndices = autoDiffParameterIndicesBuilder.build(ctx);
   }
 
   auto insertion =
@@ -3078,6 +3026,10 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
     return;
   }
 
+  // Get the parsed wrt param indices, which have not yet been checked.
+  // This is defined for parsed attributes.
+  auto parsedWrtParams = attr->getParsedParameters();
+
   // Gather inferred differentiation parameters.
   SmallVector<TupleTypeElt, 4> diffParams;
   auto addDiffParam = [&](Type paramType) {
@@ -3087,6 +3039,8 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
       return;
     auto diffParamType = ProtocolConformanceRef::getTypeWitnessByName(
         paramType, *conf, autoDiffAssocTyId, ctx.getLazyResolver());
+    llvm::errs() << "ADDING DIFF PARAM!\n";
+    diffParamType->dump();
     diffParams.push_back(TupleTypeElt(diffParamType));
   };
 
@@ -3229,9 +3183,9 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
   // TODO: When `wrt:` is supported in the `@differentiating` attribute, replace
   // this with the parameter indices resolved by the earlier checking logic in
   // this function.
-  auto allParameterIndices =
-      AutoDiffParameterIndicesBuilder(originalFnType, /*setAllParams*/ true)
-          .build(ctx);
+  auto allParameterIndices = AutoDiffParameterIndicesBuilder::inferParameters(
+      originalFnType, originalFn->getModuleContext())
+      .build(ctx);
 
   // Add the derivative function to the original function's `@differentiable`
   // attribute with the same parameters. If this attribute does not exist,

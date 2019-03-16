@@ -2739,7 +2739,7 @@ ERROR(differentiable_attr_class_unsupported,none,
 NOTE(protocol_witness_missing_specific_differentiable_attr,none,
      "candidate is missing attribute '%0'", (StringRef))
 
-// @differentiang
+// @differentiating
 ERROR(differentiating_attr_expected_result_tuple,none,
       "'@differentiating' attribute requires function to return a two-element tuple of type "
       "'(value: T..., pullback: (U.CotangentVector) -> T.CotangentVector...)' or "

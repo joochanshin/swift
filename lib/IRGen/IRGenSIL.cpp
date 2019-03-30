@@ -3844,6 +3844,11 @@ void IRGenSILFunction::visitPartialApplyInst(swift::PartialApplyInst *i) {
 
   // Create the thunk and function value.
   Explosion function;
+  /*
+  i->getFunction()->dump();
+  llvm::errs() << "VISIT PARTIAL APPLY! " << i << "\n";
+  i->dumpInContext();
+  */
   emitFunctionPartialApplication(
       *this, *CurSILFn, calleeFn, innerContext, llArgs, params,
       i->getSubstitutionMap(), origCalleeTy, i->getSubstCalleeType(),

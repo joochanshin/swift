@@ -20,9 +20,12 @@ LeakCheckingTests.test("BasicVarLeakChecking") {
   do {
     var model = ExampleLeakModel()
     let x: Tracked<Float> = 1.0
+    print("x.id", x.id)
     let _ = model.gradient(at: x) { m, x in m.applied(to: x) }
+    // let _ = model.gradient { m in m.applied(to: x) }
   }
-  expectEqual(0, _GlobalLeakCount.count, "Leak Detected.")
+  expectEqual(0, _GlobalLeakCount.count, "Leak detected")
+  print(_GlobalLeakCount.activeIds)
 }
 
 runAllTests()

@@ -12,6 +12,12 @@
 
 public enum _GlobalLeakCount {
   public static var count = 0
+  public static var id = 0
+  public static var activeIds: Set<Int> = []
+  public static var badIds: Set<Int> = []
+  public static func printActiveIds() {
+    print(activeIds)
+  }
 }
 
 /// A type that tracks the number of live instances of a wrapped value type.
@@ -20,18 +26,32 @@ public enum _GlobalLeakCount {
 /// automatic differentiation.
 public struct Tracked<T> {
   fileprivate class Box {
+    fileprivate let id : Int
     fileprivate let value : T
     init(_ value: T) {
+      id = _GlobalLeakCount.id
+      _GlobalLeakCount.id += 1
+      _GlobalLeakCount.activeIds.insert(id)
+      if _GlobalLeakCount.badIds.contains(id) {
+        fatalError()
+      }
+      print("Initializing id: \(id)")
+
       self.value = value
-        _GlobalLeakCount.count += 1
+      _GlobalLeakCount.count += 1
     }
     deinit {
+      print("Deinitializing id: \(id)")
+      _GlobalLeakCount.activeIds.remove(id)
       _GlobalLeakCount.count -= 1
     }
   }
   private let handle: Box
   public init(_ value: T) {
     self.handle = Box(value)
+  }
+  public var id: Int {
+    return handle.id
   }
   public var value: T { return handle.value }
 }

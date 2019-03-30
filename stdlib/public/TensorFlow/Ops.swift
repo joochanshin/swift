@@ -702,15 +702,23 @@ internal extension Tensor where Scalar : TensorFlowFloatingPoint {
     -> (Tensor, (Tensor) -> (Tensor, Tensor)) {
     let idx = axis < 0 ? axis + rank : axis
     let splits = Tensor<Int32>([shapeTensor[idx], other.shapeTensor[idx]])
-    return (concatenated(with: other, alongAxis: axis), { result in
+    return (concatenated(with: other, alongAxis: axis), { v in
+/*
       let ret: (TensorHandle<Scalar>, TensorHandle<Scalar>) = #tfop("SplitV",
-        result,
+        v,
         splits,
         Tensor<Int32>(Int32(axis)),
         num_split: Int64(2),
         T$dtype: Scalar.tensorFlowDataType,
         Tlen$dtype: Int32.tensorFlowDataType)
       return (Tensor(handle: ret.0), Tensor(handle: ret.1))
+*/
+      let result = Raw.splitV(value: v, sizeSplits: splits, splitDim: Tensor<Int32>(Int32(axis)), numSplit: 2)
+      assert(result.count == 2)
+      print("SPLITV GRADIENT:", result)
+      print("SHAPE 1:", result[0].shape)
+      print("SHAPE 2:", result[1].shape)
+      return (result[0], result[1])
     })
   }
 }

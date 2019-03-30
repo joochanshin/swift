@@ -22,9 +22,11 @@ func vjpWeirdExtraRequirements<T : FloatingPoint & Differentiable>(_ x: Tensor<T
   return (x, { $0 })
 }
 func weirdWrapper<T : FloatingPoint & Differentiable>(_ x: Tensor<T>) -> Tensor<T> {
-  return weird(x) // expected-note {{function call is not differentiable because generic requirements are not met}}
+  // expected-error @+2 {{expression is not differentiable}}
+  // expected-note @+1 {{function call is not differentiable because generic requirements are not met}}
+  return weird(x)
 }
-_ = pullback(at: Tensor<Float>(1), in: weirdWrapper) // expected-error {{function is not differentiable}}
+_ = pullback(at: Tensor<Float>(1), in: weirdWrapper)
 _ = pullback(at: Tensor<Float>(3), in: weirdWrapper)
 
 // Test case where associated derivative function's requirements are met.

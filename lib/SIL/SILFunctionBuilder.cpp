@@ -22,7 +22,18 @@ SILFunction *SILFunctionBuilder::getOrCreateFunction(
     IsThunk_t isThunk, SubclassScope subclassScope) {
   assert(!type->isNoEscape() && "Function decls always have escaping types.");
   if (auto fn = mod.lookUpFunction(name)) {
+    if (fn->getLoweredFunctionType() != type) {
+      llvm::errs() << "SILFUNCTIONBUILDER MISMATCH, NAME: " << name << ", FOUND VS NEW TYPE\n";
+      fn->getLoweredFunctionType()->dump();
+      type->dump();
+    }
     assert(fn->getLoweredFunctionType() == type);
+    if (stripExternalFromLinkage(fn->getLinkage()) !=
+        stripExternalFromLinkage(linkage)) {
+      llvm::errs() << "SILFUNCTIONBUILDER LINKAGE MISMATCH, NAME: " << name << ", FOUND VS NEW LINKAGE\n";
+      llvm::errs() << (unsigned)fn->getLinkage() << "\n";
+      llvm::errs() << (unsigned)linkage << "\n";
+    }
     assert(stripExternalFromLinkage(fn->getLinkage()) ==
            stripExternalFromLinkage(linkage));
     return fn;

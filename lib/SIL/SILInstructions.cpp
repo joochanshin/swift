@@ -621,6 +621,11 @@ std::pair<SILValue, SILValue> AutoDiffFunctionInst::
 getAssociatedFunctionPair(unsigned differentiationOrder) const {
   assert(differentiationOrder > 0 &&
          differentiationOrder <= this->differentiationOrder);
+  if (getAssociatedFunctions().empty()) {
+    llvm::errs() << "EMPTY AD FUNC INST: " << this << "\n";
+    dumpInContext();
+    getFunction()->dump();
+  }
   assert(!getAssociatedFunctions().empty() && "No associated functions. Maybe "
          "the differentiation pass has not run?");
   auto offset = (differentiationOrder - 1) * 2;

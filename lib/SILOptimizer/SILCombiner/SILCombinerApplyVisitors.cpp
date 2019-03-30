@@ -74,9 +74,37 @@ static bool foldInverseReabstractionThunks(PartialApplyInst *PAI,
 SILInstruction *SILCombiner::visitPartialApplyInst(PartialApplyInst *PAI) {
   // partial_apply without any substitutions or arguments is just a
   // thin_to_thick_function.
-  if (!PAI->hasSubstitutions() && (PAI->getNumArguments() == 0))
+  // if (!PAI->hasSubstitutions() && (PAI->getNumArguments() == 0)) {
+  if (!PAI->hasSubstitutions() && (PAI->getNumArguments() == 0) &&
+       // true) {
+       PAI->getSubstCalleeType()->getRepresentation() == SILFunctionTypeRepresentation::Thin) {
+    // assert(false && "aha found you");
+    // llvm::errs() << "SILCOMBINE FOUND PAI\n";
+    // PAI->dump();
     return Builder.createThinToThickFunction(PAI->getLoc(), PAI->getCallee(),
                                              PAI->getType());
+  }
+#if 0
+  // partial_apply without any substitutions or arguments is just a
+  // thin_to_thick_function.
+  if (!PAI->hasSubstitutions() && (PAI->getNumArguments() == 0)) {
+    if (!(PAI->getFunctionType()->isNoEscape() ? true : false))
+      return Builder.createThinToThickFunction(PAI->getLoc(), PAI->getCallee(),
+                                               PAI->getType());
+
+    // Remove dealloc_stack of partial_apply [stack].
+    // Iterating while delete use a copy.
+    SmallVector<Operand *, 8> Uses(PAI->getUses());
+    for (auto *Use : Uses)
+      if (auto *dealloc = dyn_cast<DeallocStackInst>(Use->getUser()))
+        eraseInstFromFunction(*dealloc);
+    auto *thinToThick = Builder.createThinToThickFunction(
+        PAI->getLoc(), PAI->getCallee(), PAI->getType());
+    replaceInstUsesWith(*PAI, thinToThick);
+    eraseInstFromFunction(*PAI);
+    return nullptr;
+  }
+#endif
 
   // partial_apply %reabstraction_thunk_typeAtoB(
   //    partial_apply %reabstraction_thunk_typeBtoA %closure_typeB))

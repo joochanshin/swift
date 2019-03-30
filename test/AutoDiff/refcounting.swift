@@ -16,11 +16,17 @@ public struct Vector : AdditiveArithmetic, VectorNumeric, Differentiable, Equata
   public typealias Scalar = Float
   public static var zero: Vector { return Vector(0) }
   public init(_ scalar: Float) { self.x = scalar; self.y = scalar }
+
+  @_silgen_name("Vector_plus")
   @differentiable(vjp: fakeVJP)
   public static func + (lhs: Vector, rhs: Vector) -> Vector { abort() }
+
+  @_silgen_name("Vector_subtract")
   @differentiable(vjp: fakeVJP)
   public static func - (lhs: Vector, rhs: Vector) -> Vector { abort() }
+
   public static func * (lhs: Float, rhs: Vector) -> Vector { abort() }
+
   public static func fakeVJP(lhs: Vector, rhs: Vector) -> (Vector, (Vector) -> (Vector, Vector)) { abort() }
 }
 
@@ -38,9 +44,13 @@ _ = pullback(at: Vector.zero, in: testOwnedVector)
 
 // The primal should not release primal values.
 //
-// CHECK-LABEL: @{{.*}}testOwnedVector{{.*}}__primal_src_0_wrt_0 : $@convention(thin) (@guaranteed Vector) -> (@owned {{.*}}testOwnedVector{{.*}}__Type__src_0_wrt_0, @owned Vector) {
+// CHECK-LABEL: sil hidden @{{.*}}testOwnedVector{{.*}}__vjp_src_0_wrt_0 : $@convention(thin) (@guaranteed Vector) -> (@owned Vector, @owned @callee_guaranteed (@guaranteed Vector) -> @owned Vector)
+// CHECK:   [[ADD:%.*]] = function_ref @Vector_plus
+// CHECK:   [[ADD_JVP:%.*]] = function_ref @{{.*}}Vector_plus__jvp_src_0_wrt_0_1{{.*}}
 // CHECK:   [[ADD_VJP:%.*]] = function_ref @{{.*}}fakeVJP{{.*}}
-// CHECK:   [[ADD_VJP_RESULT:%.*]] = apply [[ADD_VJP]]({{.*}}, {{.*}}, {{.*}}) : $@convention(method) (@guaranteed Vector, @guaranteed Vector, @thin Vector.Type) -> (@owned Vector, @owned @callee_guaranteed (@guaranteed Vector) -> (@owned Vector, @owned Vector))
+// CHECK:   [[ADD_AD_FUNC:%.*]] = autodiff_function [wrt 0 1] [order 1] [[ADD]] {{.*}} with {[[ADD_JVP]] {{.*}}, [[ADD_VJP]] {{.*}}}
+// CHECK:   [[ADD_AD_FUNC_EXTRACT:%.*]] = autodiff_function_extract [vjp] [order 1] [[ADD_AD_FUNC]]
+// CHECK:   [[ADD_VJP_RESULT:%.*]] = apply [[ADD_AD_FUNC_EXTRACT]]({{.*}}, {{.*}}, {{.*}}) : $@convention(method) (@guaranteed Vector, @guaranteed Vector, @thin Vector.Type) -> (@owned Vector, @owned @callee_guaranteed (@guaranteed Vector) -> (@owned Vector, @owned Vector))
 // CHECK:   [[ADD_PULLBACK:%.*]] = tuple_extract [[ADD_VJP_RESULT]] : $(Vector, @callee_guaranteed (@guaranteed Vector) -> (@owned Vector, @owned Vector)), 1
 // CHECK-NOT:   release_value [[ADD_VJP_RESULT]]
 // CHECK-NOT:   release_value [[ADD_PULLBACK]]
@@ -63,7 +73,7 @@ func side_effect_release_zero(_ x: Vector) -> Vector {
 }
 _ = pullback(at: Vector.zero, in: side_effect_release_zero)
 
-// CHECK-LABEL: @{{.*}}side_effect_release_zero{{.*}}__adjoint_src_0_wrt_0
+// CHECK-LABEL: sil hidden @{{.*}}side_effect_release_zero{{.*}}__adjoint_src_0_wrt_0
 // CHECK: bb0([[X:%.*]] : $Vector, %1 : $_AD__$s11refcounting24side_effect_release_zeroyAA6VectorVADF__Type__src_0_wrt_0):
 // CHECK:  retain_value [[SEED:%.*]] : $Vector
 // CHECK:  [[BUF:%.*]] = alloc_stack $Vector
@@ -82,7 +92,7 @@ func subset_adjoint_releases_unused_ones(_ x: Vector) -> Vector {
 }
 _ = pullback(at: .zero, in: subset_adjoint_releases_unused_ones)
 
-// CHECK-LABEL @{{.*}}subset_adjoint_releases_unused_ones{{.*}}__adjoint_src_0_wrt_0
+// CHECK-LABEL sil hidden @{{.*}}subset_adjoint_releases_unused_ones{{.*}}__adjoint_src_0_wrt_0
 // CHECK: bb0({{%.*}} : $Vector, [[PRIMVALS:%.*]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0):
 // CHECK:   [[PB:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}, #{{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0.pullback_1
 // CHECK:   [[TUPLE:%.*]] = apply [[PB]]({{.*}}) : $@callee_guaranteed (@guaranteed Vector) -> (@owned Vector, @owned Vector)

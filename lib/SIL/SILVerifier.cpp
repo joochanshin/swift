@@ -1251,6 +1251,17 @@ public:
             adfi->getParameterIndices(), /*resultIndex*/ 0, order,
             AutoDiffAssociatedFunctionKind::JVP, F.getModule(),
             LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        if (expectedJVPType != jvpType) {
+          llvm::errs() << "UNEXPECTED JVP TYPE\n";
+          llvm::errs() << "ACTUAL VS EXPECTED\n";
+          jvpType->dump();
+          expectedJVPType->dump();
+          llvm::errs() << "EXPECTED VJP INDICES\n";
+          SILAutoDiffIndices(0, adfi->getParameterIndices()).print(llvm::errs());
+          llvm::errs() << "\n";
+          llvm::errs() << "ORIG TYPE:\n";
+          origTy->dump();
+        }
         require(expectedJVPType == jvpType, "Unexpected JVP function type");
         auto vjpType = pair.second->getType().getAs<SILFunctionType>();
         require(vjpType, "The VJP function must have a function type");

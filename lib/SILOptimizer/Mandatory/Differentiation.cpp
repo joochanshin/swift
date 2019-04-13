@@ -2549,6 +2549,42 @@ public:
     SILClonerWithScopes::postProcess(orig, cloned);
   }
 
+  void createPrimalValueStructMemberwiseInitializer() {
+    // WIP: Create a memberwise initialize for the primal value struct.
+    // Mimic logic from `emitImplicitValueConstructor`.
+    auto &astCtx = getASTContext();
+    auto *pvStruct = getPrimalInfo().getPrimalValueStruct();
+    auto pvStructTy = getOpASTType(
+        pvStruct->getDeclaredInterfaceType()->getCanonicalType());
+    auto pvStructLoweredTy =
+        getContext().getTypeConverter().getLoweredType(pvStructTy);
+    auto *moduleDecl = pvStruct->getModuleContext();
+    for (auto *varDecl : pvStruct->getStoredProperties()) {
+      auto varType = varDecl->getType()->getCanonicalType();
+      getContext().getTypeConverter().getLoweredType(varType);
+
+      auto *paramDecl = new (astCtx) ParamDecl(
+          VarDecl::Specifier::Default, SourceLoc(), SourceLoc(),
+          astCtx.getIdentifier("$implicit_value"),
+          SourceLoc(),
+          astCtx.getIdentifier("$implicit_value"),
+          moduleDecl);
+      paramDecl->setInterfaceType(varDecl->getInterfaceType());
+
+      // SILFunctionArgument *arg =
+      // SGF.F.begin()->createFunctionArgument(SGF.getLoweredType(type), VD);
+    }
+    Mangle::ASTMangler mangler;
+    // std::string name = mangler.mangleConstructorEntity(<#const ConstructorDecl *ctor#>, <#bool isAllocating#>, <#bool isCurried#>)
+    auto loc = getPrimal()->getLocation();
+    SILOptFunctionBuilder fb(getContext().getTransform());
+    /*
+    auto *init = fb.getOrCreateSharedFunction(
+        loc, name, initType, IsBare, IsTransparent, IsSerialized,
+        ProfileCounter(), IsReabstractionThunk, IsNotDynamic);
+    */
+  }
+
   // Run primal generation. Returns true on error.
   bool run() {
     auto *original = getOriginal();
@@ -2584,7 +2620,23 @@ public:
     builder.setInsertionPoint(exit);
     auto structLoweredTy =
         getContext().getTypeConverter().getLoweredType(structTy);
-    auto primValsVal = builder.createStruct(loc, structLoweredTy, primalValues);
+    if (structLoweredTy.isAddress())
+      structLoweredTy = structLoweredTy.getObjectType();
+    structLoweredTy.dump();
+    llvm::errs() << "STRUCT LOWERED TY, IS LOADABLE? " << structLoweredTy.isLoadable(getContext().getModule()) << "\n";
+    llvm::errs() << "STRUCT LOWERED TY, IS OBJECT? " << structLoweredTy.isObject() << "\n";
+    // structLoweredTy.getAs<SIL
+    // if (structLoweredTy.isAddress())
+    SILValue primValsVal;
+    if (structLoweredTy.isLoadable(getContext().getModule())) {
+      primValsVal = builder.createStruct(loc, structLoweredTy, primalValues);
+    } else {
+      createPrimalValueStructMemberwiseInitializer();
+      auto *memberwiseInit = getPrimalInfo().getPrimalValueStruct()->getEffectiveMemberwiseInitializer();
+      llvm::errs() << "PV STRUCT MEMBERWISE INIT " << memberwiseInit << "\n";
+      // primValsVal = builder.createStruct(loc, structLoweredTy, primalValues);
+      primValsVal = builder.createAllocStack(loc, structLoweredTy.getObjectType());
+    }
     // If the original result was a tuple, return a tuple of all elements in the
     // original result tuple and the primal value struct value.
     auto origResTy = origResInPrimal->getType();
@@ -3840,6 +3892,17 @@ private:
     return false;
   }
 
+  /// Extract a pullback from `primalValueAggregateInAdj` corresponding to the
+  /// given pullback field.
+  SILValue getPullback(SILLocation loc, VarDecl *pullbackField) {
+    if (primalValueAggregateInAdj->getType().isLoadable(
+            getContext().getModule()))
+      return builder.createStructExtract(
+          loc, primalValueAggregateInAdj, pullbackField);
+    return builder.createStructElementAddr(
+        loc, primalValueAggregateInAdj, pullbackField);
+  }
+
 public:
   /// Performs adjoint synthesis on the empty adjoint function. Returns true if
   /// any error occurs.
@@ -4050,8 +4113,7 @@ public:
     auto *field = getPrimalInfo().lookUpPullbackDecl(ai);
     assert(field);
     auto loc = ai->getLoc();
-    SILValue pullback =
-        builder.createStructExtract(loc, primalValueAggregateInAdj, field);
+    auto pullback = getPullback(loc, field);
 
     // Get the original result of the `apply` instruction.
     SmallVector<SILValue, 8> args;
@@ -4371,8 +4433,7 @@ public:
       // Get the pullback.
       auto *pullbackField = getPrimalInfo().lookUpPullbackDecl(sei);
       assert(pullbackField);
-      auto pullback = builder.createStructExtract(
-          loc, primalValueAggregateInAdj, pullbackField);
+      auto pullback = getPullback(loc, pullbackField);
 
       // Construct the pullback arguments.
       auto av = takeAdjointValue(sei);

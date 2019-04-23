@@ -407,6 +407,27 @@ toolchains::Darwin::constructInvocation(const LinkJobAction &job,
     // of time the standard library won't be copied. SR-1967
     Arguments.push_back("-rpath");
     Arguments.push_back(context.Args.MakeArgString(RuntimeLibPath));
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // On macOS, Xcode Playgrounds fails with "Couldn't lookup symbols" errors.
+    // This occurs on Xcode 10.2 beta 4 but not Xcode 10.0.
+    //
+    // This was an attempt to fix the errors, mimicking TensorFlow-specific
+    // linker patches added in `UnixToolChains.cpp`.
+    // Unfortunately, it was not a success (errors did not change).
+    SmallString<128> swiftPythonLibPath = RuntimeLibPath;
+    llvm::sys::path::append(swiftPythonLibPath, "libswiftPython.dylib");
+    llvm::errs() << "RUNTIME LIB PATH: " << RuntimeLibPath << "\n";
+    if (llvm::sys::fs::exists(swiftPythonLibPath))
+      Arguments.push_back("-lswiftPython");
+
+    SmallString<128> swiftTensorFlowLibPath = RuntimeLibPath;
+    llvm::sys::path::append(swiftTensorFlowLibPath, "libswiftTensorFlow.dylib");
+    if (llvm::sys::fs::exists(swiftTensorFlowLibPath)) {
+      Arguments.push_back("-lswiftTensorFlow");
+      Arguments.push_back("-ltensorflow");
+    }
+    // SWIFT_ENABLE_TENSORFLOW END
   }
 
   if (context.Args.hasArg(options::OPT_profile_generate)) {

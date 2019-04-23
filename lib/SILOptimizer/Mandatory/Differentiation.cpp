@@ -277,6 +277,14 @@ static ReturnInst *getSingleReturn(SILFunction *f) {
   return cast<ReturnInst>(f->findReturnBB()->getTerminator());
 }
 
+/// Given an `autodiff_function` instruction, find the corresponding
+/// differential operator used in the AST. If no differential operator is found,
+/// return nullptr.
+static AutoDiffFunctionExpr *
+findDifferentialOperator(AutoDiffFunctionInst *inst) {
+  return inst->getLoc().getAsASTNode<AutoDiffFunctionExpr>();
+}
+
 //===----------------------------------------------------------------------===//
 // Auxiliary data structures
 //===----------------------------------------------------------------------===//
@@ -524,6 +532,8 @@ struct NestedApplyInfo {
   /// The original pullback type before reabstraction. `None` if the pullback
   /// type is not reabstracted.
   Optional<CanSILFunctionType> originalPullbackType;
+  // TODO: document.
+  bool hasSelfArgument;
 };
 
 /// Specifies how we should differentiate a `struct_extract` instruction.
@@ -617,6 +627,9 @@ private:
   /// List of generated functions (VJPs and adjoints).
   SmallVector<SILFunction *, 32> generatedFunctions;
 
+  /// List of instructions referencing generated functions (VJPs and adjoints).
+  SmallVector<SILValue, 32> generatedFunctionReferences;
+
   /// Queue of `autodiff_function` instructions.
   SmallVector<AutoDiffFunctionInst *, 32> autoDiffFunctionInsts;
 
@@ -672,6 +685,9 @@ public:
   }
   SmallVector<SILFunction *, 32> &getGeneratedFunctions() {
     return generatedFunctions;
+  }
+  SmallVector<SILValue, 32> &getGeneratedFunctionReferences() {
+    return generatedFunctionReferences;
   }
 
   /*
@@ -970,10 +986,13 @@ InFlightDiagnostic
 ADContext::emitNondifferentiabilityError(SILValue value,
                                          DifferentiationInvoker invoker,
                                          Optional<Diag<>> diag) {
+  // TODO: Ensure that error is always emitted.
   auto *inst = value->getDefiningInstruction();
   if (!inst) {
+    // diagnose(value.getLoc().getSourceLoc(),
+    //     diag.getValueOr(diag::autodiff_expression_not_differentiable_note));
     return diagnose(value.getLoc().getSourceLoc(),
-                    diag.getValueOr(diag::autodiff_expression_is_not_differentiable));
+        diag.getValueOr(diag::autodiff_expression_not_differentiable_note));
   }
   return emitNondifferentiabilityError(inst, invoker, diag);
 }
@@ -987,7 +1006,7 @@ ADContext::emitNondifferentiabilityError(SILInstruction *inst,
   /*
   if (!task) {
     return diagnose(opLoc,
-                    diag.getValueOr(diag::autodiff_expression_is_not_differentiable));
+        diag.getValueOr(diag::autodiff_expression_is_not_differentiable));
   }
    */
   LLVM_DEBUG({
@@ -1005,14 +1024,33 @@ InFlightDiagnostic
 ADContext::emitNondifferentiabilityError(SourceLoc loc,
                                          DifferentiationInvoker invoker,
                                          Optional<Diag<>> diag) {
+  // assert(false && "debugging");
+  llvm::errs() << "EMITTING NONDIFF ERROR\n";
   switch (invoker.getKind()) {
       // For a `autodiff_function` instruction or a `[differentiable]` attribute
       // that is not associated with any source location, we emit a diagnostic at
       // the instruction source location.
-    case DifferentiationInvoker::Kind::AutoDiffFunctionInst:
+    case DifferentiationInvoker::Kind::AutoDiffFunctionInst: {
+#if 0
       // FIXME: This will not report an error to the user.
       return diagnose(loc,
           diag.getValueOr(diag::autodiff_expression_is_not_differentiable));
+#endif
+      // If the `autodiff_function` instruction comes from a differential
+      // operator, emit an error on the expression and a note on the
+      // non-differentiable operation.
+      auto *inst = invoker.getAutoDiffFunctionInst();
+      if (auto *expr = findDifferentialOperator(inst)) {
+        diagnose(expr->getLoc(),
+                 diag::autodiff_function_not_differentiable_error)
+            .highlight(expr->getSubExpr()->getSourceRange());
+        return diagnose(loc,
+            diag.getValueOr(diag::autodiff_expression_not_differentiable_note));
+      }
+      diagnose(loc, diag::autodiff_expression_not_differentiable_error);
+      return diagnose(loc,
+          diag.getValueOr(diag::autodiff_expression_not_differentiable_note));
+    }
     case DifferentiationInvoker::Kind::SILDifferentiableAttribute: {
       auto attr = invoker.getSILDifferentiableAttribute();
       bool foundAttr = false;
@@ -1021,7 +1059,7 @@ ADContext::emitNondifferentiabilityError(SourceLoc loc,
           if (auto *diffAttr =
               fnDecl->getAttrs().getAttribute<DifferentiableAttr>()) {
             diagnose(diffAttr->getLocation(),
-                     diag::autodiff_function_not_differentiable)
+                     diag::autodiff_function_not_differentiable_error)
                 .highlight(diffAttr->getRangeWithAt());
             diagnose(attr.second->getLocation().getSourceLoc(),
                      diag::autodiff_when_differentiating_function_definition);
@@ -1032,10 +1070,10 @@ ADContext::emitNondifferentiabilityError(SourceLoc loc,
       if (!foundAttr) {
         // Fallback if we cannot find the expected attribute.
         diagnose(attr.second->getLocation().getSourceLoc(),
-                 diag::autodiff_function_not_differentiable);
+                 diag::autodiff_function_not_differentiable_error);
       }
-      return diagnose(loc,
-          diag.getValueOr(diag::autodiff_expression_is_not_differentiable));
+      return diagnose(loc, diag.getValueOr(
+          diag::autodiff_expression_not_differentiable_note));
     }
 
       // For indirect differentiation, emit a "not differentiable" note on the
@@ -1055,9 +1093,8 @@ ADContext::emitNondifferentiabilityError(SourceLoc loc,
       // auto *inst = invoker.getIndirectDifferentiation();
       std::tie(inst, original, attr) = invoker.getIndirectDifferentiation();
       auto invokerLookup = invokers.find({original, attr});
-      if (invokerLookup == invokers.end()) {
+      if (invokerLookup == invokers.end())
         assert(false && "WOAH INVOKER NOT FOUND");
-      }
       // FIXME: Make indirect differentiation take parent invoker?
       // emitNondifferentiabilityError(inst, invoker, None);
       emitNondifferentiabilityError(inst, invokerLookup->second, None);
@@ -1074,10 +1111,10 @@ ADContext::emitNondifferentiabilityError(SourceLoc loc,
       // attribute first and a note on the non-differentiable operation.
     case DifferentiationInvoker::Kind::FunctionConversion: {
       auto *expr = invoker.getFunctionConversion();
-      diagnose(expr->getLoc(), diag::autodiff_function_not_differentiable)
+      diagnose(expr->getLoc(), diag::autodiff_function_not_differentiable_error)
           .highlight(expr->getSubExpr()->getSourceRange());
-      return diagnose(loc,
-          diag.getValueOr(diag::autodiff_expression_is_not_differentiable));
+      return diagnose(loc, diag.getValueOr(
+          diag::autodiff_expression_not_differentiable_note));
     }
   }
 }
@@ -3469,8 +3506,7 @@ public:
   }
 
   void visitSILInstruction(SILInstruction *inst) {
-    getContext().emitNondifferentiabilityError(inst, invoker,
-        diag::autodiff_expression_is_not_differentiable);
+    getContext().emitNondifferentiabilityError(inst, invoker);
     errorOccurred = true;
   }
 
@@ -3486,8 +3522,7 @@ public:
     // If not, just do standard cloning.
     if (!activityInfo.isActive(sei, getIndices())) {
       LLVM_DEBUG(getADDebugStream() << "Not active:\n" << *sei << '\n');
-      strategies.insert(
-          {sei, StructExtractDifferentiationStrategy::Inactive});
+      strategies[sei] = StructExtractDifferentiationStrategy::Inactive;
       SILClonerWithScopes::visitStructExtractInst(sei);
       return;
     }
@@ -3495,18 +3530,18 @@ public:
     // strategy, and use it.
     auto *structDecl = sei->getStructDecl();
     if (structDecl->getAttrs().hasAttribute<FieldwiseDifferentiableAttr>()) {
-      strategies.insert(
-          {sei, StructExtractDifferentiationStrategy::Fieldwise});
+      strategies[sei] = StructExtractDifferentiationStrategy::Fieldwise;
       SILClonerWithScopes::visitStructExtractInst(sei);
       return;
     }
     // The FieldwiseProductSpace strategy is not appropriate, so use the Getter
     // strategy.
-    strategies.insert(
-        {sei, StructExtractDifferentiationStrategy::Getter});
+    strategies[sei] = StructExtractDifferentiationStrategy::Getter;
     // Find the corresponding getter and its VJP.
     auto *getterDecl = sei->getField()->getGetter();
     assert(getterDecl);
+    // getterDecl->dump();
+    // auto *getterF = getAssociatedFunction(getContext(), <#SILFunction *original#>, <#SILDifferentiableAttr *attr#>, <#AutoDiffAssociatedFunctionKind kind#>, <#StringRef assocFnName#>)
     auto *getterFn = getContext().getModule().lookUpFunction(
         SILDeclRef(getterDecl, SILDeclRef::Kind::Func));
     if (!getterFn) {
@@ -3931,25 +3966,35 @@ public:
       }
     }
 #endif
+    // NOTE: Experiment regarding vjp subst map requirements
+    // auto vjpOld = vjpNew;
+    bool didPartialApply = false;
     if (!vjpNew) {
       // TODO: Register indirect differentiation
       // context.invokers.
       // QUESTION: WHAT DO YOU DO HERE?
       // Richard: we can use linked list (also for diagnostics)
       DifferentiationInvoker indirect(ai, this->original, attr);
+      auto insertion = context.getInvokers().try_emplace({this->original, attr}, indirect);
+      llvm::errs() << "INDIRECT INVOKER ALREADY EXISTS? " << insertion.second << "\n";
+      auto &invoker = insertion.first->getSecond();
+      // invoker = indirect;
 
       auto target = original;
       // Richard suggested path
       // apply <Float>(%orig)
       if (!ai->getSubstitutionMap().empty()) {
+        auto substMap = getOpSubstitutionMap(ai->getSubstitutionMap());
         auto *vjpPartialApply = getBuilder().createPartialApply(
-            ai->getLoc(), original,
-            getOpSubstitutionMap(ai->getSubstitutionMap()), {},
+            ai->getLoc(), original, substMap, {},
             ParameterConvention::Direct_Guaranteed);
         llvm::errs() << "VJP PARTIAL APPLY\n";
         vjpPartialApply->dump();
         vjpPartialApply->getType().dump();
+        llvm::errs() << "PARTIAL APPLY SUBST MAP REQUIREMENTS\n";
+        substMap.dump();
         target = vjpPartialApply;
+        didPartialApply = true;
       }
 
       llvm::errs() << "AUTODIFF INDICES FOR ORIGINAL:\n";
@@ -3986,12 +4031,26 @@ public:
 
     // Record desired/actual VJP indices.
     // Temporarily set original pullback type to `None`.
+#if 0
     NestedApplyInfo info{indices, actualIndices,
                          /*originalPullbackType*/ None};
+#endif
+    NestedApplyInfo info{indices, actualIndices,
+                         /*originalPullbackType*/ None,
+                         /*hasSelfArgument*/ ai->hasSelfArgument() && !didPartialApply};
+    // auto insertion = context.getNestedApplyInfo().try_emplace(ai, std::move(info));
+    // context.getNestedApplyInfo()[ai] = info;
+
+    auto insertion = context.getNestedApplyInfo().try_emplace(ai, info);
+    auto &nestedApplyInfo = insertion.first->getSecond();
+    // TODO: Replace this with a better `DenseMap` API.
+    nestedApplyInfo = info;
+    /*
     auto insertion =
         context.getNestedApplyInfo().try_emplace(ai, std::move(info));
-    // assert(insertion.second && "Nested apply info already exists");
+    assert(insertion.second && "Nested apply info already exists");
     auto &nestedApplyInfo = insertion.first->getSecond();
+    */
     auto vjp = vjpNew;
     // NOTE: END NEW CODE
 
@@ -4022,6 +4081,8 @@ public:
 
     // Call the VJP using the original parameters.
     SmallVector<SILValue, 8> vjpArgs;
+    // NOTE: TEST CONTEXTUAL REQUIREMENTS.
+    // auto vjpFnTy = getOpType(vjpOld->getType()).castTo<SILFunctionType>();
     auto vjpFnTy = getOpType(vjp->getType()).castTo<SILFunctionType>();
     auto numVJPArgs =
         vjpFnTy->getNumParameters() + vjpFnTy->getNumIndirectFormalResults();
@@ -4105,6 +4166,8 @@ public:
           {pullback}, actualPullbackType->getCalleeConvention());
     }
     primalValues.push_back(pullback);
+    llvm::errs() << "HELLO VJP DUMP DURING CALL\n";
+    getVJP()->dump();
 
     // Some instructions that produce the callee may have been cloned.
     // If the original callee did not have any users beyond this `apply`,
@@ -4896,6 +4959,12 @@ private:
   // `originalBuffer`.
   void addToAdjointBuffer(SILValue originalBuffer,
                           SILValue rhsBufferAccess) {
+    if (!(originalBuffer->getType().isAddress() &&
+          rhsBufferAccess->getType().isAddress())) {
+      llvm::errs() << "WE GOT SOME BIG PROBLEMS\n";
+      originalBuffer->getType().dump();
+      rhsBufferAccess->getType().dump();
+    }
     assert(originalBuffer->getType().isAddress() &&
            rhsBufferAccess->getType().isAddress());
     assert(originalBuffer->getFunction() == &getOriginal());
@@ -4903,6 +4972,12 @@ private:
     auto adjointBuffer = getAdjointBuffer(originalBuffer);
     if (errorOccurred)
       return;
+    /*
+    assert(adjointBuffer.getType().isAddress() &&
+           rhsBufferAccess->getType().isAddress());
+    assert(originalBuffer->getFunction() == &getOriginal());
+    assert(rhsBufferAccess->getFunction() == &getAdjoint());
+    */
     auto *destAccess = builder.createBeginAccess(
         rhsBufferAccess.getLoc(), adjointBuffer, SILAccessKind::Modify,
         SILAccessEnforcement::Static, /*noNestedConflict*/ true,
@@ -5139,8 +5214,7 @@ public:
   void visitSILInstruction(SILInstruction *inst) {
     LLVM_DEBUG(getADDebugStream()
                << "Unhandled instruction in adjoint emitter: " << *inst);
-    getContext().emitNondifferentiabilityError(
-        inst, invoker, diag::autodiff_expression_is_not_differentiable);
+    getContext().emitNondifferentiabilityError(inst, invoker);
     errorOccurred = true;
   }
 
@@ -5253,8 +5327,10 @@ public:
     // parameter, then it returns it first. Accumulate adjoint for the original
     // self parameter.
     auto allResultsIt = allResults.begin();
+// #if 0
     auto selfParamIndex = ai->getArgumentsWithoutIndirectResults().size() - 1;
-    if (ai->hasSelfArgument() &&
+    // if (ai->hasSelfArgument() &&
+    if (applyInfo.hasSelfArgument &&
         applyInfo.actualIndices.isWrtParameter(selfParamIndex)) {
       auto cotanWrtSelf = *allResultsIt++;
       // If the self cotangent value corresponds to a non-desired self
@@ -5291,12 +5367,16 @@ public:
         }
       }
     }
+// #endif
     // Accumulate adjoints for the remaining non-self original parameters.
     for (unsigned i : applyInfo.actualIndices.parameters.set_bits()) {
+// #if 0
       // Do not set the adjoint of the original self parameter because we
       // already added it at the beginning.
-      if (ai->hasSelfArgument() && i == selfParamIndex)
+      // if (ai->hasSelfArgument() && i == selfParamIndex)
+      if (applyInfo.hasSelfArgument && i == selfParamIndex)
         continue;
+// #endif
       auto origArg = ai->getArgument(origNumIndRes + i);
       auto cotan = *allResultsIt++;
       // If a cotangent value corresponds to a non-desired parameter, it won't
@@ -5307,6 +5387,10 @@ public:
         continue;
       }
       if (cotan->getType().isAddress()) {
+        llvm::errs() << "DEBUGGING\n";
+        ai->dump();
+        pullbackCall->dump();
+        adjoint->dump();
         addToAdjointBuffer(origArg, cotan);
         emitCleanup(builder, loc, cotan);
       } else {
@@ -7348,14 +7432,6 @@ bool ADContext::processAttribute(
 // Differentiation pass implementation
 //===----------------------------------------------------------------------===//
 
-/// Given an `autodiff_function` instruction, find the corresponding
-/// differential operator used in the AST. If no differential operator is found,
-/// return nullptr.
-static AutoDiffFunctionExpr *findDifferentialOperator(
-    AutoDiffFunctionInst *inst) {
-  return inst->getLoc().getAsASTNode<AutoDiffFunctionExpr>();
-}
-
 /// The automatic differentiation pass.
 namespace {
 class Differentiation : public SILModuleTransform {
@@ -7572,7 +7648,7 @@ static SILFunction *getAutoDiffDerivativeThunk(
         paramIdx = i + 1;
     }
     llvm::errs() << "PULLBACK RESULT, i: " << i << ", PARAM IDX: " << paramIdx << "\n";
-    // TODO: Checek for self param first.
+    // TODO: Check for self param first.
     if (desiredIndices.isWrtParameter(paramIdx))
       results.push_back(allResults[i]);
     /*
@@ -7588,6 +7664,7 @@ static SILFunction *getAutoDiffDerivativeThunk(
 
   llvm::errs() << "INNER VJP THUNK\n";
   thunk->dump();
+  context.getGeneratedFunctions().push_back(thunk);
 
   /*
   SILFunction *thunk = fb.createFunction(
@@ -7712,13 +7789,27 @@ static SILFunction *getAutoDiffAssociatedFunctionThunk(
   SILValue derivative = directResults.back();
 
   auto *innerThunkFRI = builder.createFunctionRef(loc, innerThunk);
-  auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
+  // auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
+  auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, targetType->getCalleeConvention());
 
-  auto result = joinElements({originalDirectResult, newDerivative}, builder, loc);
+  llvm::errs() << "ORIGINAL DIRECT RESULT:\n";
+  originalDirectResult->dump();
+  llvm::errs() << "NEW DERIVATIVE:\n";
+  newDerivative->dump();
+
+  llvm::errs() << "THUNK\n";
+  thunk->dump();
+
+  SmallVector<SILValue, 2> finalResults;
+  finalResults.push_back(originalDirectResult);
+  finalResults.push_back(newDerivative);
+  // auto result = joinElements({originalDirectResult, newDerivative}, builder, loc);
+  auto result = joinElements(finalResults, builder, loc);
   builder.createReturn(loc, result);
 
   llvm::errs() << "THUNK\n";
   thunk->dump();
+  context.getGeneratedFunctions().push_back(thunk);
   /*
   SILFunctionCloner cloner(newF);
   cloner.cloneFunction(orig);
@@ -7732,7 +7823,7 @@ SILValue ADContext::promoteToDifferentiableFunction(
     unsigned differentiationOrder, DifferentiationInvoker invoker) {
   if (auto *ai = dyn_cast<ApplyInst>(origFnOperand)) {
     if (auto *sourceFn = dyn_cast<FunctionRefInst>(ai->getCallee())) {
-      llvm::errs() << "PROMOT AD FUNC CURRY THUNK FOUND!!!\n";
+      llvm::errs() << "PROMOTE AD FUNC CURRY THUNK FOUND!!!\n";
       // SILAutoDiffIndices desiredIndices(0, parameterIndices);
       SILAutoDiffIndices desiredIndices(resultIndex, parameterIndices);
       auto *orig = sourceFn->getReferencedFunction();
@@ -7809,8 +7900,9 @@ SILValue ADContext::promoteToDifferentiableFunction(
     if (!assocFnAndIndices) {
       // Show an error at the operator, highlight the argument, and show a note
       // at the definition site of the argument.
-      auto loc = invoker.getLocation();
-      diagnose(loc, diag::autodiff_function_not_differentiable).highlight(loc);
+      // NOTE: This is not necessary. `emitAssoc` already produces an error.
+      // auto loc = invoker.getLocation();
+      // diagnose(loc, diag::autodiff_function_not_differentiable).highlight(loc);
       return nullptr;
     }
 
@@ -7826,10 +7918,10 @@ SILValue ADContext::promoteToDifferentiableFunction(
            "FIXME: We could emit a thunk that converts the VJP to have the "
            "desired indices.");
     */
-    // TODO: BIG PROBLEM
     // SOLUTION: Generate a thunk (new vjp that drops some results)
-    // Maybe put @differentiable on generated function
     auto assocFn = assocFnAndIndices->first;
+    // TODO: Push back generated function ref within `emitAssoc`, not here.
+    getGeneratedFunctionReferences().push_back(assocFn);
     if (assocFnAndIndices->second != desiredIndices) {
       llvm::errs() << "DIFFERENT AUTODIFF INDICES, MISMATCH\n";
       auto actualADIndices = assocFnAndIndices->second;
@@ -7871,6 +7963,12 @@ bool ADContext::processAutoDiffFunctionInst(AutoDiffFunctionInst *adfi) {
       autodiff::getNumAutoDiffAssociatedFunctions(
           adfi->getDifferentiationOrder()))
     return false;
+  if (adfi->getNumAssociatedFunctions() != 0) {
+    llvm::errs() << "AUTODIFF FUNC INST SOME ASSOC FNS ARE FILLED IN\n";
+    adfi->dump();
+    assert(isa<AutoDiffFunctionInst>(adfi));
+    adfi->getFunction()->dump();
+  }
   assert(adfi->getNumAssociatedFunctions() == 0 &&
          "some functions are already filled in but not all of them");
 
@@ -7892,6 +7990,16 @@ bool ADContext::processAutoDiffFunctionInst(AutoDiffFunctionInst *adfi) {
   if (!newADFI)
     return true;
   adfi->replaceAllUsesWith(newADFI);
+  llvm::erase_if(getAutoDiffFunctionInsts(), [&](AutoDiffFunctionInst *i) {
+    return i == adfi;
+  });
+  /*
+  for (auto tmp : getAutoDiffFunctionInsts()) {
+    if (tmp == adfi) {
+      assert(false && "woah");
+    }
+  }
+  */
   adfi->eraseFromParent();
   transform.invalidateAnalysis(parent,
                                SILAnalysis::InvalidationKind::FunctionBody);
@@ -7921,7 +8029,6 @@ void Differentiation::run() {
           context.getInvokers().try_emplace({&f, diffAttr}, invoker);
       assert(insertion.second &&
              "[differentiable] attribute already has invoker");
-
       continue;
     }
     for (SILBasicBlock &bb : f)
@@ -8030,8 +8137,18 @@ void Differentiation::run() {
     for (auto &task : context.getDifferentiationTasks())
       context.clearTask(task.get());
     */
+    for (auto functionRef : context.getGeneratedFunctionReferences()) {
+      if (auto *functionRefInst = peerThroughFunctionConversions<FunctionRefInst>(functionRef)) {
+        llvm::errs() << "DELETING GENERATED FUNC REF: " << *functionRefInst << "\n";
+        // auto *undef = SILUndef::get(functionRefInst->getType(), context.getModule());
+        auto *undef = SILUndef::get(functionRefInst->getType(), functionRefInst->getModule());
+        functionRefInst->replaceAllUsesWith(undef);
+        functionRefInst->eraseFromParent();
+      }
+    }
     for (auto *generatedFunction : context.getGeneratedFunctions()) {
       llvm::errs() << "DELETING GENERATED FUNC: " << generatedFunction->getName() << "\n";
+      generatedFunction->dropAllReferences();
       transform.notifyWillDeleteFunction(generatedFunction);
       module.eraseFunction(generatedFunction);
     }

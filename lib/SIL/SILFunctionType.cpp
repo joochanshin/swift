@@ -221,7 +221,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   // results/parameters of the differential/pullback.
   SmallVector<SILParameterInfo, 4> wrtParams;
   // Make the self parameter appear first in the results/parameters of the
-  // differntial/pullback, even though it's the last parameter of the original
+  // differential/pullback, even though it's the last parameter of the original
   // method.
   if (getExtInfo().hasSelfParam() &&
       isWrtIndex(getNumParameters() - 1))

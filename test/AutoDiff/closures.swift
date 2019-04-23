@@ -1,3 +1,4 @@
+// RUN: %target-swift-frontend -emit-sil %s
 // RUN: %target-swift-frontend -emit-sil %s | %FileCheck %s
 
 struct Foo {
@@ -25,8 +26,6 @@ public func closureCaptureMutable() {
 
 // CHECK-LABEL: @AD__{{.*}}closureCaptureMutable{{.*}}___vjp_src_0_wrt_0
 // CHECK: bb0({{%.*}} : $Float, [[BOXED_ARG:%.*]] : ${ var Float }):
-// CHECK:   [[PRIMAL:%.*]] = function_ref @AD__{{.*}}closureCaptureMutable{{.*}}___primal_src_0_wrt_0
-// CHECK:   {{.*}} = apply [[PRIMAL]]({{.*}}, [[BOXED_ARG]])
 // CHECK:   [[ADJOINT:%.*]] = function_ref @AD__{{.*}}closureCaptureMutabley{{.*}}___adjoint_src_0_wrt_0
 // CHECK:   {{.*}} = partial_apply [callee_guaranteed] [[ADJOINT]]({{.*}})
 

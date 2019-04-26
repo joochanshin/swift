@@ -1261,6 +1261,8 @@ public:
           llvm::errs() << "\n";
           llvm::errs() << "ORIG TYPE:\n";
           origTy->dump();
+          llvm::errs() << "ORIG:\n";
+          adfi->getOriginalFunction()->dumpInContext();
         }
         auto vjpType = pair.second->getType().getAs<SILFunctionType>();
         require(vjpType, "The VJP function must have a function type");
@@ -1270,14 +1272,26 @@ public:
             adfi->getParameterIndices(), /*resultIndex*/ 0, order,
             AutoDiffAssociatedFunctionKind::VJP, F.getModule(),
             LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        /*
+        auto jvpSILTypeEqual = pair.first->getType() == SILType::getPrimitiveObjectType(expectedJVPType);
+        auto vjpSILTypeEqual = pair.second->getType() == SILType::getPrimitiveObjectType(expectedVJPType);
+        */
+        auto jvpSILTypeEqual = expectedJVPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
+        auto vjpSILTypeEqual = expectedVJPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
         if (expectedVJPType != vjpType) {
           llvm::errs() << "UNEXPECTED VJP TYPE\n";
           llvm::errs() << "ACTUAL VS EXPECTED\n";
           vjpType->dump();
           expectedVJPType->dump();
+          llvm::errs() << "SIL TYPES EQUAL? " << vjpSILTypeEqual << "\n";
+          expectedVJPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin)->dump();
         }
+        /*
         require(expectedJVPType == jvpType, "Unexpected JVP function type");
         require(expectedVJPType == vjpType, "Unexpected VJP function type");
+        */
+        require(jvpSILTypeEqual, "Unexpected JVP function type");
+        require(vjpSILTypeEqual, "Unexpected VJP function type");
       }
     }
   }

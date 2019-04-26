@@ -116,6 +116,8 @@ void SILDifferentiableAttr::setRequirements(
 
 void SILFunction::addDifferentiableAttr(SILDifferentiableAttr *attr) {
   attr->Original = this;
+  // TODO: Verify that the `[differentiable]` attributes is not a duplicate
+  // (same indices and requirements).
   DifferentiableAttrs.push_back(attr);
 }
 

@@ -21,6 +21,7 @@
 
 #define DEBUG_TYPE "differentiation"
 
+#include "swift/AST/AnyFunctionRef.h"
 #include "swift/AST/ASTMangler.h"
 #include "swift/AST/ASTPrinter.h"
 #include "swift/AST/AutoDiff.h"
@@ -596,6 +597,89 @@ void DifferentiationInvoker::print(llvm::raw_ostream &os) const {
   os << ')';
 }
 
+bool checkRequirementsSatisfied(
+    SubstitutionMap substMap, ModuleDecl *swiftModule,
+    ArrayRef<Requirement> requirements) {
+  if (requirements.empty())
+    return true;
+  // Jointly iterate through associated function requirements/conformances.
+  // Check whether all requirements are satisfied.
+  SmallVector<Requirement, 2> unsatisfiedRequirements;
+  // auto conformances = substMap.getConformances();
+  for (auto req : requirements) {
+    auto firstType = req.getFirstType();
+    auto secondType = req.getSecondType();
+    llvm::errs() << "REQUIREMENT\n";
+    req.dump();
+    switch (req.getKind()) {
+        // Check same type requirements.
+      case RequirementKind::SameType: {
+        if (auto origFirstType = firstType.subst(substMap))
+          firstType = origFirstType;
+        if (auto origSecondType = secondType.subst(substMap))
+          secondType = origSecondType;
+        // If the second type is a dependent member type, try to resolve it
+        // using the first type as the base type.
+        // TODO: Add checks verifying that first type can be the base type.
+        if (auto depMemType = secondType->getAs<DependentMemberType>()) {
+          if (!firstType->hasTypeParameter())
+            if (auto substType = depMemType->substBaseType(
+                    firstType, LookUpConformanceInModule(swiftModule)))
+              secondType = substType->getCanonicalType();
+        }
+        if (!firstType->isEqual(secondType))
+          unsatisfiedRequirements.push_back(req);
+        continue;
+      }
+      // Check conformance requirements.
+      case RequirementKind::Conformance: {
+        auto protocolType = req.getSecondType()->castTo<ProtocolType>();
+        auto protocol = protocolType->getDecl();
+        assert(protocol && "Expected protocol in generic signature requirement");
+        // Try substituting requirement type using original substutition map.
+        // If the result type is known to conform to protocol in the current
+        // module, continue.
+        // This handles cases where the primal caller is non-generic
+        // (specialized with concrete types) but the associated derivative
+        // callee is generic.
+        if (auto origFirstType = firstType.subst(substMap)) {
+          if (!origFirstType->hasError() &&
+              swiftModule->lookupConformance(origFirstType, protocol)) {
+            // conformances = conformances.slice(1);
+            continue;
+          }
+        }
+        // llvm::errs() << "CONFORMANCE:\n";
+        // conformance.dump();
+        llvm::errs() << "FIRST TYPE:\n";
+        firstType->dump();
+        // Otherwise, try to look up conformance in substitution maps.
+        auto isConformanceMet = substMap.lookupConformance(
+            firstType->getCanonicalType(), protocol);
+        if (!isConformanceMet)
+          unsatisfiedRequirements.push_back(req);
+        // conformances = conformances.slice(1);
+        continue;
+      }
+      // Ignore other requirements (superclass and layout).
+    default:
+      continue;
+    }
+  }
+  // Diagnose unsatisfied requirements.
+  for (auto req : unsatisfiedRequirements) {
+    LLVM_DEBUG(auto &s = getADDebugStream() << "Unsatisfied requirement:\n";
+               req.print(s, PrintOptions());
+               s << '\n');
+  }
+  if (!unsatisfiedRequirements.empty()) {
+    // context.emitNondifferentiabilityError(
+    //     ai, invoker, diag::autodiff_function_assoc_func_requirements_unmet);
+    return false;
+  }
+  return true;
+}
+
 //===----------------------------------------------------------------------===//
 // ADContext - Per-module contextual information for the Differentiation pass.
 //===----------------------------------------------------------------------===//
@@ -695,7 +779,7 @@ public:
   getDifferentiationTasks() const {
     return differentiationTasks;
   }
-   */
+  */
 
   SmallVector<AutoDiffFunctionInst *, 32>
   &getAutoDiffFunctionInsts() {
@@ -807,10 +891,29 @@ public:
   /// hashing on SILFunction's side or maintaining a dictionary in ADContext.
   /// In any case, this is not performance-critical.
   SILDifferentiableAttr *lookUpDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices) const {
-    for (auto *attr : original->getDifferentiableAttrs())
-      if (attr->getIndices() == indices)
-        return attr;
+      SILFunction *original, const SILAutoDiffIndices &indices,
+      SubstitutionMap substMap = SubstitutionMap()) const {
+    for (auto *attr : original->getDifferentiableAttrs()) {
+      if (attr->getIndices() != indices)
+        continue;
+      if (!checkRequirementsSatisfied(substMap, getModule().getSwiftModule(), attr->getRequirements()))
+        continue;
+      /*
+      bool reqSatisfied = true;
+      for (auto req : attr->getRequirements()) {
+        llvm::errs() << "REQUIREDMENT SATISFIED? " << (substMap.getGenericSignature() && substMap.getGenericSignature()->isRequirementSatisfied(req)) << "\n";
+        req.dump();
+        // substMap.getGenericSignature()->requirementsNotSatisfiedBy(<#GenericSignature *otherSig#>)
+        if (!substMap.getGenericSignature() || !substMap.getGenericSignature()->isRequirementSatisfied(req)) {
+          reqSatisfied = false;
+          break;
+        }
+      }
+      if (!reqSatisfied)
+        continue;
+      */
+      return attr;
+    }
     return nullptr;
   }
 
@@ -822,21 +925,39 @@ public:
   /// hashing on SILFunction's side or maintaining a dictionary in ADContext.
   /// In any case, this is not performance-critical.
   SILDifferentiableAttr *lookUpMinimalDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices) const {
+      SILFunction *original, const SILAutoDiffIndices &indices,
+      SubstitutionMap substMap = SubstitutionMap()) const {
     /*
     for (auto *attr : original->getDifferentiableAttrs())
       if (attr->getIndices() == indices)
         return attr;
     return nullptr;
     */
+    llvm::errs() << "SUBST MAP\n";
+    substMap.dump();
     auto supersetParamIndices = llvm::SmallBitVector();
     const auto &indexSet = indices.parameters;
-    if (auto *exactAttr = lookUpDifferentiableAttr(original, indices))
+    if (auto *exactAttr = lookUpDifferentiableAttr(original, indices, substMap))
       return exactAttr;
     SILDifferentiableAttr *minimalAttr = nullptr;
     for (auto *rda : original->getDifferentiableAttrs()) {
       if (rda->getIndices().source != indices.source)
         continue;
+      if (!checkRequirementsSatisfied(substMap, getModule().getSwiftModule(), rda->getRequirements()))
+        continue;
+      /*
+      bool reqSatisfied = true;
+      for (auto req : rda->getRequirements()) {
+        llvm::errs() << "REQUIREDMENT SATISFIED? " << (substMap.getGenericSignature() && substMap.getGenericSignature()->isRequirementSatisfied(req)) << "\n";
+        req.dump();
+        if (!substMap.getGenericSignature() || !substMap.getGenericSignature()->isRequirementSatisfied(req)) {
+          reqSatisfied = false;
+          break;
+        }
+      }
+      if (!reqSatisfied)
+        continue;
+      */
       const auto &rdaIndexSet = rda->getIndices().parameters;
       // If all indices in indexSet are in rdaIndexSet, and it has fewer
       // indices than our current candidate and a primitive adjoint, rda is our
@@ -925,14 +1046,32 @@ public:
 
   /// Tries to promote origFnOperand which is of function type to an autodiff
   /// function.
+  /*
   SILValue promoteToDifferentiableFunction(
       SILBuilder &builder, SILLocation loc, SILValue origFnOperand,
       const llvm::SmallBitVector &parameterIndices, unsigned resultIndex,
       unsigned differentiationOrder, DifferentiationInvoker invoker);
+  */
+  SILValue promoteToDifferentiableFunction(
+      AutoDiffFunctionInst *inst, SILBuilder &builder, SILLocation loc,
+      DifferentiationInvoker invoker);
+
 
   /// For an autodiff_function instruction that is missing associated functions,
   /// fill those in.
   bool processAutoDiffFunctionInst(AutoDiffFunctionInst *adfi);
+
+  // TODO: Document.
+  SILFunction *getAutoDiffAssociatedFunctionThunk(
+      SILValue origFnOperand, SILValue assocFn,
+      AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
+      SILAutoDiffIndices actualIndices);
+
+  // TODO: Document.
+  SILFunction *getAutoDiffDerivativeThunk(
+      SILFunction *assocFn, CanSILFunctionType derivativeType,
+      CanSILFunctionType targetType, AutoDiffAssociatedFunctionKind kind,
+      SILAutoDiffIndices desiredIndices, SILAutoDiffIndices actualIndices);
 
 public:
   /// Declare an external reference to an associated function of `original`,
@@ -1739,6 +1878,38 @@ reapplyFunctionConversion(SILValue newFunc, SILValue oldFunc,
   llvm_unreachable("Unhandled function convertion instruction");
 }
 
+static SubstitutionMap getSubstitutionMap(
+      SILValue value, SubstitutionMap substMap = SubstitutionMap()) {
+  if (auto *thinToThick = dyn_cast<ThinToThickFunctionInst>(value))
+    return getSubstitutionMap(thinToThick->getOperand(), substMap);
+  if (auto *convertFn = dyn_cast<ConvertFunctionInst>(value))
+    return getSubstitutionMap(convertFn->getOperand(), substMap);
+  if (auto *convertFn = dyn_cast<ConvertEscapeToNoEscapeInst>(value))
+    return getSubstitutionMap(convertFn->getOperand(), substMap);
+  if (auto *partialApply = dyn_cast<PartialApplyInst>(value)) {
+    auto appliedSubstMap = partialApply->getSubstitutionMap();
+    llvm::errs() << "WOW PARTIAL APPLY SUBST MAP\n";
+    appliedSubstMap.dump();
+    // IF TYPE DOESN'T WORK, DON'T WORRY: TRACE BACK TO ORIGIN FIRST
+    llvm::errs() << "WOW PARTIAL APPLY CALLEE TYPE\n";
+    partialApply->getCallee()->getType().dump();
+    if (appliedSubstMap.empty())
+      return getSubstitutionMap(partialApply->getCallee(), substMap);
+
+    /*
+    auto newSubstMap = SubstitutionMap::get(
+        appliedSubstMap->get
+        QuerySubstitutionMap{origSubstMap},
+        LookUpConformanceInModule(swiftModule));
+    */
+    return getSubstitutionMap(partialApply->getCallee(), appliedSubstMap);
+  }
+  if (auto *apply = dyn_cast<ApplyInst>(value)) {
+    return getSubstitutionMap(apply->getCallee(), apply->getSubstitutionMap());
+  }
+  return substMap;
+}
+
 template<class Inst>
 static Inst *peerThroughFunctionConversions(SILValue value) {
   if (auto *inst = dyn_cast<Inst>(value))
@@ -2028,14 +2199,29 @@ emitAssociatedFunctionReference(ADContext &context, SILBuilder &builder,
     }
   }
 
+  // Accumulate contextual requirements.
+  // Maybe important only for func_ref and witness method?
+  SubstitutionMap origSubstMap;
+
   // Find local function reference.
   if (auto *originalFRI =
           peerThroughFunctionConversions<FunctionRefInst>(original)) {
     auto loc = originalFRI->getLoc();
     auto *originalFn = originalFRI->getReferencedFunction();
 
+    // NOTE: THIS IS NEW!
+    auto substMap = getSubstitutionMap(original);
     auto *minimalAttr =
-        context.lookUpMinimalDifferentiableAttr(originalFn, desiredIndices);
+        context.lookUpMinimalDifferentiableAttr(originalFn, desiredIndices, substMap);
+    llvm::errs() << "WOW EMIT ASSOC FOR THIS ORIGINAL FUNC! (check for partial_apply subst map)\n";
+    original->dumpInContext();
+    original->getFunction()->dump();
+    llvm::errs() << "WOW MINIMAL ATTR? " << minimalAttr << "\n";
+    if (minimalAttr) {
+      minimalAttr->print(llvm::errs());
+      llvm::errs() << "\n";
+      substMap.dump();
+    }
     /*
     auto *task =
         context.lookUpMinimalDifferentiationTask(originalFn, desiredIndices);
@@ -2316,12 +2502,75 @@ static CanGenericSignature buildThunkSignature(SILFunction *fn,
                                                ArchetypeType *&newArchetype) {
   // If there's no opened existential, we just inherit the generic environment
   // from the parent function.
+  /*
   assert(openedExistential == nullptr && "Opened existential not yet handled");
   auto genericSig = fn->getLoweredFunctionType()->getGenericSignature();
   genericEnv = fn->getGenericEnvironment();
   interfaceSubs = fn->getForwardingSubstitutionMap();
   contextSubs = interfaceSubs;
   return genericSig;
+  */
+  
+  if (openedExistential == nullptr) {
+    auto genericSig = fn->getLoweredFunctionType()->getGenericSignature();
+    genericEnv = fn->getGenericEnvironment();
+    interfaceSubs = fn->getForwardingSubstitutionMap();
+    contextSubs = interfaceSubs;
+    return genericSig;
+  }
+
+  auto &ctx = fn->getASTContext();
+  GenericSignatureBuilder builder(ctx);
+
+  // Add the existing generic signature.
+  int depth = 0;
+  if (inheritGenericSig) {
+    if (auto genericSig = fn->getLoweredFunctionType()->getGenericSignature()) {
+      builder.addGenericSignature(genericSig);
+      depth = genericSig->getGenericParams().back()->getDepth() + 1;
+    }
+  }
+
+  // Add a new generic parameter to replace the opened existential.
+  auto *newGenericParam = GenericTypeParamType::get(depth, 0, ctx);
+
+  builder.addGenericParameter(newGenericParam);
+  Requirement newRequirement(RequirementKind::Conformance, newGenericParam,
+                             openedExistential->getOpenedExistentialType());
+  auto source =
+      GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+  builder.addRequirement(newRequirement, source, nullptr);
+
+  GenericSignature *genericSig = std::move(builder).computeGenericSignature(
+      SourceLoc(), /*allowConcreteGenericParams=*/true);
+  genericEnv = genericSig->createGenericEnvironment();
+
+  newArchetype = genericEnv->mapTypeIntoContext(newGenericParam)
+      ->castTo<ArchetypeType>();
+
+  // Calculate substitutions to map the caller's archetypes to the thunk's
+  // archetypes.
+  if (auto calleeGenericSig = fn->getLoweredFunctionType()
+          ->getGenericSignature()) {
+    contextSubs = SubstitutionMap::get(
+        calleeGenericSig,
+        [&](SubstitutableType *type) -> Type {
+          return genericEnv->mapTypeIntoContext(type);
+        },
+        MakeAbstractConformanceForGenericType());
+  }
+
+  // Calculate substitutions to map interface types to the caller's archetypes.
+  interfaceSubs = SubstitutionMap::get(
+      genericSig,
+      [&](SubstitutableType *type) -> Type {
+        if (type->isEqual(newGenericParam))
+          return openedExistential;
+        return fn->mapTypeIntoContext(type);
+      },
+      MakeAbstractConformanceForGenericType());
+
+  return genericSig->getCanonicalSignature();
 }
 
 /// Build the type of a function transformation thunk.
@@ -2343,7 +2592,8 @@ static CanSILFunctionType buildThunkType(SILFunction *fn,
 
   // Can't build a thunk without context, so we require ownership semantics
   // on the result type.
-  assert(expectedType->getExtInfo().hasContext());
+  // TODO: Probably re-enable.
+  // assert(expectedType->getExtInfo().hasContext());
 
   // This may inherit @noescape from the expectedType. The @noescape attribute
   // is only stripped when using this type to materialize a new decl.
@@ -2505,7 +2755,7 @@ static SILFunction *getOrCreateReabstractionThunk(SILOptFunctionBuilder &fb,
   SILFunctionConventions toConv(toType, module);
   assert(toConv.useLoweredAddresses());
 
-  auto fnArg = thunk->getArgumentsWithoutIndirectResults().back();
+  auto *fnArg = thunk->getArgumentsWithoutIndirectResults().back();
 
   SmallVector<SILValue, 4> arguments;
   auto toArgIter = thunk->getArguments().begin();
@@ -2582,10 +2832,10 @@ static SILFunction *getOrCreateReabstractionThunk(SILOptFunctionBuilder &fb,
   // Get return elements.
   SmallVector<SILValue, 4> results;
   // Extract all direct results.
-  SmallVector<SILValue, 4> dirResults;
-  extractAllElements(apply, builder, dirResults);
+  SmallVector<SILValue, 4> directResults;
+  extractAllElements(apply, builder, directResults);
 
-  auto fromDirResultsIter = dirResults.begin();
+  auto fromDirResultsIter = directResults.begin();
   auto fromIndResultsIter = apply->getIndirectSILResults().begin();
   auto toIndResultsIter = thunk->getIndirectResults().begin();
   // Reabstract results.
@@ -3984,14 +4234,34 @@ public:
       // Richard suggested path
       // apply <Float>(%orig)
       if (!ai->getSubstitutionMap().empty()) {
+        // NOTE: Checking contextual requirements here is impossible/fruitless.
         auto substMap = getOpSubstitutionMap(ai->getSubstitutionMap());
-        auto *vjpPartialApply = getBuilder().createPartialApply(
+        SILValue vjpPartialApply = getBuilder().createPartialApply(
             ai->getLoc(), original, substMap, {},
             ParameterConvention::Direct_Guaranteed);
         llvm::errs() << "VJP PARTIAL APPLY\n";
         vjpPartialApply->dump();
         vjpPartialApply->getType().dump();
         llvm::errs() << "PARTIAL APPLY SUBST MAP REQUIREMENTS\n";
+        auto partialApplyFnTy = vjpPartialApply->getType().castTo<SILFunctionType>();
+#if 0
+        if (partialApplyFnTy->getRepresentation() !=
+            originalFnTy->getRepresentation()) {
+          // methodType = methodType->getWithExtInfo(methodType->getExtInfo().withRepresentation(SILFunctionType::Representation::Method))
+          auto newPartialApplyFnTy = partialApplyFnTy->getWithExtInfo(partialApplyFnTy->getExtInfo().withRepresentation(originalFnTy->getRepresentation()));
+          vjpPartialApply = getBuilder().createConvertFunction(
+                                                               loc, vjpPartialApply, SILType::getPrimitiveObjectType(newPartialApplyFnTy),
+                                                               /*WithoutActuallyEscaping*/ false);
+        }
+#endif
+#if 0
+        if (originalFnTy->hasSelfParam()) {
+          auto newPartialApplyFnTy = partialApplyFnTy->getWithExtInfo(partialApplyFnTy->getExtInfo().withRepresentation(SILFunctionTypeRepresentation::Method));
+          vjpPartialApply = getBuilder().createConvertFunction(
+              loc, vjpPartialApply, SILType::getPrimitiveObjectType(newPartialApplyFnTy),
+              /*WithoutActuallyEscaping*/ false);
+        }
+#endif
         substMap.dump();
         target = vjpPartialApply;
         didPartialApply = true;
@@ -4003,6 +4273,19 @@ public:
       llvm::errs() << "\n";
 
       // assert(false && "wtf");
+      // THUNK HERE IF NECESSARY
+      if (ai->hasSelfArgument() && didPartialApply) {
+        SILOptFunctionBuilder fb(context.getTransform());
+        auto origFnTy = target->getType().castTo<SILFunctionType>();
+        llvm::errs() << "ORIG FN TYPE\n";
+        origFnTy->dump();
+        target->dumpInContext();
+        // assert(origFnTy->hasSelfParam());
+        // auto targetFnTy = origFnTy->getWithExtInfo(origFnTy->getExtInfo().withRepresentation(originalFnTy->getRepresentation()));
+        auto targetFnTy = origFnTy->getWithExtInfo(origFnTy->getExtInfo().withRepresentation(SILFunctionTypeRepresentation::Thick));
+        llvm::errs() << "HOLY COW THUNK TIME\n";
+        auto *thunk = getOrCreateReabstractionThunk(fb, context.getModule(), loc, vjp, origFnTy, targetFnTy);
+      }
 
       auto autoDiffFuncInst = getBuilder().createAutoDiffFunction(
           // loc, indices.parameters, /*differentiationOrder*/ 1, original);
@@ -5303,17 +5586,17 @@ public:
         ai->getLoc(), pullback, args, /*isNonThrowing*/ false);
 
     // Extract all results from `pullbackCall`.
-    SmallVector<SILValue, 8> dirResults;
-    extractAllElements(pullbackCall, builder, dirResults);
+    SmallVector<SILValue, 8> directResults;
+    extractAllElements(pullbackCall, builder, directResults);
     // Get all results in type-defined order.
     SmallVector<SILValue, 8> allResults;
     collectAllActualResultsInTypeOrder(
-        pullbackCall, dirResults, pullbackCall->getIndirectSILResults(),
+        pullbackCall, directResults, pullbackCall->getIndirectSILResults(),
         allResults);
     LLVM_DEBUG({
       auto &s = getADDebugStream();
       s << "All direct results of the nested pullback call:\n";
-      llvm::for_each(dirResults, [&](SILValue v) { s << v; });
+      llvm::for_each(directResults, [&](SILValue v) { s << v; });
       s << "All indirect results of the nested pullback call:\n";
       llvm::for_each(pullbackCall->getIndirectSILResults(),
                      [&](SILValue v) { s << v; });
@@ -7233,10 +7516,16 @@ SILFunction* createJVP(
       module.Types, originalTy->getGenericSignature());
 
   // === Create an empty JVP. ===
+  /*
   auto jvpName = original->getASTContext()
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__jvp_" + indices.mangle())
                      .str();
+  */
+  auto jvpNameStr = "AD__" + original->getName().str() + "__jvp_" + indices.mangle();
+  if (!attr->getRequirements().empty())
+    jvpNameStr += "_requirements_" + std::to_string(attr->getRequirements().size());
+  auto jvpName = original->getASTContext().getIdentifier(jvpNameStr).str();
   auto jvpGenericSig = getAssociatedFunctionGenericSignature(attr, original);
   auto *jvpGenericEnv = jvpGenericSig
       ? jvpGenericSig->createGenericEnvironment()
@@ -7271,6 +7560,7 @@ SILFunction* createJVP(
   // Return undef.
   SILBuilder builder(entry);
   auto loc = jvp->getLocation();
+  jvp->dump();
   builder.createReturn(
       loc, SILUndef::get(jvp->mapTypeIntoContext(jvpConv.getSILResultType()),
                          module));
@@ -7308,10 +7598,17 @@ SILFunction *createEmptyVJP(
       module.Types, originalTy->getGenericSignature());
 
   // === Create an empty VJP. ===
+  /*
   auto vjpName = original->getASTContext()
                      .getIdentifier("AD__" + original->getName().str() +
                                     "__vjp_" + indices.mangle())
                      .str();
+  */
+  auto vjpNameStr = "AD__" + original->getName().str() + "__vjp_" + indices.mangle();
+  if (!attr->getRequirements().empty())
+    vjpNameStr += "_requirements_" + std::to_string(attr->getRequirements().size());
+  auto vjpName = original->getASTContext().getIdentifier(vjpNameStr).str();
+
   auto vjpGenericSig = getAssociatedFunctionGenericSignature(attr, original);
   llvm::errs() << "VJP GENERIC SIG\n";
   if (vjpGenericSig)
@@ -7388,7 +7685,7 @@ bool ADContext::processAttribute(
   } else if (original->isExternalDeclaration()) {
     vjpName = original->getASTContext()
                   .getIdentifier("AD__" + original->getName().str() +
-				 "__vjp_" + attr->getIndices().mangle())
+				                         "__vjp_" + attr->getIndices().mangle())
                   .str();
   }
   if (!vjpName.empty()) {
@@ -7442,34 +7739,34 @@ public:
 } // end anonymous namespace
 
 // TODO: After creating thunk jvp/vjp, considering adding attribute on original function
-static SILFunction *getAutoDiffDerivativeThunk(
-    ADContext &context, SILFunction *assocFn,
-    CanSILFunctionType derivativeType, CanSILFunctionType targetType,
-    AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
-    SILAutoDiffIndices actualIndices) {
-  auto &astCtx = context.getASTContext();
+SILFunction *
+ADContext::getAutoDiffDerivativeThunk(
+    SILFunction *parentThunk, CanSILFunctionType derivativeType,
+    CanSILFunctionType targetType, AutoDiffAssociatedFunctionKind kind,
+    SILAutoDiffIndices desiredIndices, SILAutoDiffIndices actualIndices) {
+  auto &astCtx = getASTContext();
   SubstitutionMap interfaceSubs;
   GenericEnvironment *genericEnv = nullptr;
   auto thunkType = buildThunkType(
-      assocFn, derivativeType, targetType, genericEnv, interfaceSubs,
+      parentThunk, derivativeType, targetType, genericEnv, interfaceSubs,
       /*withoutActuallyEscaping*/ true);
   std::string thunkName;
   switch (kind) {
     case AutoDiffAssociatedFunctionKind::JVP:
-      thunkName = context.getASTContext()
-          .getIdentifier("AD__" + assocFn->getName().str() +
+      thunkName = getASTContext()
+          .getIdentifier("AD__" + parentThunk->getName().str() +
                          "__differential_" + desiredIndices.mangle())
           .str();
       break;
     case AutoDiffAssociatedFunctionKind::VJP:
-      thunkName = context.getASTContext()
-          .getIdentifier("AD__" + assocFn->getName().str() +
+      thunkName = getASTContext()
+          .getIdentifier("AD__" + parentThunk->getName().str() +
                          "__pullback_" + desiredIndices.mangle())
           .str();
       break;
   }
-  auto loc = assocFn->getLocation();
-  SILOptFunctionBuilder fb(context.getTransform());
+  auto loc = parentThunk->getLocation();
+  SILOptFunctionBuilder fb(getTransform());
   /*
   auto *thunk = fb.getOrCreateSharedFunction(
       loc, thunkName, thunkType, IsBare, IsTransparent, IsSerialized,
@@ -7479,9 +7776,9 @@ static SILFunction *getAutoDiffDerivativeThunk(
   auto *thunk = fb.getOrCreateFunction(
       loc, thunkName, SILLinkage::Hidden, thunkType,
       // loc, thunkName, assocFn->getLinkage(), thunkType,
-      assocFn->isBare(), assocFn->isTransparent(), assocFn->isSerialized(),
-      assocFn->isDynamicallyReplaceable(), assocFn->getEntryCount(),
-      assocFn->isThunk(), assocFn->getClassSubclassScope());
+      parentThunk->isBare(), parentThunk->isTransparent(), parentThunk->isSerialized(),
+      parentThunk->isDynamicallyReplaceable(), parentThunk->getEntryCount(),
+      parentThunk->isThunk(), parentThunk->getClassSubclassScope());
 
   if (!thunk->empty())
     return thunk;
@@ -7494,10 +7791,17 @@ static SILFunction *getAutoDiffDerivativeThunk(
 
   // PROBLEM: Need to check if instance method
   llvm::errs() << "KING\n";
+  thunk->dump();
   // assocFn->getLocation().getAsASTNode<FuncDecl>()->dump();
   // assocFn->getSelfArgument()->dump();
   // assocFn->getSelfArgument()->getType().getASTType()->dump();
-  auto isInstanceMethod = assocFn->hasSelfParam() && !assocFn->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
+  // auto isInstanceMethod = parentThunk->hasSelfParam() && !parentThunk->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
+
+  auto assocFnTy = parentThunk->getArguments().back()->getType().castTo<SILFunctionType>();
+  // assocFnTy->isS
+  auto isInstanceMethod = assocFnTy->hasSelfParam() && !assocFnTy->getSelfParameter().getType()->is<AnyMetatypeType>();
+  llvm::errs() << "MOMO ASSOC FN TY, IS INSTANCE? " << isInstanceMethod << "\n";
+  assocFnTy->dump();
 
   SmallVector<SILValue, 4> arguments;
   SmallVector<AllocStackInst *, 4> localAllocations;
@@ -7511,7 +7815,7 @@ static SILFunction *getAutoDiffDerivativeThunk(
     };
     llvm::errs() << "DERIVATIVE TYPE\n";
     derivativeType->dump();
-    auto *swiftMod = context.getModule().getSwiftModule();
+    auto *swiftMod = getModule().getSwiftModule();
     SmallBitVector parameters(actualIndices.parameters);
     /*
     if (assocFn->getLoweredFunctionType()->getExtInfo().hasSelfParam()) {
@@ -7528,8 +7832,12 @@ static SILFunction *getAutoDiffDerivativeThunk(
     }
     for (unsigned i : parameters.set_bits()) {
     */
+    /*
     llvm::errs() << "IS METHOD: " << assocFn->getLoweredFunctionType()->getExtInfo().hasSelfParam() << "\n";
     assocFn->getLoweredFunctionType()->dump();
+     */
+    llvm::errs() << "IS METHOD: " << targetType->hasSelfParam() << "\n";
+    targetType->dump();
     for (unsigned i : actualIndices.parameters.set_bits()) {
       llvm::errs() << "SET BIT: " << i << "\n";
     }
@@ -7574,7 +7882,7 @@ static SILFunction *getAutoDiffDerivativeThunk(
             auto *accessorDecl = zeroDecl->getAccessor(AccessorKind::Get);
             SILDeclRef accessorDeclRef(accessorDecl, SILDeclRef::Kind::Func);
             auto silFnType =
-                context.getTypeConverter().getConstantType(accessorDeclRef);
+                getTypeConverter().getConstantType(accessorDeclRef);
             // %wm = witness_method ...
             auto *getter = builder.createWitnessMethod(
                 loc, zeroType, *confRef, accessorDeclRef, silFnType);
@@ -7639,7 +7947,6 @@ static SILFunction *getAutoDiffDerivativeThunk(
     res->dump();
   for (unsigned i : actualIndices.parameters.set_bits()) {
     unsigned paramIdx = i;
-    assocFn->getLoweredFunctionType()->getExtInfo();
     // if (assocFn->getLoweredFunctionType()->getExtInfo().hasSelfParam()) {
     if (isInstanceMethod) {
       if (i == derivativeType->getNumResults() - 1)
@@ -7664,7 +7971,7 @@ static SILFunction *getAutoDiffDerivativeThunk(
 
   llvm::errs() << "INNER VJP THUNK\n";
   thunk->dump();
-  context.getGeneratedFunctions().push_back(thunk);
+  getGeneratedFunctions().push_back(thunk);
 
   /*
   SILFunction *thunk = fb.createFunction(
@@ -7679,8 +7986,15 @@ static SILFunction *getAutoDiffDerivativeThunk(
   return thunk;
 }
 
+/*
 static SILFunction *getAutoDiffAssociatedFunctionThunk(
     ADContext &context, SILValue origFnOperand, SILValue assocFn,
+    AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
+    SILAutoDiffIndices actualIndices) {
+*/
+SILFunction *
+ADContext::getAutoDiffAssociatedFunctionThunk(
+    SILValue origFnOperand, SILValue assocFn,
     AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
     SILAutoDiffIndices actualIndices) {
   llvm::errs() << "ORIG FN OPERAND, TO THUNK:\n";
@@ -7690,15 +8004,42 @@ static SILFunction *getAutoDiffAssociatedFunctionThunk(
   assocFn->dump();
   assocFn->getType().dump();
   auto origFnType = origFnOperand->getType().castTo<SILFunctionType>();
-  auto &module = context.getModule();
+  auto &module = getModule();
   auto lookupConformance = LookUpConformanceInModule(module.getSwiftModule());
 
-  auto thunkType = origFnType->getAutoDiffAssociatedFunctionType(
+  // TODO: Change thunk type.
+  auto assocFnType = assocFn->getType().castTo<SILFunctionType>();
+  auto targetType = origFnType->getAutoDiffAssociatedFunctionType(
       // desiredIndices.parameters, /*resultIndex*/ 0, /*differentiationOrder*/ 1,
       desiredIndices.parameters, desiredIndices.source, /*differentiationOrder*/ 1,
       kind, module, lookupConformance);
-  llvm::errs() << "THUNK TYPE\n";
+
+  // EXPERIMENT 1.
+  SubstitutionMap interfaceSubs;
+  GenericEnvironment *genericEnv = nullptr;
+  // TODO: replace with caller
+  auto thunkType = buildThunkType(
+      assocFn->getFunction(), assocFnType, targetType, genericEnv, interfaceSubs,
+      /*withoutActuallyEscaping*/ true);
+
+  /*
+  // EXPERIMENT 2.
+  SmallVector<SILParameterInfo, 4> thunkParams;
+  thunkParams.append(assocFnType->getParameters().begin(),
+                     assocFnType->getParameters().end());
+  auto thunkType = SILFunctionType::get(
+      assocFnType->getGenericSignature(), assocFnType->getExtInfo(),
+      assocFnType->getCoroutineKind(), assocFnType->getCalleeConvention(),
+      thunkParams, assocFnType->getYields(),
+      assocFnType->getResults(), assocFnType->getOptionalErrorResult(),
+      getASTContext());
+  */
+
+  // EXPERIMENT 3.
+  // auto thunkType = assocFnType;
+  llvm::errs() << "EXCITING THUNK TYPE\n";
   thunkType->dump();
+  // thunkType = targetType;
 
   /*
   auto linkage = SILLinkage::Hidden;
@@ -7709,42 +8050,59 @@ static SILFunction *getAutoDiffAssociatedFunctionThunk(
                              original->isDynamicallyReplaceable());
   */
 
-  auto *origFnRef = dyn_cast<FunctionRefInst>(origFnOperand);
-  auto *orig = origFnRef->getReferencedFunction();
-  auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
-  auto *assoc = assocFnRef->getReferencedFunction();
+  StringRef origName;
+  if (auto *origFnRef = dyn_cast<FunctionRefInst>(origFnOperand)) {
+    auto *orig = origFnRef->getReferencedFunction();
+    origName = orig->getName();
+  } else if (auto *origMethodInst = dyn_cast<MethodInst>(origFnOperand)) {
+    llvm::errs() << "WITNESS METHOD WOW\n";
+    origMethodInst->getMember().dump();
+    origName = origMethodInst->getMember().getAnyFunctionRef()->getAbstractFunctionDecl()->getNameStr();
+  }
   std::string thunkName;
   switch (kind) {
   case AutoDiffAssociatedFunctionKind::JVP:
-    thunkName = context.getASTContext()
-        .getIdentifier("AD__" + orig->getName().str() +
-                       "__jvp_" + desiredIndices.mangle())
+    thunkName = getASTContext()
+        .getIdentifier("AD__" + origName.str() + "__jvp_" + desiredIndices.mangle())
         .str();
     break;
   case AutoDiffAssociatedFunctionKind::VJP:
-    thunkName = context.getASTContext()
-        .getIdentifier("AD__" + orig->getName().str() +
-                       "__vjp_" + desiredIndices.mangle())
+    thunkName = getASTContext()
+        .getIdentifier("AD__" + origName.str() + "__vjp_" + desiredIndices.mangle())
         .str();
     break;
   }
 
   auto loc = origFnOperand.getLoc();
-  SILOptFunctionBuilder fb(context.getTransform());
+  SILOptFunctionBuilder fb(getTransform());
   /*
   auto *thunk = fb.getOrCreateSharedFunction(
       loc, thunkName, thunkType, IsBare, IsTransparent, IsSerialized,
       ProfileCounter(), IsNotThunk, IsNotDynamic);
   */
+  Mangle::ASTMangler mangler;
+  auto fromInterfaceType = assocFnType->mapTypeOutOfContext()->getCanonicalType();
+  auto toInterfaceType = targetType->mapTypeOutOfContext()->getCanonicalType();
+  thunkName = mangler.mangleReabstractionThunkHelper(
+      thunkType, fromInterfaceType, toInterfaceType,
+      module.getSwiftModule());
 
+  /*
+  auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
+  auto *assoc = assocFnRef->getReferencedFunction();
+  */
   // getAutoDiffFunctionLinkage(orig->getLinkage(), <#bool isExported#>)
   // TODO: May need to fix linkage.
   auto *thunk = fb.getOrCreateFunction(
       // loc, thunkName, assoc->getLinkage(), thunkType,
       loc, thunkName, SILLinkage::Hidden, thunkType,
+      IsBare, IsTransparent, IsNotSerialized,
+      IsNotDynamic, ProfileCounter(), IsThunk);
+  /*
       assoc->isBare(), assoc->isTransparent(), assoc->isSerialized(),
       assoc->isDynamicallyReplaceable(), assoc->getEntryCount(),
       assoc->isThunk(), assoc->getClassSubclassScope());
+   */
   if (!thunk->empty())
     return thunk;
 
@@ -7763,34 +8121,40 @@ static SILFunction *getAutoDiffAssociatedFunctionThunk(
   SILBuilder builder(entry);
   createEntryArguments(thunk);
 
-  auto *assocFRI = builder.createFunctionRef(loc, assoc);
-  SmallVector<SILValue, 4> args;
-  args.append(thunk->getArguments().begin(), thunk->getArguments().end());
-  auto *ai = builder.createApply(loc, assocFRI, SubstitutionMap(), args, /*isNonThrowing*/ false);
+  // auto *assocFnArg = thunk->getArgumentsWithoutIndirectResults().back();
+  auto *assocFnArg = thunk->getArguments().back();
+  // auto arguments = thunk->getArguments().drop_back();
+  auto arguments = map<SmallVector<SILValue, 8>>(thunk->getArguments().drop_back(), [](SILArgument *arg) { return arg; });
 
+  auto *apply = builder.createApply(
+      loc, assocFnArg, arguments, /*isNonThrowing*/ false);
+  // Extract all direct results.
+  SmallVector<SILValue, 8> directResults;
+  extractAllElements(apply, builder, directResults);
+  auto originalDirectResults =
+      ArrayRef<SILValue>(directResults).drop_back(1);
+  auto originalDirectResult =
+      joinElements(originalDirectResults, builder, apply->getLoc());
+  auto derivative = directResults.back();
+
+  // START HERE
   llvm::errs() << "DERIVATIVE TYPE, ORIG FN NUM RESULTS\n";
-  // auto pullbackType = assoc->getLoweredFunctionType()->getResults()[1].getType()->castTo<CanSILFunctionType>();
-  auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  // auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  auto derivativeType = assocFnType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
   derivativeType->dump();
   llvm::errs() << "AI (RESULT OF VJP)\n";
-  ai->dump();
+  apply->dump();
 
-  auto targetType = thunkType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
-  llvm::errs() << "TARGET TYPE\n";
-  targetType->dump();
-  auto *innerThunk = getAutoDiffDerivativeThunk(context, thunk, derivativeType, targetType, kind, desiredIndices, actualIndices);
-
-  SmallVector<SILValue, 8> directResults;
-  extractAllElements(ai, builder, directResults);
-  ArrayRef<SILValue> originalDirectResults =
-    ArrayRef<SILValue>(directResults).drop_back(1);
-  SILValue originalDirectResult =
-      joinElements(originalDirectResults, builder, ai->getLoc());
-  SILValue derivative = directResults.back();
+  auto derivativeTargetType = thunkType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  llvm::errs() << "DERIVATIVE TARGET TYPE\n";
+  derivativeTargetType->dump();
+  auto *innerThunk = getAutoDiffDerivativeThunk(
+      thunk, derivativeType, derivativeTargetType, kind, desiredIndices, actualIndices);
 
   auto *innerThunkFRI = builder.createFunctionRef(loc, innerThunk);
-  // auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
-  auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, targetType->getCalleeConvention());
+  // builder.createRetainValue(loc, derivative, builder.getDefaultAtomicity());
+  auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
+  // auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, targetType->getCalleeConvention());
 
   llvm::errs() << "ORIGINAL DIRECT RESULT:\n";
   originalDirectResult->dump();
@@ -7807,20 +8171,242 @@ static SILFunction *getAutoDiffAssociatedFunctionThunk(
   auto result = joinElements(finalResults, builder, loc);
   builder.createReturn(loc, result);
 
+  llvm::errs() << "EXCITING THUNK (is assoc fn argument not even used?)\n";
+  thunk->dump();
+  getGeneratedFunctions().push_back(thunk);
+  /*
+   SILFunctionCloner cloner(newF);
+   cloner.cloneFunction(orig);
+   */
+  return thunk;
+
+#if 0
+  // OLD START HERE
+  auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
+  auto *assoc = assocFnRef->getReferencedFunction();
+  auto *assocFRI = builder.createFunctionRef(loc, assoc);
+  SmallVector<SILValue, 4> args;
+  args.append(thunk->getArguments().begin(), thunk->getArguments().end());
+  auto *ai = builder.createApply(loc, assocFRI, SubstitutionMap(), args, /*isNonThrowing*/ false);
+
+  llvm::errs() << "DERIVATIVE TYPE, ORIG FN NUM RESULTS\n";
+  // auto pullbackType = assoc->getLoweredFunctionType()->getResults()[1].getType()->castTo<CanSILFunctionType>();
+  auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  derivativeType->dump();
+  llvm::errs() << "AI (RESULT OF VJP)\n";
+  ai->dump();
+
+  auto derivativeTargetType = thunkType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  llvm::errs() << "DERIVATIVE TARGET TYPE\n";
+  derivativeTargetType->dump();
+  auto *innerThunk = getAutoDiffDerivativeThunk(
+      thunk, derivativeType, derivativeTargetType, kind, desiredIndices, actualIndices);
+
+  auto *innerThunkFRI = builder.createFunctionRef(loc, innerThunk);
+  auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
+  // auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, targetType->getCalleeConvention());
+
+  llvm::errs() << "ORIGINAL DIRECT RESULT:\n";
+  originalDirectResult->dump();
+  llvm::errs() << "NEW DERIVATIVE:\n";
+  newDerivative->dump();
+
   llvm::errs() << "THUNK\n";
   thunk->dump();
-  context.getGeneratedFunctions().push_back(thunk);
+
+  SmallVector<SILValue, 2> finalResults;
+  finalResults.push_back(originalDirectResult);
+  finalResults.push_back(newDerivative);
+  // auto result = joinElements({originalDirectResult, newDerivative}, builder, loc);
+  auto result = joinElements(finalResults, builder, loc);
+  builder.createReturn(loc, result);
+
+  llvm::errs() << "EXCITING THUNK (is assoc fn argument not even used?)\n";
+  thunk->dump();
+  getGeneratedFunctions().push_back(thunk);
   /*
   SILFunctionCloner cloner(newF);
   cloner.cloneFunction(orig);
   */
   return thunk;
+#endif
 }
 
+#if 0
+bool checkGenericRequirements(SILValue assocFn) {
+  auto *caller = assocFn->getFunction();
+  auto *swiftModule = caller->getModule().getSwiftModule();
+  // auto origSubstMap = getOpSubstitutionMap(ai->getSubstitutionMap());
+  // auto origSubstMap = caller->getForwardingSubstitutionMap();
+
+  /*
+  llvm::errs() << "CALLER\n";
+  caller->dump();
+  */
+  auto *partialApply = dyn_cast<PartialApplyInst>(assocFn->getDefiningInstruction());
+  llvm::errs() << "ASSOC FN IS PARTIAL APPLY? " << partialApply << "\n";
+  assocFn->dump();
+  if (!partialApply)
+    return false;
+  // auto assocGenSig = assocSubstMap.getGenericSignature();
+
+  auto assocFnTy = assocFn->getType().castTo<SILFunctionType>();
+  // auto assocGenSig = assocFnTy->getGenericSignature();
+  // If associated derivative has no generic signature, then short-circuit and
+  // return remapped substitution map.
+  // TODO: Check if witness method alos
+  SubstitutionMap assocSubstMap;
+  if (auto *assocFnInst = peerThroughFunctionConversions<FunctionRefInst>(assocFn)) {
+    // llvm::errs() << "ASSOC FN, HAS GEN SIG? " << assocGenSig << ", FUNCTION REF? " << assocFnInst << "\n";
+    llvm::errs() << "ASSOC FN IS FUNCTION REF\n";
+    assocFnTy->dump();
+    assocFn->dumpInContext();
+    assocSubstMap = assocFnInst->getReferencedFunction()->getForwardingSubstitutionMap();
+  } else if (auto *assocFnMethodInst = peerThroughFunctionConversions<MethodInst>(assocFn)) {
+    llvm::errs() << "ASSOC FN IS METHOD INST\n";
+    auto fnRef = assocFnMethodInst->getMember().getAnyFunctionRef();
+    assocSubstMap = fnRef->getGenericEnvironment()->getForwardingSubstitutionMap();
+  } else {
+    assert(false && "we failed");
+  }
+  llvm::errs() << "ASSOC FN SUBST MAP\n";
+  assocSubstMap.dump();
+  if (assocSubstMap.empty()) {
+    return false;
+  }
+  /*
+  if (!assocGenSig)
+    return false;
+    // return origSubstMap;
+
+
+  // Get the associated function substitution map.
+  auto assocGenEnv = assocGenSig->createGenericEnvironment();
+  auto assocSubstMap = assocGenEnv->getForwardingSubstitutionMap();
+   */
+
+  // auto origSubstMap = caller->getForwardingSubstitutionMap();
+  // auto assocGenSig = partialApply->getSubstitutionMap().getGenericSignature();
+
+  // TODO: CONSIDER REPLACING THIS LOGIC.
+  assert(partialApply->getNumOperands() == 1);
+  // auto origSubstMap = partialApply->getSubstitutionMap();
+  auto origSubstMap = caller->getForwardingSubstitutionMap();
+  auto assocGenSig = dyn_cast<SingleValueInstruction>(partialApply->getOperand(0))->getType().castTo<SILFunctionType>()->getGenericSignature();
+  // NOTE: IMPROVE THIS CASE. IF ASSOC GEN SIG HAS NO SUBST MAP, THEN DEFINITELY NOT MET?
+  if (!assocGenSig) {
+    llvm::errs() << "NO ASSOC GEN SIG, WAT\n";
+    return true;
+  }
+  llvm::errs() << "ASSOC GEN SIG, REQUIREMENTS HERE ARE CHECKED!\n";
+  assocGenSig->dump();
+
+  auto endgame = SubstitutionMap::get(
+      assocSubstMap.getGenericSignature(),
+      QuerySubstitutionMap{origSubstMap},
+      LookUpConformanceInModule(swiftModule));
+
+  llvm::errs() << "PARTIAL APPLY SUBST MAP:\n";
+  partialApply->getSubstitutionMap().dump();
+  llvm::errs() << "CALLER SUBST MAP:\n";
+  caller->getForwardingSubstitutionMap().dump();
+  llvm::errs() << "END GAME SUBST MAP:\n";
+  endgame.dump();
+
+  // Jointly iterate through associated function requirements/conformances.
+  // Check whether all requirements are satisfied.
+  SmallVector<Requirement, 2> unsatisfiedRequirements;
+  auto conformances = assocSubstMap.getConformances();
+  for (auto req : assocGenSig->getRequirements()) {
+    auto firstType = req.getFirstType();
+    auto secondType = req.getSecondType();
+    llvm::errs() << "REQUIREMENT\n";
+    req.dump();
+    switch (req.getKind()) {
+        // Check same type requirements.
+      case RequirementKind::SameType: {
+        if (auto origFirstType = firstType.subst(origSubstMap))
+          firstType = origFirstType;
+        if (auto origSecondType = secondType.subst(origSubstMap))
+          secondType = origSecondType;
+        // If the second type is a dependent member type, try to resolve it
+        // using the first type as the base type.
+        // TODO: Add checks verifying that first type can be the base type.
+        if (auto depMemType = secondType->getAs<DependentMemberType>()) {
+          if (!firstType->hasTypeParameter())
+            if (auto substType = depMemType->substBaseType(
+                    firstType, LookUpConformanceInModule(swiftModule)))
+              secondType = substType->getCanonicalType();
+        }
+        if (!firstType->isEqual(secondType))
+          unsatisfiedRequirements.push_back(req);
+        continue;
+      }
+      // Check conformance requirements.
+      case RequirementKind::Conformance: {
+        auto conformance = conformances.front();
+        auto *proto = conformance.getAbstract();
+        assert(proto && "Expected protocol in generic signature requirement");
+        // Try substituting requirement type using original substutition map.
+        // If the result type is known to conform to protocol in the current
+        // module, continue.
+        // This handles cases where the primal caller is non-generic
+        // (specialized with concrete types) but the associated derivative
+        // callee is generic.
+        if (auto origFirstType = firstType.subst(origSubstMap)) {
+          if (!origFirstType->hasError() &&
+              swiftModule->lookupConformance(origFirstType, proto)) {
+            conformances = conformances.slice(1);
+            continue;
+          }
+        }
+        llvm::errs() << "CONFORMANCE:\n";
+        conformance.dump();
+        llvm::errs() << "FIRST TYPE:\n";
+        firstType->dump();
+        // Otherwise, try to look up conformance in substitution maps.
+        auto isConformanceMet = origSubstMap.lookupConformance(
+            firstType->getCanonicalType(), proto);
+        if (!isConformanceMet)
+          unsatisfiedRequirements.push_back(req);
+        conformances = conformances.slice(1);
+        continue;
+      }
+      // Ignore other requirements (superclass and layout).
+    default:
+      continue;
+    }
+  }
+  // Diagnose unsatisfied requirements.
+  for (auto req : unsatisfiedRequirements) {
+    LLVM_DEBUG(auto &s = getADDebugStream() << "Unsatisfied requirement:\n";
+               req.print(s, PrintOptions());
+               s << '\n');
+  }
+  if (!unsatisfiedRequirements.empty()) {
+    // context.emitNondifferentiabilityError(
+    //     ai, invoker, diag::autodiff_function_assoc_func_requirements_unmet);
+    return true;
+  }
+  return false;
+}
+#endif
+
+/*
 SILValue ADContext::promoteToDifferentiableFunction(
     SILBuilder &builder, SILLocation loc, SILValue origFnOperand,
     const llvm::SmallBitVector &parameterIndices, unsigned resultIndex,
     unsigned differentiationOrder, DifferentiationInvoker invoker) {
+*/
+SILValue ADContext::promoteToDifferentiableFunction(
+    AutoDiffFunctionInst *inst, SILBuilder &builder, SILLocation loc,
+    DifferentiationInvoker invoker) {
+  auto origFnOperand = inst->getOriginalFunction();
+  auto origFnTy = origFnOperand->getType().castTo<SILFunctionType>();
+  auto &parameterIndices = inst->getParameterIndices();
+  unsigned resultIndex = resultIndices[inst];
+  unsigned differentiationOrder = inst->getDifferentiationOrder();
+
   if (auto *ai = dyn_cast<ApplyInst>(origFnOperand)) {
     if (auto *sourceFn = dyn_cast<FunctionRefInst>(ai->getCallee())) {
       llvm::errs() << "PROMOTE AD FUNC CURRY THUNK FOUND!!!\n";
@@ -7889,11 +8475,9 @@ SILValue ADContext::promoteToDifferentiableFunction(
     }
   }
 
-  auto actualIndices = parameterIndices;
   SILAutoDiffIndices desiredIndices(resultIndex, parameterIndices);
   SmallVector<SILValue, 2> assocFns;
-  for (auto assocFnKind : {AutoDiffAssociatedFunctionKind::JVP,
-                           AutoDiffAssociatedFunctionKind::VJP}) {
+  for (auto assocFnKind : {AutoDiffAssociatedFunctionKind::JVP, AutoDiffAssociatedFunctionKind::VJP}) {
     auto assocFnAndIndices = emitAssociatedFunctionReference(
         *this, builder, desiredIndices, assocFnKind,
         origFnOperand, invoker);
@@ -7905,6 +8489,7 @@ SILValue ADContext::promoteToDifferentiableFunction(
       // diagnose(loc, diag::autodiff_function_not_differentiable).highlight(loc);
       return nullptr;
     }
+
 
     /*
     llvm::errs() << "ACTUAL VS DESIRED INDICES\n";
@@ -7920,19 +8505,32 @@ SILValue ADContext::promoteToDifferentiableFunction(
     */
     // SOLUTION: Generate a thunk (new vjp that drops some results)
     auto assocFn = assocFnAndIndices->first;
+    // if (genericAutoDiffInsts.count(inst) && checkGenericRequirements(assocFn)) {
+    /*
+    if (checkGenericRequirements(assocFn)) {
+      emitNondifferentiabilityError(
+          assocFn, invoker,
+          diag::autodiff_function_assoc_func_requirements_unmet);
+      return nullptr;
+      // assert(false && "WTF");
+    }
+    */
     // TODO: Push back generated function ref within `emitAssoc`, not here.
+    auto actualIndices = assocFnAndIndices->second;
     getGeneratedFunctionReferences().push_back(assocFn);
+    // Could change to: check if expected assoc type is different
+#if 0
     if (assocFnAndIndices->second != desiredIndices) {
       llvm::errs() << "DIFFERENT AUTODIFF INDICES, MISMATCH\n";
-      auto actualADIndices = assocFnAndIndices->second;
       llvm::errs() << "DESIRED: ";
       desiredIndices.print(llvm::errs());
       llvm::errs() << "\n";
       llvm::errs() << "ACTUAL: ";
-      actualADIndices.print(llvm::errs());
+      actualIndices.print(llvm::errs());
       llvm::errs() << "\n";
+      // NOTE: This is literally creating a new jvp/vjp, instead we could create a thunk and partial_apply
       auto *thunk = getAutoDiffAssociatedFunctionThunk(
-          *this, origFnOperand, assocFn, assocFnKind, desiredIndices, actualADIndices);
+          origFnOperand, assocFn, assocFnKind, desiredIndices, actualIndices);
       auto *thunkFRI = builder.createFunctionRef(loc, thunk);
       // assocFn = builder.createPartialApply(loc, thunkFRI, SubstitutionMap(), {assocFn}, ParameterConvention::Direct_Guaranteed);
       assocFn = thunkFRI;
@@ -7947,14 +8545,49 @@ SILValue ADContext::promoteToDifferentiableFunction(
       assocFn->dump();
       builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     }
+#endif
+    auto expectedAssocFnTy = origFnTy->getAutoDiffAssociatedFunctionType(
+        parameterIndices, resultIndex, differentiationOrder,
+        assocFnKind, getModule(),
+        LookUpConformanceInModule(getModule().getSwiftModule()));
+    llvm::errs() << "HEY ORIG FN TY\n";
+    origFnTy->dump();
+    origFnOperand->dumpInContext();
+    assocFn->getType().getASTType()->dump();
+    llvm::errs() << "HEY EXPECTED ASSOC FN TY\n";
+    assocFn->getType().getASTType()->dump();
+    expectedAssocFnTy->dump();
+    auto assocFnType = assocFn->getType().castTo<SILFunctionType>();
+    // if (assocFn->getType() != expectedAssocFnTy) {
+    // if (!assocFn->getType().getASTType()->isEqual(expectedAssocFnTy)) {
+    // if (assocFn->getType() != SILType::getPrimitiveObjectType(expectedAssocFnTy)) {
+    if (!assocFnType->isEqual(expectedAssocFnTy)) {
+      assocFn->dump();
+      // IF NOT EQUAL, IT'S BC VJP/JVP ARE DEFINED IN TERMS OF METHOD TYPE
+      llvm::errs() << "WEIRD TYPES ARE NOT EQUAL AFTER EMIT ASSOC\n";
+      assocFn->getType().dump();
+      SILType::getPrimitiveObjectType(expectedAssocFnTy).dump();
+      // assert(false && "UNEQUAL");
+      auto *thunk = getAutoDiffAssociatedFunctionThunk(
+          origFnOperand, assocFn, assocFnKind, desiredIndices, actualIndices);
+      llvm::errs() << "USEFUL THUNK?\n";
+      thunk->dump();
+      auto *thunkFRI = builder.createFunctionRef(loc, thunk);
+      assocFn = builder.createPartialApply(
+          loc, thunkFRI, thunk->getForwardingSubstitutionMap(),
+          /// {assocFn}, assocFnType->getCalleeConvention());
+          {assocFn}, ParameterConvention::Direct_Guaranteed);
+          // {assocFn}, expectedAssocFnTy->getCalleeConvention());
+    }
+
     assocFns.push_back(assocFn);
   }
 
   auto *adfi = builder.createAutoDiffFunction(
-      // loc, parameterIndices, differentiationOrder, origFnOperand, assocFns);
-      loc, actualIndices, differentiationOrder, origFnOperand, assocFns);
+      loc, parameterIndices, differentiationOrder, origFnOperand, assocFns);
   resultIndices[adfi] = resultIndex;
   getAutoDiffFunctionInsts().push_back(adfi);
+  adfi->getFunction()->dump();
   return adfi;
 }
 
@@ -7984,9 +8617,12 @@ bool ADContext::processAutoDiffFunctionInst(AutoDiffFunctionInst *adfi) {
   auto invoker = getInvoker(adfi);
   llvm::errs() << "RESULT INDEX: " << resultIndices[adfi] << "\n";
   adfi->dump();
+  /*
   auto newADFI = promoteToDifferentiableFunction(
       builder, loc, adfi->getOriginalFunction(), adfi->getParameterIndices(),
       resultIndices[adfi], adfi->getDifferentiationOrder(), invoker);
+  */
+  auto newADFI = promoteToDifferentiableFunction(adfi, builder, loc, invoker);
   if (!newADFI)
     return true;
   adfi->replaceAllUsesWith(newADFI);

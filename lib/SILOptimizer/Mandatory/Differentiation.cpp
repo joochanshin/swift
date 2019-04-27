@@ -8573,13 +8573,21 @@ SILValue ADContext::promoteToDifferentiableFunction(
       llvm::errs() << "USEFUL THUNK?\n";
       thunk->dump();
       auto *thunkFRI = builder.createFunctionRef(loc, thunk);
+      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
+      builder.createRetainValue(loc, thunkFRI, builder.getDefaultAtomicity());
       assocFn = builder.createPartialApply(
           loc, thunkFRI, thunk->getForwardingSubstitutionMap(),
           /// {assocFn}, assocFnType->getCalleeConvention());
           {assocFn}, ParameterConvention::Direct_Guaranteed);
+          // {assocFn}, assocFnType->getCalleeConvention());
           // {assocFn}, expectedAssocFnTy->getCalleeConvention());
+      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
+    } else {
+      llvm::errs() << "CONSISTENT AD FUNC TYPE, NO MISMATCH\n";
+      assocFn->dump();
+      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     }
-
+    builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     assocFns.push_back(assocFn);
   }
 

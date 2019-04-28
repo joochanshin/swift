@@ -7798,10 +7798,13 @@ ADContext::getAutoDiffDerivativeThunk(
   // auto isInstanceMethod = parentThunk->hasSelfParam() && !parentThunk->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
 
   auto assocFnTy = parentThunk->getArguments().back()->getType().castTo<SILFunctionType>();
-  // assocFnTy->isS
   auto isInstanceMethod = assocFnTy->hasSelfParam() && !assocFnTy->getSelfParameter().getType()->is<AnyMetatypeType>();
   llvm::errs() << "MOMO ASSOC FN TY, IS INSTANCE? " << isInstanceMethod << "\n";
   assocFnTy->dump();
+#if 0
+  auto assocFn = parentThunk;
+  auto isInstanceMethod = assocFn->hasSelfParam() && !assocFn->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
+#endif
 
   SmallVector<SILValue, 4> arguments;
   SmallVector<AllocStackInst *, 4> localAllocations;
@@ -8014,6 +8017,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       desiredIndices.parameters, desiredIndices.source, /*differentiationOrder*/ 1,
       kind, module, lookupConformance);
 
+  // START ALL THE WAY UP HERE
   // EXPERIMENT 1.
   SubstitutionMap interfaceSubs;
   GenericEnvironment *genericEnv = nullptr;
@@ -8063,12 +8067,12 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   switch (kind) {
   case AutoDiffAssociatedFunctionKind::JVP:
     thunkName = getASTContext()
-        .getIdentifier("AD__" + origName.str() + "__jvp_" + desiredIndices.mangle())
+        .getIdentifier("AD__" + origName.str() + "__jvp_" + desiredIndices.mangle() + "_thunk_")
         .str();
     break;
   case AutoDiffAssociatedFunctionKind::VJP:
     thunkName = getASTContext()
-        .getIdentifier("AD__" + origName.str() + "__vjp_" + desiredIndices.mangle())
+        .getIdentifier("AD__" + origName.str() + "__vjp_" + desiredIndices.mangle() + "_thunk_")
         .str();
     break;
   }
@@ -8083,9 +8087,11 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   Mangle::ASTMangler mangler;
   auto fromInterfaceType = assocFnType->mapTypeOutOfContext()->getCanonicalType();
   auto toInterfaceType = targetType->mapTypeOutOfContext()->getCanonicalType();
+  /*
   thunkName = mangler.mangleReabstractionThunkHelper(
       thunkType, fromInterfaceType, toInterfaceType,
       module.getSwiftModule());
+  */
 
   /*
   auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
@@ -8105,6 +8111,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
    */
   if (!thunk->empty())
     return thunk;
+  thunk->setUnqualifiedOwnership();
 
   /*
   SILFunction *thunk = fb.createFunction(
@@ -8126,6 +8133,10 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   // auto arguments = thunk->getArguments().drop_back();
   auto arguments = map<SmallVector<SILValue, 8>>(thunk->getArguments().drop_back(), [](SILArgument *arg) { return arg; });
 
+  builder.createRetainValue(loc, assocFnArg, builder.getDefaultAtomicity());
+  for (auto arg : arguments) {
+    builder.createRetainValue(loc, arg, builder.getDefaultAtomicity());
+  }
   auto *apply = builder.createApply(
       loc, assocFnArg, arguments, /*isNonThrowing*/ false);
   // Extract all direct results.
@@ -8137,7 +8148,6 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       joinElements(originalDirectResults, builder, apply->getLoc());
   auto derivative = directResults.back();
 
-  // START HERE
   llvm::errs() << "DERIVATIVE TYPE, ORIG FN NUM RESULTS\n";
   // auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
   auto derivativeType = assocFnType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
@@ -8152,7 +8162,8 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       thunk, derivativeType, derivativeTargetType, kind, desiredIndices, actualIndices);
 
   auto *innerThunkFRI = builder.createFunctionRef(loc, innerThunk);
-  // builder.createRetainValue(loc, derivative, builder.getDefaultAtomicity());
+  builder.createRetainValue(loc, derivative, builder.getDefaultAtomicity());
+  // builder.createRetainValue(loc, innerThunkFRI, builder.getDefaultAtomicity());
   auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
   // auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, targetType->getCalleeConvention());
 
@@ -8174,27 +8185,68 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   llvm::errs() << "EXCITING THUNK (is assoc fn argument not even used?)\n";
   thunk->dump();
   getGeneratedFunctions().push_back(thunk);
-  /*
-   SILFunctionCloner cloner(newF);
-   cloner.cloneFunction(orig);
-   */
   return thunk;
 
 #if 0
   // OLD START HERE
+  auto thunkType = targetType;
+  StringRef origName;
+  if (auto *origFnRef = dyn_cast<FunctionRefInst>(origFnOperand)) {
+    auto *orig = origFnRef->getReferencedFunction();
+    origName = orig->getName();
+  } else if (auto *origMethodInst = dyn_cast<MethodInst>(origFnOperand)) {
+    llvm::errs() << "WITNESS METHOD WOW\n";
+    origMethodInst->getMember().dump();
+    origName = origMethodInst->getMember().getAnyFunctionRef()->getAbstractFunctionDecl()->getNameStr();
+  }
+  std::string thunkName;
+  switch (kind) {
+    case AutoDiffAssociatedFunctionKind::JVP:
+      thunkName = getASTContext()
+      .getIdentifier("AD__" + origName.str() + "__jvp_" + desiredIndices.mangle() + "_thunk_")
+      .str();
+      break;
+    case AutoDiffAssociatedFunctionKind::VJP:
+      thunkName = getASTContext()
+      .getIdentifier("AD__" + origName.str() + "__vjp_" + desiredIndices.mangle() + "_thunk_")
+      .str();
+      break;
+  }
+
+  auto loc = origFnOperand.getLoc();
+  SILOptFunctionBuilder fb(getTransform());
+  // getAutoDiffFunctionLinkage(orig->getLinkage(), <#bool isExported#>)
+  // TODO: May need to fix linkage.
+  auto *thunk = fb.getOrCreateFunction(
+      // loc, thunkName, assoc->getLinkage(), thunkType,
+      loc, thunkName, SILLinkage::Hidden, thunkType,
+      IsBare, IsTransparent, IsNotSerialized,
+      IsNotDynamic, ProfileCounter(), IsThunk);
+  if (!thunk->empty())
+    return thunk;
+
+  auto *entry = thunk->createBasicBlock();
+  SILBuilder builder(entry);
+  createEntryArguments(thunk);
   auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
   auto *assoc = assocFnRef->getReferencedFunction();
   auto *assocFRI = builder.createFunctionRef(loc, assoc);
   SmallVector<SILValue, 4> args;
   args.append(thunk->getArguments().begin(), thunk->getArguments().end());
-  auto *ai = builder.createApply(loc, assocFRI, SubstitutionMap(), args, /*isNonThrowing*/ false);
+  auto *apply = builder.createApply(loc, assocFRI, SubstitutionMap(), args, /*isNonThrowing*/ false);
 
   llvm::errs() << "DERIVATIVE TYPE, ORIG FN NUM RESULTS\n";
   // auto pullbackType = assoc->getLoweredFunctionType()->getResults()[1].getType()->castTo<CanSILFunctionType>();
   auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
   derivativeType->dump();
   llvm::errs() << "AI (RESULT OF VJP)\n";
-  ai->dump();
+  apply->dump();
+  // Extract all direct results.
+  SmallVector<SILValue, 8> directResults;
+  extractAllElements(apply, builder, directResults);
+  auto originalDirectResults = ArrayRef<SILValue>(directResults).drop_back(1);
+  auto originalDirectResult = joinElements(originalDirectResults, builder, apply->getLoc());
+  auto derivative = directResults.back();
 
   auto derivativeTargetType = thunkType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
   llvm::errs() << "DERIVATIVE TARGET TYPE\n";
@@ -8224,10 +8276,6 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   llvm::errs() << "EXCITING THUNK (is assoc fn argument not even used?)\n";
   thunk->dump();
   getGeneratedFunctions().push_back(thunk);
-  /*
-  SILFunctionCloner cloner(newF);
-  cloner.cloneFunction(orig);
-  */
   return thunk;
 #endif
 }
@@ -8519,6 +8567,7 @@ SILValue ADContext::promoteToDifferentiableFunction(
     auto actualIndices = assocFnAndIndices->second;
     getGeneratedFunctionReferences().push_back(assocFn);
     // Could change to: check if expected assoc type is different
+    // START OLD MOVEMENT
 #if 0
     if (assocFnAndIndices->second != desiredIndices) {
       llvm::errs() << "DIFFERENT AUTODIFF INDICES, MISMATCH\n";
@@ -8545,7 +8594,11 @@ SILValue ADContext::promoteToDifferentiableFunction(
       assocFn->dump();
       builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     }
+    builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
+    assocFns.push_back(assocFn);
 #endif
+
+    // START NEW MOVEMENT
     auto expectedAssocFnTy = origFnTy->getAutoDiffAssociatedFunctionType(
         parameterIndices, resultIndex, differentiationOrder,
         assocFnKind, getModule(),
@@ -8562,6 +8615,8 @@ SILValue ADContext::promoteToDifferentiableFunction(
     // if (!assocFn->getType().getASTType()->isEqual(expectedAssocFnTy)) {
     // if (assocFn->getType() != SILType::getPrimitiveObjectType(expectedAssocFnTy)) {
     if (!assocFnType->isEqual(expectedAssocFnTy)) {
+    // OLD COND
+    // if (assocFnAndIndices->second != desiredIndices) {
       assocFn->dump();
       // IF NOT EQUAL, IT'S BC VJP/JVP ARE DEFINED IN TERMS OF METHOD TYPE
       llvm::errs() << "WEIRD TYPES ARE NOT EQUAL AFTER EMIT ASSOC\n";
@@ -8587,6 +8642,7 @@ SILValue ADContext::promoteToDifferentiableFunction(
       assocFn->dump();
       builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     }
+
     builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     assocFns.push_back(assocFn);
   }

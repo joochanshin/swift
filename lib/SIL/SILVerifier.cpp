@@ -1276,8 +1276,8 @@ public:
         auto jvpSILTypeEqual = pair.first->getType() == SILType::getPrimitiveObjectType(expectedJVPType);
         auto vjpSILTypeEqual = pair.second->getType() == SILType::getPrimitiveObjectType(expectedVJPType);
         */
-        auto jvpSILTypeEqual = expectedJVPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
-        auto vjpSILTypeEqual = expectedVJPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
+        auto jvpSILTypeEqual = jvpType->getWithRepresentation(SILFunctionTypeRepresentation::Thin) == expectedJVPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
+        auto vjpSILTypeEqual = vjpType->getWithRepresentation(SILFunctionTypeRepresentation::Thin) == expectedVJPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
         if (expectedVJPType != vjpType) {
           llvm::errs() << "UNEXPECTED VJP TYPE\n";
           llvm::errs() << "ACTUAL VS EXPECTED\n";
@@ -1289,7 +1289,7 @@ public:
         /*
         require(expectedJVPType == jvpType, "Unexpected JVP function type");
         require(expectedVJPType == vjpType, "Unexpected VJP function type");
-        */
+         */
         require(jvpSILTypeEqual, "Unexpected JVP function type");
         require(vjpSILTypeEqual, "Unexpected VJP function type");
       }

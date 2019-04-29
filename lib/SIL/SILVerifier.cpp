@@ -1286,12 +1286,12 @@ public:
           llvm::errs() << "SIL TYPES EQUAL? " << vjpSILTypeEqual << "\n";
           expectedVJPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin)->dump();
         }
-        /*
         require(expectedJVPType == jvpType, "Unexpected JVP function type");
         require(expectedVJPType == vjpType, "Unexpected VJP function type");
-         */
+        /*
         require(jvpSILTypeEqual, "Unexpected JVP function type");
         require(vjpSILTypeEqual, "Unexpected VJP function type");
+         */
       }
     }
   }

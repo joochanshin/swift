@@ -7797,14 +7797,14 @@ ADContext::getAutoDiffDerivativeThunk(
   // assocFn->getSelfArgument()->getType().getASTType()->dump();
   // auto isInstanceMethod = parentThunk->hasSelfParam() && !parentThunk->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
 
+#if 0
   auto assocFnTy = parentThunk->getArguments().back()->getType().castTo<SILFunctionType>();
   auto isInstanceMethod = assocFnTy->hasSelfParam() && !assocFnTy->getSelfParameter().getType()->is<AnyMetatypeType>();
   llvm::errs() << "MOMO ASSOC FN TY, IS INSTANCE? " << isInstanceMethod << "\n";
   assocFnTy->dump();
-#if 0
+#endif
   auto assocFn = parentThunk;
   auto isInstanceMethod = assocFn->hasSelfParam() && !assocFn->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
-#endif
 
   SmallVector<SILValue, 4> arguments;
   SmallVector<AllocStackInst *, 4> localAllocations;
@@ -8017,6 +8017,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       desiredIndices.parameters, desiredIndices.source, /*differentiationOrder*/ 1,
       kind, module, lookupConformance);
 
+#if 0
   // START ALL THE WAY UP HERE
   // EXPERIMENT 1.
   SubstitutionMap interfaceSubs;
@@ -8186,8 +8187,8 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   thunk->dump();
   getGeneratedFunctions().push_back(thunk);
   return thunk;
+#endif
 
-#if 0
   // OLD START HERE
   auto thunkType = targetType;
   StringRef origName;
@@ -8277,7 +8278,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   thunk->dump();
   getGeneratedFunctions().push_back(thunk);
   return thunk;
-#endif
+// #endif
 }
 
 #if 0
@@ -8568,7 +8569,7 @@ SILValue ADContext::promoteToDifferentiableFunction(
     getGeneratedFunctionReferences().push_back(assocFn);
     // Could change to: check if expected assoc type is different
     // START OLD MOVEMENT
-#if 0
+// #if 0
     if (assocFnAndIndices->second != desiredIndices) {
       llvm::errs() << "DIFFERENT AUTODIFF INDICES, MISMATCH\n";
       llvm::errs() << "DESIRED: ";
@@ -8596,8 +8597,9 @@ SILValue ADContext::promoteToDifferentiableFunction(
     }
     builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     assocFns.push_back(assocFn);
-#endif
+// #endif
 
+#if 0
     // START NEW MOVEMENT
     auto expectedAssocFnTy = origFnTy->getAutoDiffAssociatedFunctionType(
         parameterIndices, resultIndex, differentiationOrder,
@@ -8645,6 +8647,7 @@ SILValue ADContext::promoteToDifferentiableFunction(
 
     builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     assocFns.push_back(assocFn);
+#endif
   }
 
   auto *adfi = builder.createAutoDiffFunction(

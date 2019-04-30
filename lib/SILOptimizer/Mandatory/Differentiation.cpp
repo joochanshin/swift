@@ -7714,9 +7714,11 @@ ADContext::getAutoDiffDerivativeThunk(
   auto &astCtx = getASTContext();
   SubstitutionMap interfaceSubs;
   GenericEnvironment *genericEnv = nullptr;
+  llvm::errs() << "HEY 0\n";
   auto thunkType = buildThunkType(
       parentThunk, derivativeType, targetType, genericEnv, interfaceSubs,
       /*withoutActuallyEscaping*/ true);
+  llvm::errs() << "HEY 1\n";
   std::string thunkName;
   switch (kind) {
     case AutoDiffAssociatedFunctionKind::JVP:
@@ -7749,6 +7751,7 @@ ADContext::getAutoDiffDerivativeThunk(
 
   if (!thunk->empty())
     return thunk;
+  llvm::errs() << "HEY 2\n";
 
   thunk->setGenericEnvironment(genericEnv);
   thunk->setUnqualifiedOwnership();
@@ -7772,6 +7775,7 @@ ADContext::getAutoDiffDerivativeThunk(
 #endif
   auto assocFn = parentThunk;
   auto isInstanceMethod = assocFn->hasSelfParam() && !assocFn->getSelfArgument()->getType().getASTType()->is<AnyMetatypeType>();
+  llvm::errs() << "HEY 2\n";
 
   SmallVector<SILValue, 4> arguments;
   SmallVector<AllocStackInst *, 4> localAllocations;
@@ -7779,6 +7783,7 @@ ADContext::getAutoDiffDerivativeThunk(
     arguments.append(thunk->getArguments().begin(),
                      thunk->getArguments().end() - 1);
   } else {
+    llvm::errs() << "HEY 3\n";
     auto toArgIter = thunk->getArguments().begin();
     auto useNextArgument = [&]() {
       arguments.push_back(*toArgIter++);
@@ -8203,12 +8208,13 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
 
   SILValue assocRef;
   if (auto *assocFnRef = peerThroughFunctionConversions<FunctionRefInst>(assocFn)) {
-    llvm::errs() << "FUNCTION REF WOW\n";
+    llvm::errs() << "ASSOC FUNCTION REF WOW\n";
     auto *assoc = assocFnRef->getReferencedFunction();
     assocRef = builder.createFunctionRef(loc, assoc);
   // } else if (auto *assocMethodInst = peerThroughFunctionConversions<MethodInst>(assocFn)) {
   } else if (auto *assocMethodInst = peerThroughFunctionConversions<WitnessMethodInst>(assocFn)) {
-    llvm::errs() << "WITNESS METHOD WOW\n";
+    llvm::errs() << "ASSOC WITNESS METHOD WOW\n";
+    assocMethodInst->dump();
     assocMethodInst->getMember().dump();
     auto methodInst = assocMethodInst->getMember();
     auto assocMethod = getModule().lookUpFunction(methodInst);
@@ -8232,14 +8238,17 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
         reapplyFunctionConversion(ref, witnessMethod, original, builder, loc);
 #endif
 
-    origName = assocMethodInst->getMember().getAnyFunctionRef()->getAbstractFunctionDecl()->getNameStr();
+    assocRef = builder.createWitnessMethod(loc, assocMethodInst->getLookupType(), assocMethodInst->getConformance(), assocMethodInst->getMember(), assocMethodInst->getType());
   } else {
     assert(false && "could not get thunk orig name");
   }
-
+  assert(assocRef && "must have assoc ref");
+#if 0
   auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
   auto *assoc = assocFnRef->getReferencedFunction();
   auto *assocFRI = builder.createFunctionRef(loc, assoc);
+#endif
+  auto assocFRI = assocRef;
   SmallVector<SILValue, 4> args;
   args.append(thunk->getArguments().begin(), thunk->getArguments().end());
   auto *apply = builder.createApply(loc, assocFRI, SubstitutionMap(), args, /*isNonThrowing*/ false);
@@ -8247,7 +8256,8 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
 
   llvm::errs() << "DERIVATIVE TYPE, ORIG FN NUM RESULTS\n";
   // auto pullbackType = assoc->getLoweredFunctionType()->getResults()[1].getType()->castTo<CanSILFunctionType>();
-  auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  // auto derivativeType = assoc->getLoweredFunctionType()->getResults().back().getSILStorageType().castTo<SILFunctionType>();
+  auto derivativeType = assocFnType->getResults().back().getSILStorageType().castTo<SILFunctionType>();
   derivativeType->dump();
   llvm::errs() << "AI (RESULT OF VJP)\n";
   apply->dump();

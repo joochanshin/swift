@@ -4,7 +4,7 @@
 // due to direct differentiation of reabstraction thunks, which emits errors
 // with unknown location.
 
-// expected-error @+1 2 {{function is not differentiable}}
+// expected-error @+1 {{function is not differentiable}}
 @differentiable()
 // expected-note @+2 {{when differentiating this function definition}}
 // expected-note @+1 {{when differentiating this function definition}}

@@ -275,12 +275,7 @@ ValueOwnershipKind::merge(ValueOwnershipKind RHS) const {
     return ValueOwnershipKind(LHSVal);
   }
 
-  // return (LHSVal == RHSVal) ? Optional<ValueOwnershipKind>(*this) : None;
-  auto result = (LHSVal == RHSVal) ? Optional<ValueOwnershipKind>(*this) : None;
-  if (result == None) {
-    llvm::errs() << "BAD MATCH! " << *this << ", " << RHS << "\n";
-  }
-  return result;
+  return (LHSVal == RHSVal) ? Optional<ValueOwnershipKind>(*this) : None;
 }
 
 ValueOwnershipKind::ValueOwnershipKind(StringRef S) {

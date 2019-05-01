@@ -597,7 +597,7 @@ void DifferentiationInvoker::print(llvm::raw_ostream &os) const {
   os << ')';
 }
 
-bool checkRequirementsSatisfied(
+static bool checkRequirementsSatisfied(
     SubstitutionMap substMap, ModuleDecl *swiftModule,
     ArrayRef<Requirement> requirements) {
   if (requirements.empty())
@@ -605,7 +605,6 @@ bool checkRequirementsSatisfied(
   // Jointly iterate through associated function requirements/conformances.
   // Check whether all requirements are satisfied.
   SmallVector<Requirement, 2> unsatisfiedRequirements;
-  // auto conformances = substMap.getConformances();
   for (auto req : requirements) {
     auto firstType = req.getFirstType();
     auto secondType = req.getSecondType();
@@ -896,22 +895,9 @@ public:
     for (auto *attr : original->getDifferentiableAttrs()) {
       if (attr->getIndices() != indices)
         continue;
-      if (!checkRequirementsSatisfied(substMap, getModule().getSwiftModule(), attr->getRequirements()))
-        continue;
-      /*
-      bool reqSatisfied = true;
-      for (auto req : attr->getRequirements()) {
-        llvm::errs() << "REQUIREDMENT SATISFIED? " << (substMap.getGenericSignature() && substMap.getGenericSignature()->isRequirementSatisfied(req)) << "\n";
-        req.dump();
-        // substMap.getGenericSignature()->requirementsNotSatisfiedBy(<#GenericSignature *otherSig#>)
-        if (!substMap.getGenericSignature() || !substMap.getGenericSignature()->isRequirementSatisfied(req)) {
-          reqSatisfied = false;
-          break;
-        }
-      }
-      if (!reqSatisfied)
-        continue;
-      */
+      // if (!checkRequirementsSatisfied(substMap, getModule().getSwiftModule(),
+      //                                 attr->getRequirements()))
+      //   continue;
       return attr;
     }
     return nullptr;
@@ -943,21 +929,9 @@ public:
     for (auto *rda : original->getDifferentiableAttrs()) {
       if (rda->getIndices().source != indices.source)
         continue;
-      if (!checkRequirementsSatisfied(substMap, getModule().getSwiftModule(), rda->getRequirements()))
-        continue;
-      /*
-      bool reqSatisfied = true;
-      for (auto req : rda->getRequirements()) {
-        llvm::errs() << "REQUIREDMENT SATISFIED? " << (substMap.getGenericSignature() && substMap.getGenericSignature()->isRequirementSatisfied(req)) << "\n";
-        req.dump();
-        if (!substMap.getGenericSignature() || !substMap.getGenericSignature()->isRequirementSatisfied(req)) {
-          reqSatisfied = false;
-          break;
-        }
-      }
-      if (!reqSatisfied)
-        continue;
-      */
+      // if (!checkRequirementsSatisfied(substMap, getModule().getSwiftModule(),
+      //                                 rda->getRequirements()))
+      //   continue;
       const auto &rdaIndexSet = rda->getIndices().parameters;
       // If all indices in indexSet are in rdaIndexSet, and it has fewer
       // indices than our current candidate and a primitive adjoint, rda is our
@@ -969,13 +943,6 @@ public:
         minimalAttr = rda;
       }
     }
-    /*
-    auto existing = enqueuedTaskIndices.find(
-        {original, {indices.source, supersetParamIndices}});
-    if (existing == enqueuedTaskIndices.end())
-      return nullptr;
-    return differentiationTasks[existing->getSecond()].get();
-    */
     return minimalAttr;
   }
 
@@ -6774,7 +6741,7 @@ bool VJPEmitter::run() {
   else {
     retVal = builder.createTuple(loc, {primValsVal, origResInPrimal});
   }
-  builder.createRetainValue(loc, retVal, builder.getDefaultAtomicity());
+  // builder.createRetainValue(loc, retVal, builder.getDefaultAtomicity());
 #if 0
   builder.createReturn(loc, retVal);
 #endif
@@ -7940,10 +7907,6 @@ ADContext::getAutoDiffDerivativeThunk(
       ai->getIndirectSILResults(), allResults);
 
   SmallVector<SILValue, 8> results;
-  auto resultIter = allResults.begin();
-  auto useNextResult = [&]() {
-    results.push_back(*resultIter++);
-  };
 
   llvm::errs() << "PULLBACK ALL RESULTS\n";
   for (auto res : allResults)
@@ -7961,6 +7924,8 @@ ADContext::getAutoDiffDerivativeThunk(
     // TODO: Check for self param first.
     if (desiredIndices.isWrtParameter(paramIdx))
       results.push_back(allResults[i]);
+    else
+      emitCleanup(builder, loc, allResults[i]);
     /*
     if (desiredIndices.isWrtParameter(paramIdx))
       useNextResult();
@@ -8056,10 +8021,11 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   */
 
   StringRef origName;
-  if (auto *origFnRef = dyn_cast<FunctionRefInst>(origFnOperand)) {
+  // if (auto *origFnRef = dyn_cast<FunctionRefInst>(origFnOperand)) {
+  if (auto *origFnRef = peerThroughFunctionConversions<FunctionRefInst>(origFnOperand)) {
     auto *orig = origFnRef->getReferencedFunction();
     origName = orig->getName();
-  } else if (auto *origMethodInst = dyn_cast<MethodInst>(origFnOperand)) {
+  } else if (auto *origMethodInst = peerThroughFunctionConversions<MethodInst>(origFnOperand)) {
     llvm::errs() << "WITNESS METHOD WOW\n";
     origMethodInst->getMember().dump();
     origName = origMethodInst->getMember().getAnyFunctionRef()->getAbstractFunctionDecl()->getNameStr();
@@ -8134,10 +8100,6 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   // auto arguments = thunk->getArguments().drop_back();
   auto arguments = map<SmallVector<SILValue, 8>>(thunk->getArguments().drop_back(), [](SILArgument *arg) { return arg; });
 
-  builder.createRetainValue(loc, assocFnArg, builder.getDefaultAtomicity());
-  for (auto arg : arguments) {
-    builder.createRetainValue(loc, arg, builder.getDefaultAtomicity());
-  }
   auto *apply = builder.createApply(
       loc, assocFnArg, arguments, /*isNonThrowing*/ false);
   // Extract all direct results.
@@ -8163,7 +8125,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       thunk, derivativeType, derivativeTargetType, kind, desiredIndices, actualIndices);
 
   auto *innerThunkFRI = builder.createFunctionRef(loc, innerThunk);
-  builder.createRetainValue(loc, derivative, builder.getDefaultAtomicity());
+  // builder.createRetainValue(loc, derivative, builder.getDefaultAtomicity());
   // builder.createRetainValue(loc, innerThunkFRI, builder.getDefaultAtomicity());
   auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, ParameterConvention::Direct_Guaranteed);
   // auto *newDerivative = builder.createPartialApply(loc, innerThunkFRI, SubstitutionMap(), {derivative}, targetType->getCalleeConvention());
@@ -8192,14 +8154,20 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   // OLD START HERE
   auto thunkType = targetType;
   StringRef origName;
-  if (auto *origFnRef = dyn_cast<FunctionRefInst>(origFnOperand)) {
+  if (auto *origFnRef = peerThroughFunctionConversions<FunctionRefInst>(origFnOperand)) {
+    llvm::errs() << "FUNCTION REF WOW\n";
     auto *orig = origFnRef->getReferencedFunction();
     origName = orig->getName();
-  } else if (auto *origMethodInst = dyn_cast<MethodInst>(origFnOperand)) {
+  } else if (auto *origMethodInst = peerThroughFunctionConversions<MethodInst>(origFnOperand)) {
     llvm::errs() << "WITNESS METHOD WOW\n";
     origMethodInst->getMember().dump();
+    auto methodInst = origMethodInst->getMember();
+    // getModule().lookUpFunction(methodInst);
     origName = origMethodInst->getMember().getAnyFunctionRef()->getAbstractFunctionDecl()->getNameStr();
+  } else {
+    assert(false && "could not get thunk orig name");
   }
+  llvm::errs() << "HELLO 0\n";
   std::string thunkName;
   switch (kind) {
     case AutoDiffAssociatedFunctionKind::JVP:
@@ -8213,6 +8181,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       .str();
       break;
   }
+  llvm::errs() << "HELLO 1\n";
 
   auto loc = origFnOperand.getLoc();
   SILOptFunctionBuilder fb(getTransform());
@@ -8225,16 +8194,56 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       IsNotDynamic, ProfileCounter(), IsThunk);
   if (!thunk->empty())
     return thunk;
+  llvm::errs() << "HELLO 2\n";
 
   auto *entry = thunk->createBasicBlock();
+  thunk->setUnqualifiedOwnership();
   SILBuilder builder(entry);
   createEntryArguments(thunk);
+
+  SILValue assocRef;
+  if (auto *assocFnRef = peerThroughFunctionConversions<FunctionRefInst>(assocFn)) {
+    llvm::errs() << "FUNCTION REF WOW\n";
+    auto *assoc = assocFnRef->getReferencedFunction();
+    assocRef = builder.createFunctionRef(loc, assoc);
+  // } else if (auto *assocMethodInst = peerThroughFunctionConversions<MethodInst>(assocFn)) {
+  } else if (auto *assocMethodInst = peerThroughFunctionConversions<WitnessMethodInst>(assocFn)) {
+    llvm::errs() << "WITNESS METHOD WOW\n";
+    assocMethodInst->getMember().dump();
+    auto methodInst = assocMethodInst->getMember();
+    auto assocMethod = getModule().lookUpFunction(methodInst);
+    assert(assocMethod && "NEED ASSOC METHOD");
+    // assocMethodInst->getL----
+#if 0
+    auto *autoDiffFuncId = AutoDiffAssociatedFunctionIdentifier::get(
+        kind, /*differentiationOrder*/ 1, requirementParameterIndices,
+        context.getASTContext());
+    auto originalType = witnessMethod->getType().castTo<SILFunctionType>();
+    auto assocType = originalType->getAutoDiffAssociatedFunctionType(
+        requirementIndices.parameters, requirementIndices.source,
+        /*differentiationOrder*/ 1, kind, builder.getModule(),
+        LookUpConformanceInModule(builder.getModule().getSwiftModule()));
+    builder.createWitnessMethod(loc, assocMethodInst->getLookupType(), assocMethodInst->getConformance(), assocMethodInst->getMember(), <#SILType MethodTy#>)
+    auto *ref = builder.createWitnessMethod(
+        loc, assocMethodInst->getLookupType(), assocMethodInst->getConformance(),
+        requirement.asAutoDiffAssociatedFunction(autoDiffFuncId),
+        SILType::getPrimitiveObjectType(assocType));
+    auto convertedRef =
+        reapplyFunctionConversion(ref, witnessMethod, original, builder, loc);
+#endif
+
+    origName = assocMethodInst->getMember().getAnyFunctionRef()->getAbstractFunctionDecl()->getNameStr();
+  } else {
+    assert(false && "could not get thunk orig name");
+  }
+
   auto *assocFnRef = dyn_cast<FunctionRefInst>(assocFn);
   auto *assoc = assocFnRef->getReferencedFunction();
   auto *assocFRI = builder.createFunctionRef(loc, assoc);
   SmallVector<SILValue, 4> args;
   args.append(thunk->getArguments().begin(), thunk->getArguments().end());
   auto *apply = builder.createApply(loc, assocFRI, SubstitutionMap(), args, /*isNonThrowing*/ false);
+  llvm::errs() << "HELLO 3\n";
 
   llvm::errs() << "DERIVATIVE TYPE, ORIG FN NUM RESULTS\n";
   // auto pullbackType = assoc->getLoweredFunctionType()->getResults()[1].getType()->castTo<CanSILFunctionType>();
@@ -8263,6 +8272,7 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
   originalDirectResult->dump();
   llvm::errs() << "NEW DERIVATIVE:\n";
   newDerivative->dump();
+  newDerivative->getType().dump();
 
   llvm::errs() << "THUNK\n";
   thunk->dump();
@@ -8593,8 +8603,16 @@ SILValue ADContext::promoteToDifferentiableFunction(
     } else {
       llvm::errs() << "SAME AUTODIFF INDICES, NO MISMATCH\n";
       assocFn->dump();
-      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     }
+    auto expectedAssocFnTy = origFnTy->getAutoDiffAssociatedFunctionType(
+        parameterIndices, resultIndex, differentiationOrder,
+        assocFnKind, getModule(),
+        LookUpConformanceInModule(getModule().getSwiftModule()));
+    if (!expectedAssocFnTy->isEqual(assocFn->getType().getASTType())) {
+      assocFn = builder.createUncheckedBitCast(loc, assocFn, SILType::getPrimitiveObjectType(expectedAssocFnTy));
+      // assocFn = builder.createUncheckedTrivialBitCast(loc, assocFn, SILType::getPrimitiveObjectType(expectedAssocFnTy));
+    }
+
     builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     assocFns.push_back(assocFn);
 // #endif
@@ -8630,19 +8648,15 @@ SILValue ADContext::promoteToDifferentiableFunction(
       llvm::errs() << "USEFUL THUNK?\n";
       thunk->dump();
       auto *thunkFRI = builder.createFunctionRef(loc, thunk);
-      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
-      builder.createRetainValue(loc, thunkFRI, builder.getDefaultAtomicity());
       assocFn = builder.createPartialApply(
           loc, thunkFRI, thunk->getForwardingSubstitutionMap(),
           /// {assocFn}, assocFnType->getCalleeConvention());
           {assocFn}, ParameterConvention::Direct_Guaranteed);
           // {assocFn}, assocFnType->getCalleeConvention());
           // {assocFn}, expectedAssocFnTy->getCalleeConvention());
-      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     } else {
       llvm::errs() << "CONSISTENT AD FUNC TYPE, NO MISMATCH\n";
       assocFn->dump();
-      builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
     }
 
     builder.createRetainValue(loc, assocFn, builder.getDefaultAtomicity());
@@ -8663,12 +8677,6 @@ bool ADContext::processAutoDiffFunctionInst(AutoDiffFunctionInst *adfi) {
       autodiff::getNumAutoDiffAssociatedFunctions(
           adfi->getDifferentiationOrder()))
     return false;
-  if (adfi->getNumAssociatedFunctions() != 0) {
-    llvm::errs() << "AUTODIFF FUNC INST SOME ASSOC FNS ARE FILLED IN\n";
-    adfi->dump();
-    assert(isa<AutoDiffFunctionInst>(adfi));
-    adfi->getFunction()->dump();
-  }
   assert(adfi->getNumAssociatedFunctions() == 0 &&
          "some functions are already filled in but not all of them");
 
@@ -8882,7 +8890,7 @@ void Differentiation::run() {
 
     /*
     auto *adfi = context.getAutoDiffFunctionInsts().front();
-    llvm::errs() << "ABOUT TO PRINT: " << adfi << "\n";
+    llvm::errs() << "PROCESSING AUTODIFF FUNCTION INST " << count++ << ": " << adfi << "\n";
     adfi->dump();
     context.getAutoDiffFunctionInsts().erase(context.getAutoDiffFunctionInsts().begin());
     */

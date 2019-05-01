@@ -42,7 +42,37 @@ _ = pullback(at: Vector.zero, in: testOwnedVector)
 // CHECK-NEXT:   @_hasStorage var pullback_0: (Vector) -> (Vector, Vector)
 // CHECK-NEXT: }
 
-// The primal should not release primal values.
+// CHECK-LABEL: sil hidden @{{.*}}UsesMethodOfNoDerivativeMember{{.*}}applied2to{{.*}}__adjoint_src_0_wrt_0_1
+// CHECK: bb0([[SEED:%.*]] : $Vector, [[PRIMVALS:%.*]] : ${{.*}}UsesMethodOfNoDerivativeMember{{.*}}applied2to{{.*}}__Type__src_0_wrt_0_1):
+// CHECK:   [[PB:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}UsesMethodOfNoDerivativeMember{{.*}}applied2to{{.*}}__Type__src_0_wrt_0_1
+// CHECK:   [[NEEDED_COTAN:%.*]] = apply [[PB]]([[SEED]]) : $@callee_guaranteed (@guaranteed Vector) -> @owned Vector
+// CHECK:   release_value [[SEED:%.*]] : $Vector
+
+// CHECK-LABEL sil hidden @{{.*}}subset_adjoint_releases_unused_ones{{.*}}__adjoint_src_0_wrt_0
+// CHECK: bb0([[SEED:%.*]] : $Vector, [[PRIMVALS:%.*]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0):
+// CHECK:   [[PB0:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}, #{{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0.pullback_1
+// CHECK:   [[NEEDED_COTAN0:%.*]] = apply [[PB0]]([[SEED]]) : $@callee_guaranteed (@guaranteed Vector) -> @owned Vector
+// CHECK-NOT:  release_value [[NEEDED_COTAN0]] : $Vector
+// CHECK:   [[PB1:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0, #{{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0.pullback_0
+// CHECK:   [[NEEDED_COTAN1:%.*]] = apply [[PB1]]([[NEEDED_COTAN0]]) : $@callee_guaranteed (@guaranteed Vector) -> @owned Vector
+// CHECK:   release_value [[NEEDED_COTAN0]] : $Vector
+// CHECK:   release_value [[SEED]] : $Vector
+// CHECK:   return [[NEEDED_COTAN1]] : $Vector
+
+// CHECK-LABEL: sil hidden @{{.*}}side_effect_release_zero{{.*}}__adjoint_src_0_wrt_0
+// CHECK: bb0([[X:%.*]] : $Vector, %1 : $_AD__$s11refcounting24side_effect_release_zeroyAA6VectorVADF__Type__src_0_wrt_0):
+// CHECK:   retain_value [[SEED:%.*]] : $Vector
+// CHECK:   [[BUF:%.*]] = alloc_stack $Vector
+// CHECK:   [[BUF_ACCESS:%.*]] = begin_access [init] [static] [no_nested_conflict] [[BUF]] : $*Vector
+// CHECK:   [[ZERO_GETTER:%.*]] = function_ref @$s11refcounting6VectorV4zeroACvgZ
+// CHECK:   [[ZERO:%.*]] = apply [[ZERO_GETTER]]({{%.*}}) : $@convention(method) (@thin Vector.Type) -> @owned Vector
+// CHECK:   store [[ZERO]] to [[BUF_ACCESS]] : $*Vector
+// CHECK:   destroy_addr [[BUF]] : $*Vector
+// CHECK:   dealloc_stack [[BUF]] : $*Vector
+// CHECK:   release_value [[SEED:%.*]] : $Vector
+// CHECK: }
+
+// The vjp should not release primal values.
 //
 // CHECK-LABEL: sil hidden @{{.*}}testOwnedVector{{.*}}__vjp_src_0_wrt_0 : $@convention(thin) (@guaranteed Vector) -> (@owned Vector, @owned @callee_guaranteed (@guaranteed Vector) -> @owned Vector)
 // CHECK:   [[ADD:%.*]] = function_ref @Vector_plus
@@ -73,39 +103,11 @@ func side_effect_release_zero(_ x: Vector) -> Vector {
 }
 _ = pullback(at: Vector.zero, in: side_effect_release_zero)
 
-// CHECK-LABEL: sil hidden @{{.*}}side_effect_release_zero{{.*}}__adjoint_src_0_wrt_0
-// CHECK: bb0([[X:%.*]] : $Vector, %1 : $_AD__$s11refcounting24side_effect_release_zeroyAA6VectorVADF__Type__src_0_wrt_0):
-// CHECK:  retain_value [[SEED:%.*]] : $Vector
-// CHECK:  [[BUF:%.*]] = alloc_stack $Vector
-// CHECK:  [[BUF_ACCESS:%.*]] = begin_access [init] [static] [no_nested_conflict] [[BUF]] : $*Vector
-// CHECK:  [[ZERO_GETTER:%.*]] = function_ref @$s11refcounting6VectorV4zeroACvgZ
-// CHECK:  [[ZERO:%.*]] = apply [[ZERO_GETTER]]({{%.*}}) : $@convention(method) (@thin Vector.Type) -> @owned Vector
-// CHECK:  store [[ZERO]] to [[BUF_ACCESS]] : $*Vector
-// CHECK:  destroy_addr [[BUF]] : $*Vector
-// CHECK:  dealloc_stack [[BUF]] : $*Vector
-// CHECK:  release_value [[SEED:%.*]] : $Vector
-// CHECK: }
-
 func subset_adjoint_releases_unused_ones(_ x: Vector) -> Vector {
   let y = x + .zero
   return .zero + y
 }
 _ = pullback(at: .zero, in: subset_adjoint_releases_unused_ones)
-
-// CHECK-LABEL sil hidden @{{.*}}subset_adjoint_releases_unused_ones{{.*}}__adjoint_src_0_wrt_0
-// CHECK: bb0({{%.*}} : $Vector, [[PRIMVALS:%.*]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0):
-// CHECK:   [[PB:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}, #{{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0.pullback_1
-// CHECK:   [[TUPLE:%.*]] = apply [[PB]]({{.*}}) : $@callee_guaranteed (@guaranteed Vector) -> (@owned Vector, @owned Vector)
-// CHECK:   [[UNNEEDED_COTAN:%.*]] = tuple_extract [[TUPLE]] : $(Vector, Vector), 0
-// CHECK:   [[NEEDED_COTAN:%.*]] = tuple_extract [[TUPLE]] : $(Vector, Vector), 1
-// CHECK:   release_value [[UNNEEDED_COTAN]] : $Vector
-// CHECK-NOT:  release_value [[NEEDED_COTAN]] : $Vector
-// CHECK:  [[PB:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0, #{{.*}}subset_adjoint_releases_unused_ones{{.*}}__Type__src_0_wrt_0.pullback_0
-// CHECK:  [[TUPLE:%.*]] = apply [[PB]]([[NEEDED_COTAN]]) : $@callee_guaranteed (@guaranteed Vector) -> (@owned Vector, @owned Vector)
-// CHECK:  [[NEEDED_COTAN:%.*]] = tuple_extract [[TUPLE]] : $(Vector, Vector), 0
-// CHECK:  [[UNNEEDED_COTAN:%.*]] = tuple_extract [[TUPLE]] : $(Vector, Vector), 1
-// CHECK-NOT:  release_value [[NEEDED_COTAN]] : $Vector
-// CHECK:  release_value [[UNNEEDED_COTAN]] : $Vector
 
 struct FakeMaxPool : Differentiable {
   @differentiable(wrt: (self, input))
@@ -113,8 +115,7 @@ struct FakeMaxPool : Differentiable {
 }
 
 struct UsesMethodOfNoDerivativeMember : Differentiable {
-  @noDerivative
-  var maxPool = FakeMaxPool()
+  @noDerivative var maxPool = FakeMaxPool()
 
   func applied(to input: Vector) -> Vector {
     return maxPool.applied(to: input)
@@ -122,10 +123,3 @@ struct UsesMethodOfNoDerivativeMember : Differentiable {
 }
 
 _ = UsesMethodOfNoDerivativeMember().pullback(at: .zero) { $0.applied(to: $1) }
-
-// CHECK-LABEL: @{{.*}}UsesMethodOfNoDerivativeMember{{.*}}applied2to{{.*}}__adjoint_src_0_wrt_0_1
-// CHECK: bb0([[SEED:%.*]] : $Vector, [[PRIMVALS:%.*]] : ${{.*}}UsesMethodOfNoDerivativeMember{{.*}}applied2to{{.*}}__Type__src_0_wrt_0_1):
-// CHECK:   [[PB:%.*]] = struct_extract [[PRIMVALS]] : ${{.*}}UsesMethodOfNoDerivativeMember{{.*}}applied2to{{.*}}__Type__src_0_wrt_0_1
-// CHECK:   [[TUPLE:%.*]] = apply [[PB]]([[SEED]]) : $@callee_guaranteed (@guaranteed Vector) -> (FakeMaxPool.AllDifferentiableVariables, @owned Vector)
-// CHECK:   [[UNNEEDED_SELF_COTAN:%.*]] = tuple_extract [[TUPLE]] : $(FakeMaxPool.AllDifferentiableVariables, Vector), 0
-// CHECK:   release_value [[UNNEEDED_SELF_COTAN]] : $FakeMaxPool.AllDifferentiableVariables

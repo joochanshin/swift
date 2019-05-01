@@ -2268,6 +2268,15 @@ emitAssociatedFunctionReference(ADContext &context, SILBuilder &builder,
     }
     assert(minimalAttr);
     // taskCallback(task);
+    // Check if attribute generic requirements are met.
+    // TODO(TF-482): Change `lookupMinimalDifferentiableAttr`.
+    if (!checkRequirementsSatisfied(
+            substMap, context.getModule().getSwiftModule(),
+            minimalAttr->getRequirements())) {
+      context.emitNondifferentiabilityError(original, invoker,
+          diag::autodiff_function_assoc_func_requirements_unmet);
+      return None;
+    }
     SILFunction *assocFn = nullptr;
     switch (kind) {
     case AutoDiffAssociatedFunctionKind::JVP:
@@ -2560,12 +2569,18 @@ static CanSILFunctionType buildThunkType(SILFunction *fn,
   // Can't build a thunk without context, so we require ownership semantics
   // on the result type.
   // TODO: Probably re-enable.
-  // assert(expectedType->getExtInfo().hasContext());
+  assert(expectedType->getExtInfo().hasContext());
+  llvm::errs() << "SOURCE TYPE\n";
+  sourceType->dump();
+  llvm::errs() << "EXPECTED TYPE\n";
+  expectedType->dump();
+  llvm::errs() << "PHO 1\n";
 
   // This may inherit @noescape from the expectedType. The @noescape attribute
   // is only stripped when using this type to materialize a new decl.
   auto extInfo = expectedType->getExtInfo()
       .withRepresentation(SILFunctionType::Representation::Thin);
+  llvm::errs() << "PHO 2\n";
 
   if (withoutActuallyEscaping)
     extInfo = extInfo.withNoEscape(false);
@@ -2603,24 +2618,45 @@ static CanSILFunctionType buildThunkType(SILFunction *fn,
                                      interfaceSubs,
                                      newArchetype);
   }
+  llvm::errs() << "PHO 3, GEN SIG: " << genericSig << "\n";
+  if (genericSig)
+    genericSig->dump();
+  llvm::errs() << "SUBST MAP\n";
+  contextSubs.dump();
 
   // Utility function to apply contextSubs, and also replace the
   // opened existential with the new archetype.
   auto substIntoThunkContext = [&](CanType t) -> CanType {
-    return t
-        .subst(
-            [&](SubstitutableType *type) -> Type {
-              if (CanType(type) == openedExistential)
-                return newArchetype;
-              return Type(type).subst(contextSubs);
-            },
-            LookUpConformanceInSubstitutionMap(contextSubs),
-            SubstFlags::AllowLoweredTypes)
+    auto result = t.subst(
+        [&](SubstitutableType *type) -> Type {
+          if (CanType(type) == openedExistential)
+            return newArchetype;
+          auto res = Type(type).subst(contextSubs);
+          llvm::errs() << "SUBST RESULT: " << res << "\n";
+          res->dump();
+          return res;
+        },
+        LookUpConformanceInSubstitutionMap(contextSubs),
+        SubstFlags::AllowLoweredTypes);
+    llvm::errs() << "RESULT: " << result << "\n";
+    result->dump();
+    return result->getCanonicalType();
+    /*
+    return t.subst(
+      [&](SubstitutableType *type) -> Type {
+        if (CanType(type) == openedExistential)
+          return newArchetype;
+        return Type(type).subst(contextSubs);
+      },
+      LookUpConformanceInSubstitutionMap(contextSubs),
+      SubstFlags::AllowLoweredTypes)
         ->getCanonicalType();
+    */
   };
 
   sourceType = cast<SILFunctionType>(substIntoThunkContext(sourceType));
   expectedType = cast<SILFunctionType>(substIntoThunkContext(expectedType));
+  llvm::errs() << "PHO 4\n";
 
   // If our parent function was pseudogeneric, this thunk must also be
   // pseudogeneric, since we have no way to pass generic parameters.
@@ -2639,6 +2675,7 @@ static CanSILFunctionType buildThunkType(SILFunction *fn,
   params.push_back({sourceType, sourceType->getExtInfo().hasContext()
                                     ? contextConvention
                                     : ParameterConvention::Direct_Unowned});
+  llvm::errs() << "PHO 5\n";
 
   // Map the parameter and expected types out of context to get the interface
   // type of the thunk.
@@ -2674,12 +2711,15 @@ static CanSILFunctionType buildThunkType(SILFunction *fn,
         SILResultInfo(errorIfaceTy->getCanonicalType(genericSig),
                       expectedType->getErrorResult().getConvention());
   }
+  llvm::errs() << "PHO 6\n";
 
   // The type of the thunk function.
-  return SILFunctionType::get(
+  auto result = SILFunctionType::get(
       genericSig, extInfo, expectedType->getCoroutineKind(),
       ParameterConvention::Direct_Unowned, interfaceParams, interfaceYields,
       interfaceResults, interfaceErrorResult, module.getASTContext());
+  llvm::errs() << "PHO 7\n";
+  return result;
 }
 
 /// Get or create a reabstraction thunk from `fromType` to `toType`, to be
@@ -7490,8 +7530,10 @@ SILFunction* createJVP(
                      .str();
   */
   auto jvpNameStr = "AD__" + original->getName().str() + "__jvp_" + indices.mangle();
+  /*
   if (!attr->getRequirements().empty())
     jvpNameStr += "_requirements_" + std::to_string(attr->getRequirements().size());
+  */
   auto jvpName = original->getASTContext().getIdentifier(jvpNameStr).str();
   auto jvpGenericSig = getAssociatedFunctionGenericSignature(attr, original);
   auto *jvpGenericEnv = jvpGenericSig
@@ -7572,8 +7614,10 @@ SILFunction *createEmptyVJP(
                      .str();
   */
   auto vjpNameStr = "AD__" + original->getName().str() + "__vjp_" + indices.mangle();
+  /*
   if (!attr->getRequirements().empty())
     vjpNameStr += "_requirements_" + std::to_string(attr->getRequirements().size());
+  */
   auto vjpName = original->getASTContext().getIdentifier(vjpNameStr).str();
 
   auto vjpGenericSig = getAssociatedFunctionGenericSignature(attr, original);
@@ -7624,6 +7668,7 @@ bool ADContext::processAttribute(
   // Try to look up JVP only if attribute specifies JVP name or if original
   // function is an external declaration. If JVP function can't be found,
   // create an external JVP reference.
+  // std::string jvpName;
   StringRef jvpName;
   SILFunction *jvp = nullptr;
   SILFunction *vjp = nullptr;
@@ -7634,6 +7679,14 @@ bool ADContext::processAttribute(
                   .getIdentifier("AD__" + original->getName().str() +
                                  "__jvp_" + attr->getIndices().mangle())
                   .str();
+    /*
+    jvpName = original->getASTContext()
+    .getIdentifier("AD__" + original->getName().str() +
+                   "__jvp_" + attr->getIndices().mangle())
+    .str().str();
+    if (!attr->getRequirements().empty())
+      jvpName += "_requirements_" + std::to_string(attr->getRequirements().size());
+    */
   }
   if (!jvpName.empty()) {
     jvp = module.lookUpFunction(jvpName);
@@ -7646,6 +7699,7 @@ bool ADContext::processAttribute(
   // Try to look up VJP only if attribute specifies VJP name or if original
   // function is an external declaration. If VJP function can't be found,
   // create an external VJP reference.
+  // std::string vjpName;
   StringRef vjpName;
   if (attr->hasVJP()) {
     vjpName = attr->getVJPName();
@@ -7654,6 +7708,14 @@ bool ADContext::processAttribute(
                   .getIdentifier("AD__" + original->getName().str() +
 				                         "__vjp_" + attr->getIndices().mangle())
                   .str();
+    /*
+    vjpName = original->getASTContext()
+    .getIdentifier("AD__" + original->getName().str() +
+                   "__vjp_" + attr->getIndices().mangle())
+    .str().str();
+    if (!attr->getRequirements().empty())
+      vjpName += "_requirements_" + std::to_string(attr->getRequirements().size());
+     */
   }
   if (!vjpName.empty()) {
     vjp = module.lookUpFunction(vjpName);
@@ -7986,6 +8048,41 @@ ADContext::getAutoDiffAssociatedFunctionThunk(
       // desiredIndices.parameters, /*resultIndex*/ 0, /*differentiationOrder*/ 1,
       desiredIndices.parameters, desiredIndices.source, /*differentiationOrder*/ 1,
       kind, module, lookupConformance);
+
+  // BEGIN COPIED
+  // Does the thunk type involve archetypes other than opened existentials?
+  bool hasArchetypes = false;
+  // Does the thunk type involve an open existential type?
+  CanArchetypeType openedExistential;
+  auto archetypeVisitor = [&](CanType t) {
+    if (auto archetypeTy = dyn_cast<ArchetypeType>(t)) {
+      if (archetypeTy->getOpenedExistentialType()) {
+        assert((openedExistential == CanArchetypeType() ||
+                openedExistential == archetypeTy) &&
+               "one too many open existentials");
+        openedExistential = archetypeTy;
+      } else
+        hasArchetypes = true;
+    }
+  };
+
+  SubstitutionMap interfaceSubs;
+  GenericEnvironment *genericEnv = nullptr;
+  // Use the generic signature from the context if the thunk involves
+  // generic parameters.
+  CanGenericSignature genericSig;
+  SubstitutionMap contextSubs;
+  ArchetypeType *newArchetype = nullptr;
+  auto *caller = assocFn->getFunction();
+  if (assocFnType->hasArchetype()) {
+    assocFnType.visit(archetypeVisitor);
+    genericSig = buildThunkSignature(
+        caller, hasArchetypes, openedExistential, genericEnv, contextSubs,
+        interfaceSubs, newArchetype);
+  }
+
+  llvm::errs() << "GENERIC SIG?\n";
+  genericSig->dump();
 
 #if 0
   // START ALL THE WAY UP HERE

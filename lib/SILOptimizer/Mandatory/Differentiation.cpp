@@ -3675,6 +3675,13 @@ private:
         AutoDiffAssociatedVectorSpaceKind::Cotangent,
         LookUpConformanceInModule(getModule().getSwiftModule()));
     // The adjoint value must be in the cotangent space.
+    if (!(cotanSpace && newAdjointValue.getType().getASTType()->isEqual(
+                                                                        cotanSpace->getCanonicalType()))) {
+      llvm::errs() << "COTAN:\n";
+      cotanSpace->getCanonicalType()->dump();
+      llvm::errs() << "NEW ADJOINT:\n";
+      newAdjointValue.getType().getASTType()->dump();
+    }
     assert(cotanSpace && newAdjointValue.getType().getASTType()->isEqual(
                cotanSpace->getCanonicalType()));
 #endif
@@ -3982,17 +3989,21 @@ public:
         indParamAdjoints.push_back(adjBuf);
       }
     };
+#if 0
     // The original's self parameter, if present, is the last parameter. But we
     // want its cotangent, if present, to be the first return element.
     if (origTy->hasSelfParam() &&
         task->getIndices().isWrtParameter(selfParamIndex))
       addRetElt(selfParamIndex);
+#endif
     // Add the non-self parameters that are differentiated with respect to.
     for (auto i : task->getIndices().parameters.set_bits()) {
+#if 0
       // Do not add the self parameter because we have already added it at the
       // beginning.
       if (origTy->hasSelfParam() && i == selfParamIndex)
         continue;
+#endif
       addRetElt(i);
     }
 
@@ -4158,6 +4169,7 @@ public:
     // parameter, then it returns it first. Accumulate adjoint for the original
     // self parameter.
     auto allResultsIt = allResults.begin();
+#if 0
     auto selfParamIndex = ai->getArgumentsWithoutIndirectResults().size() - 1;
     if (ai->hasSelfArgument() &&
         applyInfo.actualIndices.isWrtParameter(selfParamIndex)) {
@@ -4196,12 +4208,18 @@ public:
         }
       }
     }
+#endif
+    getAdjoint().dump();
+    llvm::errs() << "ACTUAL INDICES\n";
+    applyInfo.actualIndices.print(llvm::errs()); llvm::errs() << "\n";
     // Accumulate adjoints for the remaining non-self original parameters.
     for (unsigned i : applyInfo.actualIndices.parameters.set_bits()) {
+#if 0
       // Do not set the adjoint of the original self parameter because we
       // already added it at the beginning.
       if (ai->hasSelfArgument() && i == selfParamIndex)
         continue;
+#endif
       auto origArg = ai->getArgument(origNumIndRes + i);
       auto cotan = *allResultsIt++;
       // If a cotangent value corresponds to a non-desired parameter, it won't
@@ -5479,6 +5497,7 @@ void DifferentiationTask::createEmptyAdjoint() {
       ->getDeclaredInterfaceType()->getCanonicalType();
   adjParams.push_back({pvType, ParameterConvention::Direct_Guaranteed});
 
+#if 0
   // Add adjoint result for the wrt self parameter, if it was requested.
   auto selfParamIndex = origParams.size() - 1;
   if (origTy->hasSelfParam() &&
@@ -5490,11 +5509,14 @@ void DifferentiationTask::createEmptyAdjoint() {
                 AutoDiffAssociatedVectorSpaceKind::Cotangent, lookupConformance)
             ->getCanonicalType(), origSelfParam.getConvention()));
   }
+#endif
 
   // Add adjoint results for the requested non-self wrt parameters.
   for (auto i : getIndices().parameters.set_bits()) {
+#if 0
     if (origTy->hasSelfParam() && i == selfParamIndex)
       continue;
+#endif
     auto origParam = origParams[i];
     adjResults.push_back(getCotangentResultInfoForOriginalParameter(
         origParam.getType()

@@ -720,6 +720,16 @@ SILFunction *SILGenModule::emitProtocolWitness(
   // archetypes of the witness thunk generic environment.
   auto witnessSubs = witness.getSubstitutions();
 
+  /*
+  llvm::errs() << "emitProtocolWitness\n";
+  witnessRef.dump();
+  llvm::errs() << "reqtOrigTy\n";
+  reqtOrigTy->dump();
+  llvm::errs() << "reqtSubstTy\n";
+  reqtSubstTy->dump();
+  llvm::errs() << "f\n";
+  f->dump();
+  */
   SGF.emitProtocolWitness(AbstractionPattern(reqtOrigTy), reqtSubstTy,
                           requirement, reqtSubMap, witnessRef,
                           witnessSubs, isFree, /*isSelfConformance*/ false);

@@ -222,14 +222,18 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   // Make the self parameter appear first in the results/parameters of the
   // differntial/pullback, even though it's the last parameter of the original
   // method.
+#if 0
   if (getExtInfo().hasSelfParam() &&
       isWrtIndex(getNumParameters() - 1))
     wrtParams.push_back(getParameters()[getNumParameters() - 1]);
+#endif
   for (auto valueAndIndex : enumerate(getParameters())) {
+#if 0
     // Skip the self parameter because we have already added it.
     if (getExtInfo().hasSelfParam() &&
         valueAndIndex.index() == getNumParameters() - 1)
       continue;
+#endif
     if (isWrtIndex(valueAndIndex.index()))
       wrtParams.push_back(valueAndIndex.value());
   }
@@ -295,6 +299,15 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   }
   newResults.push_back({closureType->getCanonicalType(whereClauseGenSig),
                         ResultConvention::Owned});
+#if 0
+  auto assocFnType = SILFunctionType::get(
+      whereClauseGenSig, getExtInfo(), getCoroutineKind(),
+      getCalleeConvention(), getParameters(), getYields(), newResults,
+      getOptionalErrorResult(), ctx, getWitnessMethodConformanceOrNone());
+      // getOptionalErrorResult(), ctx, getWitnessMethodConformanceOrNone());
+  return assocFnType->getWithRepresentation(
+      SILFunctionTypeRepresentation::Thin);
+#endif
   return SILFunctionType::get(whereClauseGenSig, getExtInfo(),
                               getCoroutineKind(), getCalleeConvention(),
                               getParameters(), getYields(), newResults,

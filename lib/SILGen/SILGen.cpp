@@ -766,6 +766,120 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
   assert(!F->isExternalDeclaration() && "did not emit any function body?!");
   LLVM_DEBUG(llvm::dbgs() << "lowered sil:\n";
              F->print(llvm::dbgs()));
+
+  if (constant.hasDecl()) {
+    auto *AFD = constant.getAbstractFunctionDecl();
+    // if (AFD) {
+    // if (AFD && !AFD->isStatic() && F->getLoweredFunctionType()->hasSelfParam()) {
+    if (AFD && AFD->isInstanceMember() && F->getLoweredFunctionType()->hasSelfParam()) {
+      auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
+      auto silDiffAttrs = F->getDifferentiableAttrs();
+      llvm::DenseMap<SILAutoDiffIndices, SILDifferentiableAttr *>
+          silDiffAttrMap;
+      for (auto *silDiffAttr : silDiffAttrs) {
+        silDiffAttrMap[silDiffAttr->getIndices()] = silDiffAttr;
+      }
+      auto origLoweredFnTy = F->getLoweredFunctionType();
+#if 0
+      auto origThinLoweredFnTy =
+          F->getLoweredFunctionType()
+              ->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
+#endif
+      auto &module = F->getModule();
+      // for (auto *diffAttr : diffAttrs) {
+      for (auto pair : llvm::zip(diffAttrs, silDiffAttrs)) {
+        auto *diffAttr = const_cast<DifferentiableAttr *>(std::get<0>(pair));
+        auto *silDiffAttr = std::get<1>(pair);
+        auto paramIndices = diffAttr->getParameterIndices();
+        auto loweredParamIndices = paramIndices->getLowered(
+            AFD->getInterfaceType()->castTo<AnyFunctionType>());
+        SILAutoDiffIndices indices(/*source*/ 0, loweredParamIndices);
+
+        if (silDiffAttr->getIndices() != indices) {
+          diffAttr->print(llvm::errs(), AFD);
+          silDiffAttr->print(llvm::errs());
+          assert(false);
+        }
+
+        llvm::errs() << "AYY LMAO!\n";
+        diffAttr->print(llvm::errs(), AFD);
+        // llvm::errs() << "\nWE GOT SIL FUNCTION TOO!\n";
+        // F->dump();
+        if (auto *jvpDecl = diffAttr->getJVPFunction()) {
+          SILDeclRef jvpDeclRef(jvpDecl);
+          auto *jvpFn = getFunction(jvpDeclRef, NotForDefinition);
+          llvm::errs() << "\nSILGEN FOUND JVP: " << jvpFn << "\n";
+          jvpFn->dump();
+          // auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+          auto targetType = origLoweredFnTy->getAutoDiffAssociatedFunctionType(
+              indices.parameters, indices.source, /*differentiationOrder*/ 1,
+              AutoDiffAssociatedFunctionKind::JVP, module,
+              LookUpConformanceInModule(module.getSwiftModule()));
+          llvm::errs() << "JVP TARGET TYPE\n";
+          targetType->dump();
+          auto *thunk = getOrCreateAutoDiffMethodThunk(
+              F, indices, jvpFn, AutoDiffAssociatedFunctionKind::JVP,
+              jvpFn->isSerialized());
+              // IsSerializable);
+          llvm::errs() << "\nSILGEN JVP THUNK:\n";
+          thunk->dump();
+          silDiffAttr->setJVPName(thunk->getName());
+          // Unset JVP so that TBDGen triggers.
+          diffAttr->setJVPFunction(nullptr);
+        }
+        if (auto *vjpDecl = diffAttr->getVJPFunction()) {
+          SILDeclRef vjpDeclRef(vjpDecl);
+          auto *vjpFn = getFunction(vjpDeclRef, NotForDefinition);
+          llvm::errs() << "\nSILGEN FOUND VJP: " << vjpFn << "\n";
+          vjpFn->dump();
+          // auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+          auto targetType = origLoweredFnTy->getAutoDiffAssociatedFunctionType(
+              indices.parameters, indices.source, /*differentiationOrder*/ 1,
+              AutoDiffAssociatedFunctionKind::VJP, module,
+              LookUpConformanceInModule(module.getSwiftModule()));
+          llvm::errs() << "VJP TARGET TYPE\n";
+          targetType->dump();
+          auto *thunk = getOrCreateAutoDiffMethodThunk(
+              F, indices, vjpFn, AutoDiffAssociatedFunctionKind::VJP,
+              vjpFn->isSerialized());
+              // IsSerializable);
+          llvm::errs() << "\nSILGEN VJP THUNK:\n";
+          thunk->dump();
+          silDiffAttr->setVJPName(thunk->getName());
+          // Unset VJP so that TBDGen triggers.
+          diffAttr->setVJPFunction(nullptr);
+        }
+        /*
+        llvm::errs() << "SILGEN: DONE METHOD THUNKING!\n";
+        silDiffAttr->print(llvm::errs());
+        llvm::errs() << "\n";
+        */
+      }
+    }
+  }
+
+#if 0
+  if (F->hasSelfParam()) {
+    for (auto *attr : F->getDifferentiableAttrs()) {
+      llvm::errs() << "AYY LMAO!\n";
+      attr->print(llvm::errs());
+      llvm::errs() << "\nWE GOT SIL FUNCTION TOO!\n";
+      F->dump();
+      if (attr->hasJVP()) {
+        auto *jvp = M.lookUpFunction(attr->getJVPName());
+        llvm::errs() << "\nSILGEN FOUND JVP: " << jvp << "\n";
+        jvp->dump();
+      }
+      if (attr->hasVJP()) {
+        auto *vjp = M.lookUpFunction(attr->getVJPName());
+        llvm::errs() << "\nSILGEN FOUND VJP: " << vjp << "\n";
+        vjp->dump();
+      }
+      // attr->
+      // createAutoDiffMethodThunk(*this, F, attr, <#SILFunction *assocFn#>, <#AutoDiffAssociatedFunctionKind assocFnKind#>)
+    }
+  }
+#endif
   F->verify();
 }
 
@@ -815,6 +929,40 @@ void SILGenModule::emitAbstractFuncDecl(AbstractFunctionDecl *AFD) {
   // TODO: Handle SILGen for `@differentiating` attribute.
   // Tentative solution: SILGen derivative function normally but also emit
   // mangled redirection thunk for retroactive differentiation.
+
+#if 0
+  // SWIFT_ENABLE_TENSORFLOW
+  // [differentiable] attributes only make sense on functions with bodies,
+  // because [differentiable] attributes declare actual associated functions
+  // corresponding to the function body.
+  if (!AFD->hasBody())
+    return;
+
+  // Look for a @differentiable attribute on the decl.
+  // FIXME: Handle multiple @differentiable attributes.
+  if (AFD->isInstanceMember()) {
+    for (auto *diffAttr : AFD->getAttrs().getAttributes<DifferentiableAttr>()) {
+      // diffAttr->print(llvm::errs(), AFD);
+      llvm::errs() << "HELLO FROM SIL GEN! " << AFD->getFullName() << "\n";
+      diffAttr->print(llvm::errs(), AFD);
+      llvm::errs() << "\n";
+    }
+  }
+#if 0
+  if (AFD->getAttrs().hasAttribute<DifferentiableAttr>())
+    diffAttr = AFD->getAttrs().getAttribute<DifferentiableAttr>();
+  // If the AFD is the getter for a storage decl, also look for a
+  // @differentiable attribute on the storage decl, because @differentiable
+  // attributes on storage decls modify the getter.
+  if (auto *accessor = dyn_cast<AccessorDecl>(AFD)) {
+    if (accessor->isGetter()) {
+      auto &storageAttrs = accessor->getStorage()->getAttrs();
+      if (storageAttrs.hasAttribute<DifferentiableAttr>())
+        diffAttr = storageAttrs.getAttribute<DifferentiableAttr>();
+    }
+  }
+#endif
+#endif
 }
 
 void SILGenModule::emitFunction(FuncDecl *fd) {

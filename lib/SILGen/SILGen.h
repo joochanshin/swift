@@ -182,6 +182,17 @@ public:
                                            CanSILFunctionType toType,
                                            CanType dynamicSelfType);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Get or create a thunk for converting derivative functions with a self
+  /// parameter (e.g. `@convention(method)` and `@convention(witness_method)`
+  /// functions) into ones that are `@convention(thin)`.
+  SILFunction *getOrCreateAutoDiffMethodThunk(
+      // SILFunction *original, SILDifferentiableAttr *attr,
+      SILFunction *original, SILAutoDiffIndices &indices,
+      SILFunction *assocFn, AutoDiffAssociatedFunctionKind assocFnKind,
+      IsSerialized_t isSerialized);
+
+
   /// Determine whether the given class has any instance variables that
   /// need to be destroyed.
   bool hasNonTrivialIVars(ClassDecl *cd);

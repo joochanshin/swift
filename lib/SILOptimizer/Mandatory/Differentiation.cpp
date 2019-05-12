@@ -3964,7 +3964,7 @@ public:
     SmallVector<ValueWithCleanup, 4> indParamAdjoints;
 
     auto origParams = original.getArgumentsWithoutIndirectResults();
-    auto selfParamIndex = origParams.size() - 1;
+    // auto selfParamIndex = origParams.size() - 1;
 
     // Materializes the return element corresponding to the parameter
     // `parameterIndex` into the `retElts` vector.
@@ -4209,9 +4209,11 @@ public:
       }
     }
 #endif
+    /*
     getAdjoint().dump();
     llvm::errs() << "ACTUAL INDICES\n";
     applyInfo.actualIndices.print(llvm::errs()); llvm::errs() << "\n";
+    */
     // Accumulate adjoints for the remaining non-self original parameters.
     for (unsigned i : applyInfo.actualIndices.parameters.set_bits()) {
 #if 0

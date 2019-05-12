@@ -759,207 +759,6 @@ void SILGenModule::preEmitFunction(SILDeclRef constant,
              });
 }
 
-// SWIFT_ENABLE_TENSORFLOW
-static void buildAutoDiffMethodThunkBody(
-    SILGenFunction &SGF, SILLocation loc, AbstractionPattern inputOrigType,
-                           CanAnyFunctionType inputSubstType,
-                           AbstractionPattern outputOrigType,
-                           CanAnyFunctionType outputSubstType) {
-  PrettyStackTraceSILFunction stackTrace("emitting reabstraction thunk in",
-                                         &SGF.F);
-  auto thunkType = SGF.F.getLoweredFunctionType();
-
-  FullExpr scope(SGF.Cleanups, CleanupLocation::get(loc));
-
-  SmallVector<ManagedValue, 8> params;
-  SGF.collectThunkParams(loc, params);
-
-  ManagedValue fnValue = params.pop_back_val();
-  auto fnType = fnValue.getType().castTo<SILFunctionType>();
-  assert(!fnType->isPolymorphic());
-  auto argTypes = fnType->getParameters();
-
-  // Translate the argument values.  Function parameters are
-  // contravariant: we want to switch the direction of transformation
-  // on them by flipping inputOrigType and outputOrigType.
-  //
-  // For example, a transformation of (Int,Int)->Int to (T,T)->T is
-  // one that should take an (Int,Int)->Int value and make it be
-  // abstracted like a (T,T)->T value.  This must be done with a thunk.
-  // Within the thunk body, the result of calling the inner function
-  // needs to be translated from Int to T (we receive a normal Int
-  // and return it like a T), but the parameters are translated in the
-  // other direction (the thunk receives an Int like a T, and passes it
-  // like a normal Int when calling the inner function).
-  SmallVector<ManagedValue, 8> args;
-  TranslateArguments(SGF, loc, params, args, argTypes)
-    .translate(outputOrigType,
-               outputSubstType.getParams(),
-               inputOrigType,
-               inputSubstType.getParams());
-
-  SmallVector<SILValue, 8> argValues;
-
-  // Plan the results.  This builds argument values for all the
-  // inner indirect results.
-  ResultPlanner resultPlanner(SGF, loc);
-  resultPlanner.plan(inputOrigType.getFunctionResultType(),
-                     inputSubstType.getResult(),
-                     outputOrigType.getFunctionResultType(),
-                     outputSubstType.getResult(),
-                     fnType, thunkType, argValues);
-
-  // Add the rest of the arguments.
-  forwardFunctionArguments(SGF, loc, fnType, args, argValues);
-
-  auto fun = fnType->isCalleeGuaranteed() ? fnValue.borrow(SGF, loc).getValue()
-                                          : fnValue.forward(SGF);
-  SILValue innerResult =
-      SGF.emitApplyWithRethrow(loc, fun,
-                               /*substFnType*/ fnValue.getType(),
-                               /*substitutions*/ {}, argValues);
-
-  // Reabstract the result.
-  SILValue outerResult = resultPlanner.execute(innerResult);
-
-  scope.pop();
-  SGF.B.createReturn(loc, outerResult);
-}
-
-// SWIFT_ENABLE_TENSORFLOW
-/// Creates arguments in the entry block based on the function type.
-static void createEntryArguments(SILFunction *f) {
-  auto *entry = f->getEntryBlock();
-  auto conv = f->getConventions();
-  auto &ctx = f->getASTContext();
-  // auto moduleDecl = f->getModule().getSwiftModule();
-  assert((entry->getNumArguments() == 0 || conv.getNumSILArguments() == 0) &&
-         "Entry already has arguments?!");
-  auto createFunctionArgument = [&](SILType type) {
-    // Create a dummy parameter declaration.
-    // Necessary to prevent crash during argument explosion optimization.
-    auto loc = f->getLocation().getSourceLoc();
-    auto *decl = new (ctx)
-    ParamDecl(VarDecl::Specifier::Default, loc, loc, Identifier(), loc,
-              // Identifier(), moduleDecl);
-              Identifier(), f->getDeclContext());
-    decl->setType(type.getASTType());
-    entry->createFunctionArgument(type, decl);
-  };
-  for (auto indResTy : conv.getIndirectSILResultTypes())
-    createFunctionArgument(f->mapTypeIntoContext(indResTy).getAddressType());
-  for (auto paramTy : conv.getParameterSILTypes())
-    createFunctionArgument(f->mapTypeIntoContext(paramTy));
-}
-
-// SWIFT_ENABLE_TENSORFLOW
-SILFunction *SILFunctionBuilder::createAutoDiffMethodThunk(
-    SILGenModule &SGM, SILFunction *original, SILDifferentiableAttr *attr,
-    SILFunction *assocFn, AutoDiffAssociatedFunctionKind assocFnKind) {
-  SILGenFunctionBuilder fb(SGM);
-  auto assocFnType = assocFn->getLoweredFunctionType();
-  auto targetType = assocFnType->getWithRepresentation(
-      SILFunctionTypeRepresentation::Thin);
-
-#if 0
-  // Does the thunk type involve archetypes other than opened existentials?
-  bool hasArchetypes = false;
-  // Does the thunk type involve an open existential type?
-  CanArchetypeType openedExistential;
-  auto archetypeVisitor = [&](CanType t) {
-    if (auto archetypeTy = dyn_cast<OpenedArchetypeType>(t)) {
-      if (archetypeTy->getOpenedExistentialType()) {
-        assert((openedExistential == CanArchetypeType() ||
-                openedExistential == archetypeTy) &&
-               "one too many open existentials");
-        openedExistential = archetypeTy;
-      } else
-        hasArchetypes = true;
-    }
-  };
-
-  // Use the generic signature from the context if the thunk involves
-  // generic parameters.
-  CanGenericSignature genericSig;
-  SubstitutionMap contextSubs;
-  ArchetypeType *newArchetype = nullptr;
-
-  if (assocFnType->hasArchetype() || targetType->hasArchetype()) {
-    assocFnType.visit(archetypeVisitor);
-    targetType.visit(archetypeVisitor);
-    genericSig = buildThunkSignature(fn,
-                                     hasArchetypes,
-                                     openedExistential,
-                                     genericEnv,
-                                     contextSubs,
-                                     interfaceSubs,
-                                     newArchetype);
-  }
-
-  SubstitutionMap interfaceSubs;
-  GenericEnvironment *genericEnv = nullptr;
-  auto thunkType =
-      buildThunkType(caller, derivativeFnType, targetType, genericEnv,
-                     interfaceSubs, /*withoutActuallyEscaping*/ false);
-  auto thunkDeclType =
-      thunkType->getWithExtInfo(thunkType->getExtInfo().withNoEscape(false));
-
-  auto fromInterfaceType = fromType->mapTypeOutOfContext()->getCanonicalType();
-  auto toInterfaceType = toType->mapTypeOutOfContext()->getCanonicalType();
-
-  Mangle::ASTMangler mangler;
-  auto name = mangler.mangleReabstractionThunkHelper(
-      thunkType, fromInterfaceType, toInterfaceType, Type(),
-      module.getSwiftModule());
-#endif
-
-  std::string name;
-  switch (assocFnKind) {
-  case AutoDiffAssociatedFunctionKind::JVP:
-    name = "jvp";
-    break;
-  case AutoDiffAssociatedFunctionKind::VJP:
-    name = "vjp";
-    break;
-  }
-  // TODO: Replace name with canonical expected name
-  name = original->getName().str() + "_" + name + "_method_thunk";
-
-  Lowering::GenericContextScope genericContextScope(
-      SGM.Types, assocFnType->getGenericSignature());
-  auto *thunkGenericEnv = assocFnType->getGenericSignature()
-      ? assocFnType->getGenericSignature()->createGenericEnvironment()
-      : nullptr;
-
-  auto loc = original->getLocation();
-  auto *thunk = fb.getOrCreateSharedFunction(
-      loc, name, targetType, IsBare, IsTransparent, IsSerialized,
-      ProfileCounter(), IsThunk, IsNotDynamic);
-  if (!thunk->empty())
-    return thunk;
-  thunk->setGenericEnvironment(thunkGenericEnv);
-  auto *entry = thunk->createBasicBlock();
-  /*
-  SILGenFunction thunkSGF(SGM, *thunk, assocFn->getDeclContext());
-  SmallVector<ManagedValue, 8> params;
-  thunkSGF.collectThunkParams(loc, params);
-  thunkSGF.emit
-  */
-  createEntryArguments(thunk);
-  SILBuilder builder(entry);
-  auto thunkConv = thunk->getConventions();
-  auto thunkResultType =
-      thunk->mapTypeIntoContext(thunkConv.getSILResultType());
-  auto arguments = map<SmallVector<SILValue, 8>>(
-      thunk->getArguments(), [](SILValue v) { return v; });
-  llvm::errs() << "LOOK UP ASSOC FN: " << assocFn << ", HAS BODY? " << (assocFn && !assocFn->empty()) << "\n";
-  auto *assocFnRef = builder.createFunctionRef(loc, assocFn);
-  auto *apply = builder.createApply(loc, assocFnRef, thunk->getForwardingSubstitutionMap(), arguments);
-  builder.createReturn(loc, apply);
-  // builder.createReturn(loc, SILUndef::get(thunkResultType, *thunk));
-  return thunk;
-}
-
 void SILGenModule::postEmitFunction(SILDeclRef constant,
                                     SILFunction *F) {
   emitLazyConformancesForFunction(F);
@@ -968,26 +767,101 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
   LLVM_DEBUG(llvm::dbgs() << "lowered sil:\n";
              F->print(llvm::dbgs()));
 
-  /*
   if (constant.hasDecl()) {
-    if (auto *AFD = constant.getAbstractFunctionDecl()) {
-      for (auto *diffAttr : AFD->getAttrs().getAttributes<DifferentiableAttr>()) {
+    auto *AFD = constant.getAbstractFunctionDecl();
+    // if (AFD) {
+    // if (AFD && !AFD->isStatic() && F->getLoweredFunctionType()->hasSelfParam()) {
+    if (AFD && AFD->isInstanceMember() && F->getLoweredFunctionType()->hasSelfParam()) {
+      auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
+      auto silDiffAttrs = F->getDifferentiableAttrs();
+      llvm::DenseMap<SILAutoDiffIndices, SILDifferentiableAttr *>
+          silDiffAttrMap;
+      for (auto *silDiffAttr : silDiffAttrs) {
+        silDiffAttrMap[silDiffAttr->getIndices()] = silDiffAttr;
+      }
+      auto origThinLoweredFnTy =
+          F->getLoweredFunctionType()
+              ->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
+      auto &module = F->getModule();
+      // for (auto *diffAttr : diffAttrs) {
+      for (auto pair : llvm::zip(diffAttrs, silDiffAttrs)) {
+        auto *diffAttr = std::get<0>(pair);
+        auto *silDiffAttr = std::get<1>(pair);
+        auto paramIndices = diffAttr->getParameterIndices();
+        auto loweredParamIndices = paramIndices->getLowered(
+            AFD->getInterfaceType()->castTo<AnyFunctionType>());
+        SILAutoDiffIndices indices(/*source*/ 0, loweredParamIndices);
+
+        if (silDiffAttr->getIndices() != indices) {
+          diffAttr->print(llvm::errs(), AFD);
+          silDiffAttr->print(llvm::errs());
+          assert(false);
+        }
+
         llvm::errs() << "AYY LMAO!\n";
         diffAttr->print(llvm::errs(), AFD);
-        llvm::errs() << "\nWE GOT SIL FUNCTION TOO!\n";
-        F->dump();
+        // llvm::errs() << "\nWE GOT SIL FUNCTION TOO!\n";
+        // F->dump();
+        if (auto *jvpDecl = diffAttr->getJVPFunction()) {
+          SILDeclRef jvpDeclRef(jvpDecl);
+          auto *jvpFn = getFunction(jvpDeclRef, NotForDefinition);
+          llvm::errs() << "\nSILGEN FOUND JVP: " << jvpFn << "\n";
+          jvpFn->dump();
+          auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+              indices.parameters, indices.source, /*differentiationOrder*/ 1,
+              AutoDiffAssociatedFunctionKind::JVP, module,
+              LookUpConformanceInModule(module.getSwiftModule()));
+          llvm::errs() << "JVP TARGET TYPE\n";
+          targetType->dump();
+          auto *thunk = getOrCreateAutoDiffMethodThunk(
+              F, indices, jvpFn, AutoDiffAssociatedFunctionKind::JVP);
+          llvm::errs() << "\nSILGEN JVP THUNK:\n";
+          thunk->dump();
+          silDiffAttr->setJVPName(thunk->getName());
+        }
+        if (auto *vjpDecl = diffAttr->getVJPFunction()) {
+          SILDeclRef vjpDeclRef(vjpDecl);
+          auto *vjpFn = getFunction(vjpDeclRef, NotForDefinition);
+          llvm::errs() << "\nSILGEN FOUND VJP: " << vjpFn << "\n";
+          vjpFn->dump();
+          auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+              indices.parameters, indices.source, /*differentiationOrder*/ 1,
+              AutoDiffAssociatedFunctionKind::VJP, module,
+              LookUpConformanceInModule(module.getSwiftModule()));
+          llvm::errs() << "VJP TARGET TYPE\n";
+          targetType->dump();
+          auto *thunk = getOrCreateAutoDiffMethodThunk(
+              F, indices, vjpFn, AutoDiffAssociatedFunctionKind::VJP);
+          llvm::errs() << "\nSILGEN VJP THUNK:\n";
+          thunk->dump();
+          silDiffAttr->setVJPName(thunk->getName());
+        }
       }
     }
   }
-   */
+
+#if 0
   if (F->hasSelfParam()) {
-    for (auto *silDiffAttr : F->getDifferentiableAttrs()) {
+    for (auto *attr : F->getDifferentiableAttrs()) {
       llvm::errs() << "AYY LMAO!\n";
-      silDiffAttr->print(llvm::errs());
+      attr->print(llvm::errs());
       llvm::errs() << "\nWE GOT SIL FUNCTION TOO!\n";
       F->dump();
+      if (attr->hasJVP()) {
+        auto *jvp = M.lookUpFunction(attr->getJVPName());
+        llvm::errs() << "\nSILGEN FOUND JVP: " << jvp << "\n";
+        jvp->dump();
+      }
+      if (attr->hasVJP()) {
+        auto *vjp = M.lookUpFunction(attr->getVJPName());
+        llvm::errs() << "\nSILGEN FOUND VJP: " << vjp << "\n";
+        vjp->dump();
+      }
+      // attr->
+      // createAutoDiffMethodThunk(*this, F, attr, <#SILFunction *assocFn#>, <#AutoDiffAssociatedFunctionKind assocFnKind#>)
     }
   }
+#endif
   F->verify();
 }
 

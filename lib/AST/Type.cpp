@@ -4501,10 +4501,12 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
     }
 
     SmallVector<TupleTypeElt, 8> pullbackResults;
-    for (auto wrtParamType : wrtParamTypes)
+    for (auto wrtParamType : wrtParamTypes) {
+      wrtParamType->dump();
       pullbackResults.push_back(wrtParamType->getAutoDiffAssociatedVectorSpace(
           AutoDiffAssociatedVectorSpaceKind::Cotangent, lookupConformance)
               ->getType());
+    }
     Type pullbackResult = pullbackResults.size() > 1
                               ? TupleType::get(pullbackResults, ctx)
                               : pullbackResults[0].getType();

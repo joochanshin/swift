@@ -299,6 +299,15 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   }
   newResults.push_back({closureType->getCanonicalType(whereClauseGenSig),
                         ResultConvention::Owned});
+#if 0
+  auto assocFnType = SILFunctionType::get(
+      whereClauseGenSig, getExtInfo(), getCoroutineKind(),
+      getCalleeConvention(), getParameters(), getYields(), newResults,
+      getOptionalErrorResult(), ctx, getWitnessMethodConformanceOrNone());
+      // getOptionalErrorResult(), ctx, getWitnessMethodConformanceOrNone());
+  return assocFnType->getWithRepresentation(
+      SILFunctionTypeRepresentation::Thin);
+#endif
   return SILFunctionType::get(whereClauseGenSig, getExtInfo(),
                               getCoroutineKind(), getCalleeConvention(),
                               getParameters(), getYields(), newResults,

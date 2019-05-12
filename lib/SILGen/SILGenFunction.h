@@ -1762,6 +1762,28 @@ public:
                                     CanType &dynamicSelfType,
                                     bool withoutActuallyEscaping=false);
 
+  // SWIFT_ENABLE_TENSORFLOW
+  //===--------------------------------------------------------------------===//
+  // Differentiation thunks
+  //===--------------------------------------------------------------------===//
+
+  /// TODO: Document.
+  enum struct DerivativeThunkKind {
+    Method,
+    WitnessMethod
+  };
+
+  /// TODO: Document.
+  SILFunction *getOrCreateAutoDiffMethodDerivativeThunk(
+      DerivativeThunkKind thunkKind, AutoDiffAssociatedFunctionKind assocFnKind,
+      CanSILFunctionType derivativeType, CanSILFunctionType targetType);
+
+  /// TODO: Document.
+  SILFunction *getOrCreateAutoDiffWitnessMethodThunk(
+      SILFunction *original, SILAutoDiffIndices &indices,
+      AutoDiffAssociatedFunctionKind assocFnKind,
+      CanSILFunctionType assocFnType, CanSILFunctionType targetType);
+
   //===--------------------------------------------------------------------===//
   // NoEscaping to Escaping closure thunk
   //===--------------------------------------------------------------------===//

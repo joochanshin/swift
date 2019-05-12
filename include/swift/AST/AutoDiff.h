@@ -257,6 +257,10 @@ struct SILAutoDiffIndices {
 
   bool operator==(const SILAutoDiffIndices &other) const;
 
+  bool operator!=(const SILAutoDiffIndices &other) const {
+    return !(*this == other);
+  };
+
   /// Queries whether the function's parameter with index `parameterIndex` is
   /// one of the parameters to differentiate with respect to.
   bool isWrtParameter(unsigned parameterIndex) const {

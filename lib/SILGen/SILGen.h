@@ -189,7 +189,8 @@ public:
   SILFunction *getOrCreateAutoDiffMethodThunk(
       // SILFunction *original, SILDifferentiableAttr *attr,
       SILFunction *original, SILAutoDiffIndices &indices,
-      SILFunction *assocFn, AutoDiffAssociatedFunctionKind assocFnKind);
+      SILFunction *assocFn, AutoDiffAssociatedFunctionKind assocFnKind,
+      IsSerialized_t isSerialized);
 
 
   /// Determine whether the given class has any instance variables that

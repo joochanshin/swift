@@ -1775,8 +1775,14 @@ public:
 
   /// TODO: Document.
   SILFunction *getOrCreateAutoDiffMethodDerivativeThunk(
-      DerivativeThunkKind thunkKind, AutoDiffAssociatedFunctionKind assocFnKind,
+      AutoDiffAssociatedFunctionKind assocFnKind,
       CanSILFunctionType derivativeType, CanSILFunctionType targetType);
+
+  /// TODO: Document.
+  SILFunction *getOrCreateAutoDiffWitnessMethodDerivativeThunk(
+      AutoDiffAssociatedFunctionKind assocFnKind,
+      CanSILFunctionType derivativeType, CanSILFunctionType targetType,
+      SILAutoDiffIndices &indices, bool isWrtSelf);
 
   /// TODO: Document.
   SILFunction *getOrCreateAutoDiffWitnessMethodThunk(

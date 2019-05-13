@@ -779,13 +779,16 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
       for (auto *silDiffAttr : silDiffAttrs) {
         silDiffAttrMap[silDiffAttr->getIndices()] = silDiffAttr;
       }
+      auto origLoweredFnTy = F->getLoweredFunctionType();
+#if 0
       auto origThinLoweredFnTy =
           F->getLoweredFunctionType()
               ->getWithRepresentation(SILFunctionTypeRepresentation::Thin);
+#endif
       auto &module = F->getModule();
       // for (auto *diffAttr : diffAttrs) {
       for (auto pair : llvm::zip(diffAttrs, silDiffAttrs)) {
-        auto *diffAttr = std::get<0>(pair);
+        auto *diffAttr = const_cast<DifferentiableAttr *>(std::get<0>(pair));
         auto *silDiffAttr = std::get<1>(pair);
         auto paramIndices = diffAttr->getParameterIndices();
         auto loweredParamIndices = paramIndices->getLowered(
@@ -807,35 +810,50 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
           auto *jvpFn = getFunction(jvpDeclRef, NotForDefinition);
           llvm::errs() << "\nSILGEN FOUND JVP: " << jvpFn << "\n";
           jvpFn->dump();
-          auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+          // auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+          auto targetType = origLoweredFnTy->getAutoDiffAssociatedFunctionType(
               indices.parameters, indices.source, /*differentiationOrder*/ 1,
               AutoDiffAssociatedFunctionKind::JVP, module,
               LookUpConformanceInModule(module.getSwiftModule()));
           llvm::errs() << "JVP TARGET TYPE\n";
           targetType->dump();
           auto *thunk = getOrCreateAutoDiffMethodThunk(
-              F, indices, jvpFn, AutoDiffAssociatedFunctionKind::JVP);
+              F, indices, jvpFn, AutoDiffAssociatedFunctionKind::JVP,
+              jvpFn->isSerialized());
+              // IsSerializable);
           llvm::errs() << "\nSILGEN JVP THUNK:\n";
           thunk->dump();
           silDiffAttr->setJVPName(thunk->getName());
+          // Unset JVP so that TBDGen triggers.
+          diffAttr->setJVPFunction(nullptr);
         }
         if (auto *vjpDecl = diffAttr->getVJPFunction()) {
           SILDeclRef vjpDeclRef(vjpDecl);
           auto *vjpFn = getFunction(vjpDeclRef, NotForDefinition);
           llvm::errs() << "\nSILGEN FOUND VJP: " << vjpFn << "\n";
           vjpFn->dump();
-          auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+          // auto targetType = origThinLoweredFnTy->getAutoDiffAssociatedFunctionType(
+          auto targetType = origLoweredFnTy->getAutoDiffAssociatedFunctionType(
               indices.parameters, indices.source, /*differentiationOrder*/ 1,
               AutoDiffAssociatedFunctionKind::VJP, module,
               LookUpConformanceInModule(module.getSwiftModule()));
           llvm::errs() << "VJP TARGET TYPE\n";
           targetType->dump();
           auto *thunk = getOrCreateAutoDiffMethodThunk(
-              F, indices, vjpFn, AutoDiffAssociatedFunctionKind::VJP);
+              F, indices, vjpFn, AutoDiffAssociatedFunctionKind::VJP,
+              vjpFn->isSerialized());
+              // IsSerializable);
           llvm::errs() << "\nSILGEN VJP THUNK:\n";
           thunk->dump();
           silDiffAttr->setVJPName(thunk->getName());
+          // Unset VJP so that TBDGen triggers.
+          diffAttr->setVJPFunction(nullptr);
         }
+        /*
+        llvm::errs() << "SILGEN: DONE METHOD THUNKING!\n";
+        silDiffAttr->print(llvm::errs());
+        llvm::errs() << "\n";
+        */
       }
     }
   }

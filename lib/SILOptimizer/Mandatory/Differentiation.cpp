@@ -4226,8 +4226,7 @@ public:
       auto cotan = *allResultsIt++;
       // If a cotangent value corresponds to a non-desired parameter, it won't
       // be used, so release it.
-      if (i >= applyInfo.desiredIndices.parameters.size() ||
-          !applyInfo.desiredIndices.parameters[i]) {
+      if (!applyInfo.desiredIndices.isWrtParameter(i)) {
         emitCleanup(builder, loc, cotan);
         continue;
       }
@@ -5346,6 +5345,12 @@ DifferentiationTask::DifferentiationTask(ADContext &context,
   auto isAssocFnExported =
       invoker.getKind() ==
           DifferentiationInvoker::Kind::SILDifferentiableAttribute;
+
+      /*
+      llvm::errs() << "Differentiation.cpp, ATTR:\n";
+      attr->print(llvm::errs());
+      llvm::errs() << "\n";
+       */
 
   if (!jvp)
     createJVP(isAssocFnExported);

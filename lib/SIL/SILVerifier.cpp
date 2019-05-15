@@ -1292,6 +1292,19 @@ public:
             adfi->getParameterIndices(), /*resultIndex*/ 0, order,
             AutoDiffAssociatedFunctionKind::JVP, F.getModule(),
             LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        if (expectedJVPType != jvpType) {
+          llvm::errs() << "UNEXPECTED JVP TYPE\n";
+          llvm::errs() << "ACTUAL VS EXPECTED\n";
+          jvpType->dump();
+          expectedJVPType->dump();
+          llvm::errs() << "EXPECTED JVP INDICES\n";
+          SILAutoDiffIndices(0, adfi->getParameterIndices()).print(llvm::errs());
+          llvm::errs() << "\n";
+          llvm::errs() << "ORIG TYPE:\n";
+          origTy->dump();
+          llvm::errs() << "ORIG:\n\n";
+          adfi->getOriginalFunction()->dumpInContext();
+        }
         require(expectedJVPType == jvpType, "Unexpected JVP function type");
         auto vjpType = pair.second->getType().getAs<SILFunctionType>();
         require(vjpType, "The VJP function must have a function type");
@@ -1301,6 +1314,17 @@ public:
             adfi->getParameterIndices(), /*resultIndex*/ 0, order,
             AutoDiffAssociatedFunctionKind::VJP, F.getModule(),
             LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        if (expectedVJPType != vjpType) {
+          llvm::errs() << "UNEXPECTED VJP TYPE\n";
+          llvm::errs() << "ACTUAL VS EXPECTED\n";
+          vjpType->dump();
+          expectedVJPType->dump();
+          llvm::errs() << "\n\n";
+          /*
+           llvm::errs() << "SIL TYPES EQUAL? " << vjpSILTypeEqual << "\n";
+           expectedVJPType->getWithRepresentation(SILFunctionTypeRepresentation::Thin)->dump();
+           */
+        }
         require(expectedVJPType == vjpType, "Unexpected VJP function type");
       }
     }

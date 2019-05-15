@@ -242,6 +242,12 @@ llvm::Value *irgen::emitArchetypeWitnessTableRef(IRGenFunction &IGF,
       rootWTable = emitOpaqueTypeWitnessTableRef(IGF, opaqueRoot,
                                                  rootProtocol);
     }
+    llvm::errs() << "IRGEN FAILURE! ROOT PROTOCOL: " << rootProtocol->getNameStr() << "\n";
+    rootArchetype->dump();
+    llvm::errs() << "IRGEN FAILURE, ORIG ROOT\n";
+    origRoot->dump();
+    llvm::errs() << "IRGEN FAILURE, ENVIRONMENT\n";
+    environment->dump();
     assert(rootWTable && "root witness table not bound in local context!");
   }
 

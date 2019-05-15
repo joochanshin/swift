@@ -349,8 +349,9 @@ public:
   }
   
   bool equals(AutoDiffIndexSubset *other) const {
-    return capacity == other->getCapacity() &&
-        getBitWords().equals(other->getBitWords());
+    // return capacity == other->getCapacity() &&
+    //     getBitWords().equals(other->getBitWords());
+    return getBitWords().equals(other->getBitWords());
   }
 
   bool isSubsetOf(AutoDiffIndexSubset *other) const;

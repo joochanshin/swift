@@ -2570,6 +2570,11 @@ void IRGenSILFunction::visitPartialApplyInst(swift::PartialApplyInst *i) {
 
   // Create the thunk and function value.
   Explosion function;
+  llvm::errs() << "IRGEN PARTIAL APPLY\n";
+  i->getFunction()->dump();
+  llvm::errs() << "\n";
+  i->dumpInContext();
+  llvm::errs() << "\n";
   auto closureStackAddr = emitFunctionPartialApplication(
       *this, *CurSILFn, calleeFn, innerContext, llArgs, params,
       i->getSubstitutionMap(), origCalleeTy, i->getSubstCalleeType(),

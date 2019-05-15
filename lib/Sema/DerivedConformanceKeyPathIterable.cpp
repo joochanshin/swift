@@ -125,6 +125,7 @@ deriveKeyPathIterable_allKeyPaths(DerivedConformance &derived) {
       C.Id_allKeyPaths, returnInterfaceTy, returnTy, /*isStatic*/ false,
       /*isFinal*/ true);
 
+#if 0
   // Maybe add `@inlinable` to the `allKeyPaths` declaration.
   if (llvm::all_of(nominal->getStoredProperties(), [](VarDecl *vd) {
     return vd->getFormalAccessScope(
@@ -132,6 +133,7 @@ deriveKeyPathIterable_allKeyPaths(DerivedConformance &derived) {
   })) {
     maybeMarkAsInlinable(derived, allKeyPathsDecl);
   }
+#endif
 
   // Create `allKeyPaths` getter.
   auto *getterDecl = derived.declareDerivedPropertyGetter(

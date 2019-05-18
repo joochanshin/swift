@@ -557,8 +557,23 @@ static bool checkRequirementsSatisfied(
     return true;
   // Jointly iterate through associated function requirements/conformances.
   // Check whether all requirements are satisfied.
+  auto *genSig = substMap.getGenericSignature();
+  GenericSignatureBuilder builder(swiftModule->getASTContext());
+  builder.addGenericSignature(genSig);
+  auto source =
+  GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+  // builder.addRequirement(req, source, nullptr);
+  for (auto req : requirements)
+    builder.addRequirement(req, source, swiftModule);
+  llvm::errs() << "BUILT NEW GEN SIG\n";
+  auto *newGenSig = std::move(builder).computeGenericSignature(
+      SourceLoc(), /*allowConcreteGenericParams=*/true);
+  newGenSig->dump();
+  
   SmallVector<Requirement, 2> unsatisfiedRequirements;
   for (auto req : requirements) {
+    llvm::errs() << "\nNEW REQ\n";
+    req.dump();
     auto firstType = req.getFirstType();
     auto secondType = req.getSecondType();
     switch (req.getKind()) {
@@ -592,13 +607,62 @@ static bool checkRequirementsSatisfied(
       // This handles cases where the primal caller is non-generic
       // (specialized with concrete types) but the associated derivative
       // callee is generic.
+      llvm::errs() << "FIRST TYPE\n";
+      firstType.dump();
+      llvm::errs() << "SECOND TYPE\n";
+      secondType.dump();
+      llvm::errs() << "SUBST MAP\n";
+      substMap.dump();
+
+
+      if (auto depMemType = firstType->getAs<DependentMemberType>()) {
+        if (auto substType = depMemType->substBaseType(
+                firstType, LookUpConformanceInModule(swiftModule)))
+          secondType = substType->getCanonicalType();
+      }
+      /*
+      if (!firstType->hasUnboundGenericType()) {
+        llvm::errs() << "YAY WE FOUND CONCRETE FIRST TYPE\n";
+      }
+      */
+      // firstType->hasUnboundGenericType()
+      for (auto type : substMap.getReplacementTypes()) {
+        llvm::errs() << "SUBST MAP REPLACEMENT TYPE\n";
+        type->dump();
+      }
       if (auto origFirstType = firstType.subst(substMap)) {
+        llvm::errs() << "ORIG FIRST TYPE\n";
+        origFirstType.dump();
+        llvm::errs() << "LOOK UP CONFORMANCE!\n";
+        // swiftModule->lookupConformance(origFirstType, protocol)->dump();
+        // substMap.lookupConformance(origFirstType->getCanonicalType(), protocol)->dump();
         if (!origFirstType->hasError() &&
             swiftModule->lookupConformance(origFirstType, protocol)) {
           continue;
         }
+        if (!origFirstType->hasError() &&
+            substMap.lookupConformance(origFirstType->getCanonicalType(), protocol)) {
+          continue;
+        }
+      } else {
+        llvm::errs() << "NO ORIG FIRST TYPE, UH OH\n";
       }
+      llvm::errs() << "FAILING REQUIREMENT\n";
+      auto conf = swiftModule->lookupConformance(firstType->getCanonicalType(),
+                                                 protocol);
+      llvm::errs() << "SWIFT MODULE REQ? " << (bool) conf << "\n";
+      if (conf)
+        conf->dump();
+
       // Otherwise, try to look up conformance in substitution maps.
+      if (newGenSig->lookupConformance(firstType->getCanonicalType(),
+                                       protocol)) {
+        continue;
+      }
+      if (swiftModule->lookupConformance(firstType->getCanonicalType(),
+                                         protocol)) {
+        continue;
+      }
       auto isConformanceMet = substMap.lookupConformance(
           firstType->getCanonicalType(), protocol);
       if (!isConformanceMet)
@@ -1813,6 +1877,10 @@ emitAssociatedFunctionReference(
     }
     assert(minimalAttr);
     // TODO(TF-482): Change `lookupMinimalDifferentiableAttr`.
+    llvm::errs() << "EMIT ASSOC ORIGINAL FN OPERAND:\n";
+    original->dump();
+    llvm::errs() << "EMIT ASSOC SUBST MAP:\n";
+    substMap.dump();
     if (!checkRequirementsSatisfied(
             minimalAttr->getRequirements(),
             substMap, context.getModule().getSwiftModule())) {
@@ -5980,16 +6048,12 @@ SILValue ADContext::promoteToDifferentiableFunction(
 /// Folding can be disabled by the `SkipFoldingAutoDiffFunctionExtraction` flag
 /// for SIL testing purposes.
 static void foldAutoDiffFunctionExtraction(AutoDiffFunctionInst *source) {
-  bool hasOnlyAutoDiffFunctionExtractUsers = true;
-  // Iterate through all `autodiff_function` instruction uses.
+  // Iterate through all `autodiff_function_extract` users of the
+  // `autodiff_function` instruction.
   for (auto use : source->getUses()) {
     auto *adfei = dyn_cast<AutoDiffFunctionExtractInst>(use->getUser());
-    // If user is not an `autodiff_function_extract` instruction, set flag to
-    // false.
-    if (!adfei) {
-      hasOnlyAutoDiffFunctionExtractUsers = false;
+    if (!adfei)
       continue;
-    }
     // Fold original function extractors.
     if (adfei->getExtractee() == AutoDiffFunctionExtractee::Original) {
       auto originalFnValue = source->getOriginalFunction();
@@ -6003,9 +6067,8 @@ static void foldAutoDiffFunctionExtraction(AutoDiffFunctionInst *source) {
     adfei->replaceAllUsesWith(assocFnValue);
     adfei->eraseFromParent();
   }
-  // If all users are `autodiff_function_extract` instructions, erase the
-  // `autodiff_function` instruction itself.
-  if (hasOnlyAutoDiffFunctionExtractUsers)
+  // If the `autodiff_function` instruction has no remaining uses, erase it.
+  if (isInstructionTriviallyDead(source))
     source->eraseFromParent();
 }
 

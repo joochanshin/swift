@@ -199,9 +199,6 @@ extension SIMD${n} : Differentiable
         Scalar.TangentVector: BinaryFloatingPoint {
   public typealias TangentVector = SIMD${n}
   public typealias AllDifferentiableVariables = SIMD${n}
-  public func tangentVector(from cotangent: TangentVector) -> TangentVector {
-    return cotangent
-  }
 }
 
 extension SIMD${n}

@@ -1580,7 +1580,7 @@ extension SIMD
       return (v * rhs, (v * lhs).sum())
     })
   }
-  
+
   @inlinable
   static func _vjpDivide(
     lhs: Self, rhs: Scalar
@@ -1589,7 +1589,7 @@ extension SIMD
       (-lhs / (rhs * rhs) * v, (v / rhs).sum())
     })
   }
-  
+
   @inlinable
   static func _vjpMultiply(
     lhs: Scalar, rhs: Self
@@ -1598,7 +1598,7 @@ extension SIMD
       return ((v * lhs).sum(), v * rhs)
     })
   }
-  
+
   @inlinable
   static func _vjpDivide(
     lhs: Scalar, rhs: Self

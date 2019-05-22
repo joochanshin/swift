@@ -550,7 +550,7 @@ private:
   }
 
   /// Creates a struct declaration with the given VJP generic signature, for
-  /// storing the primal values and predecessor of the given original block.
+  /// storing the pullback values and predecessor of the given original block.
   std::pair<StructDecl *, VarDecl *>
   createPullbackStruct(SILBasicBlock *originalBB, SILAutoDiffIndices indices,
                        EnumDecl *predecessorEnum,
@@ -581,7 +581,7 @@ private:
     pullbackStruct->computeType();
     assert(pullbackStruct->hasInterfaceType());
     file.addVisibleDecl(pullbackStruct);
-    // Add predecessor field if not entry block.
+    // Add predecessor field if not entry bb.
     VarDecl *predecessorEnumField = nullptr;
     if (!originalBB->isEntry()) {
       predecessorEnumField = addVarDecl(
@@ -612,7 +612,7 @@ public:
     CanGenericSignature vjpGenSig = nullptr;
     if (auto *vjpGenEnv = vjp->getGenericEnvironment())
       vjpGenSig = vjpGenEnv->getGenericSignature()->getCanonicalSignature();
-    // Create predecessor enum and pullback struct for each original block.
+    // Create predecessor enum and pullback struct for each original bb.
     for (auto &origBB : *original) {
       auto *predEnum = createBasicBlockPredecessorEnum(
           &origBB, indices, vjpGenSig);
@@ -625,19 +625,20 @@ public:
   }
 
   /// Returns the pullback struct and predecessor enum associated with the
-  /// given original block.
+  /// given original basic block.
   std::pair<StructDecl *, EnumDecl *>
   getPullbackDataStructures(SILBasicBlock *origBB) {
     return pullbackDataStructures.lookup(origBB);
   }
 
-  /// Returns the pullback struct associated with the given original block.
+  /// Returns the pullback struct associated with the given original basic
+  /// block.
   StructDecl *getPullbackStruct(SILBasicBlock *origBB) const {
     return pullbackDataStructures.lookup(origBB).first;
   }
 
   /// Returns the lowered SIL type of the pullback struct associated with the
-  /// given original block.
+  /// given original basic block.
   SILType getPullbackStructLoweredType(SILBasicBlock *origBB) const {
     auto *pbStruct = getPullbackStruct(origBB);
     auto pbStructType = pbStruct->getDeclaredInterfaceType()
@@ -646,13 +647,14 @@ public:
         pbStructType, ResilienceExpansion::Minimal);
   }
 
-  /// Returns the predecessor enum associated with the given original block.
+  /// Returns the predecessor enum associated with the given original basic
+  /// block.
   EnumDecl *getPredecessorEnum(SILBasicBlock *origBB) const {
     return pullbackDataStructures.lookup(origBB).second;
   }
 
   /// Returns the lowered SIL type of the pullback struct associated with the
-  /// given original block.
+  /// given original basic block.
   SILType getPredecessorEnumLoweredType(SILBasicBlock *origBB) const {
     auto *predEnum = getPredecessorEnum(origBB);
     auto predEnumType = predEnum->getDeclaredInterfaceType()
@@ -661,8 +663,8 @@ public:
         predEnumType, ResilienceExpansion::Minimal);
   }
 
-  /// Returns the enum element in the given successor block's predecessor enum,
-  /// corresponding to the given predecessor block.
+  /// Returns the enum element in the given successor basic block's predecessor
+  /// enum, corresponding to the given predecessor basic block.
   EnumElementDecl *lookUpPredecessorEnumElement(
       SILBasicBlock *origPredBB, SILBasicBlock *origSuccBB) {
     assert(origPredBB->getParent() == original);
@@ -676,7 +678,7 @@ public:
   }
 
   /// Returns the predecessor enum field for the pullback struct of the given
-  /// original block.
+  /// original basic block.
   VarDecl *lookUpPullbackStructPredecessorField(SILBasicBlock *origBB) {
     auto *pullbackStruct = getPullbackDataStructures(origBB).first;
     return pullbackStructPredecessorFields.lookup(pullbackStruct);
@@ -3060,11 +3062,11 @@ public:
 
   SILBasicBlock *remapBasicBlock(SILBasicBlock *bb) {
     auto *vjpBB = BBMap[bb];
-    // If error has occurred, or if block has already been remapped, return
-    // remapped, return remapped block.
+    // If error has occurred, or if original block has already been remapped,
+    // return the remapped block.
     if (errorOccurred || remappedBasicBlocks.count(bb))
       return vjpBB;
-    // Add predecessor enum argument to the remapped block.
+    // Add predecessor enum argument to the remapped bb.
     auto *predEnum = pullbackInfo.getPredecessorEnum(bb);
     auto enumTy = getOpASTType(predEnum->getDeclaredInterfaceType()
                                  ->getCanonicalType());
@@ -3098,9 +3100,10 @@ private:
     return nomSILType;
   }
 
-  /// Build a pullback struct value for the original block corresponding to the
-  /// given terminator.
-  StructInst *buildPrimalValueStructValue(TermInst *termInst) {
+  /// Build a pullback struct value for the original basic block corresponding
+  /// to the given terminator.
+  StructInst *buildPullbackStructValue(TermInst *termInst) {
+    assert(termInst->getFunction() == original);
     auto loc = termInst->getFunction()->getLocation();
     auto *origBB = termInst->getParent();
     auto *vjpBB = BBMap[origBB];
@@ -3129,10 +3132,10 @@ private:
 
 public:
   void visitBranchInst(BranchInst *bi) {
-    // Build pullback struct value for original block.
-    // Build predecessor enum value for destination block.
+    // Build pullback struct value for original bb.
+    // Build predecessor enum value for destination bb.
     auto *origBB = bi->getParent();
-    auto *pbStructVal = buildPrimalValueStructValue(bi);
+    auto *pbStructVal = buildPullbackStructValue(bi);
     auto *enumVal = buildPredecessorEnumValue(
         origBB, bi->getDestBB(), pbStructVal);
 
@@ -3148,8 +3151,8 @@ public:
   }
 
   void visitCondBranchInst(CondBranchInst *cbi) {
-    // Build pullback struct value for original block.
-    // Build predecessor enum values for true/false blocks.
+    // Build pullback struct value for original bb.
+    // Build predecessor enum values for true/false bbs.
     auto *origBB = cbi->getParent();
     auto *pbStructVal = buildPrimalValueStructValue(cbi);
     auto *trueEnumVal = buildPredecessorEnumValue(
@@ -4065,7 +4068,7 @@ private:
         originalValue, makeZeroAdjointValue(
             getRemappedTangentType(originalValue->getType())));
     auto it = insertion.first;
-    SWIFT_DEFER { valueMap.erase(it); };
+    // SWIFT_DEFER { valueMap.erase(it); };
     return std::move(it->getSecond());
   }
 
@@ -4284,17 +4287,17 @@ public:
     auto adjLoc = getAdjoint().getLocation();
     LLVM_DEBUG(getADDebugStream() << "Running AdjointGen on\n" << original);
 
-    // Create adjoint blocks and arguments.
+    // Create adjoint bbs and arguments.
     {
       PostDominanceOrder postDomOrder(&*original.findReturnBB(), postDomInfo);
       while (auto *origBB = postDomOrder.getNext()) {
         auto *adjointBB = adjoint.createBasicBlock();
         adjointBBMap.insert({origBB, adjointBB});
         postDomOrder.pushChildren(origBB);
-        // If adjoint block is the adjoint entry, continue.
+        // If adjoint bb is the adjoint entry, continue.
         if (adjointBB->isEntry())
           continue;
-        // Otherwise, add a pullback struct argument to the adjoint block.
+        // Otherwise, add a pullback struct argument to the adjoint bb.
         auto pbStructLoweredType =
             getPullbackInfo().getPullbackStructLoweredType(origBB);
         adjointBB->createPhiArgument(
@@ -4349,12 +4352,12 @@ public:
                << " as the adjoint of original result " << origResult);
 
     // From the original exit, emit a reverse control flow graph and perform
-    // differentiation in each block.
+    // differentiation in each bb.
     PostDominanceOrder postDomOrder(&*original.findReturnBB(), postDomInfo);
     while (auto *bb = postDomOrder.getNext()) {
       if (errorOccurred)
         break;
-      // Get the corresponding adjoint basic block.
+      // Get the corresponding adjoint bb.
       auto adjBB = getAdjointBlock(bb);
       builder.setInsertionPoint(adjBB);
 
@@ -4378,12 +4381,12 @@ public:
           return true;
       }
 
-      // If the original block is the original entry, then the adjoint block is
-      // the adjoint exit, which is handled specially below this loop. Continue.
+      // If the original bb is the original entry, then the adjoint bb is the
+      // adjoint exit, which is handled specially below this loop. Continue.
       if (bb->isEntry())
         continue;
 
-      // Otherwise, add a `switch_enum` terminator for non-exit adjoint blocks.
+      // Otherwise, add a `switch_enum` terminator for non-exit adjoint bbs.
       // - Get the pullback struct adjoint bb argument.
       // - Extract the predecessor enum value.
       // - Do `switch_enum` on the predecessor value to branch to a predecessor
@@ -4407,8 +4410,29 @@ public:
         auto *enumEltDecl =
             getPullbackInfo().lookUpPredecessorEnumElement(predBB, bb);
         predecessorCases.push_back({enumEltDecl, adjointSuccBB});
+
+        // Propagate adjoint values from adjoint bb arguments to adjoint
+        // successor bb terminator operands.
+        auto *termInst = adjBB->getTerminator();
+        if (auto *bi = dyn_cast<BranchInst>(termInst)) {
+          for (auto pair : llvm::zip(bi->getOperandValues(), adjointSuccBB->getArguments())) {
+            auto termOp = std::get<0>(pair);
+            auto bbArg = std::get<1>(pair);
+            auto bbArgTanType = getRemappedTangentType(bbArg->getType());
+            if (bbArgTanType.isObject()) {
+              auto bbArgAdj = takeAdjointValue(bbArg);
+              initializeAdjointValue(termOp, std::move(bbArgAdj));
+            } else {
+              auto bbArgAdjBuf = getAdjointBuffer(bbArg);
+              setAdjointBuffer(bbArg, bbArgAdjBuf);
+            }
+          }
+        } else if (auto *cbi = dyn_cast<CondBranchInst>(termInst)) {
+
+        }
       }
       assert(predecessorCases.size() == predEnum->getNumElements());
+      // If the original bb
       if (predecessorCases.size() == 1) {
         EnumElementDecl *enumEltDecl;
         SILBasicBlock *adjointSuccBB;
@@ -4427,9 +4451,9 @@ public:
     if (errorOccurred)
       return true;
 
-    // Place the builder at the adjoint exit, i.e. the adjoint block
-    // corresponding to the original entry. Return the adjoints wrt parameters
-    // in the adjoint exit.
+    // Place the builder at the adjoint exit, i.e. the adjoint bb corresponding
+    // to the original entry. Return the adjoints wrt parameters in the adjoint
+    // exit.
     builder.setInsertionPoint(getAdjointBlock(original.getEntryBlock()));
 
     // This vector will contain all the materialized return elements.
@@ -4483,9 +4507,8 @@ public:
       auto *origBB = pair.getFirst();
       auto localBlockAllocations = pair.getSecond();
 
-      // Move builder to the post-dominator of the adjoint block.
-      // This is computed as the adjoint block f the original block's
-      // dominator.
+      // Move builder to the post-dominator of the adjoint bb.
+      // This is computed as the adjoint bb of the original bb's dominator.
       auto *domBB = domInfo->getNode(origBB)->getBlock();
       if (auto *dom = domInfo->getNode(origBB)->getIDom())
         domBB = dom->getBlock();

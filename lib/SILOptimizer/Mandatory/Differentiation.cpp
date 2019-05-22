@@ -448,8 +448,8 @@ private:
     llvm_unreachable("No files?");
   }
 
-  /// Compute and set the access level for the given primal data structure,
-  /// given the original function linkage.
+  /// Compute and set the access level for the given declaration, given the
+  /// original function linkage.
   void computeAccessLevel(
       NominalTypeDecl *nominal, SILLinkage originalLinkage) {
     auto &astCtx = nominal->getASTContext();
@@ -1507,8 +1507,8 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
     variedValueSets.push_back({input});
   // Propagate varied-ness through the function in dominance order.
   DominanceOrder domOrder(function.getEntryBlock(), di);
-  while (auto *block = domOrder.getNext()) {
-    for (auto &inst : *block) {
+  while (auto *bb = domOrder.getNext()) {
+    for (auto &inst : *bb) {
       for (auto i : indices(inputValues)) {
         // Handle `apply`.
         if (auto *ai = dyn_cast<ApplyInst>(&inst)) {
@@ -1595,7 +1595,7 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
         }
       }
     }
-    domOrder.pushChildren(block);
+    domOrder.pushChildren(bb);
   }
 
   // Mark differentiable outputs as useful.
@@ -1611,8 +1611,8 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
   }
   // Propagate usefulness through the function in post-dominance order.
   PostDominanceOrder postDomOrder(&*function.findReturnBB(), pdi);
-  while (auto *block = postDomOrder.getNext()) {
-    for (auto &inst : reversed(*block)) {
+  while (auto *bb = postDomOrder.getNext()) {
+    for (auto &inst : reversed(*bb)) {
       for (auto i : indices(outputValues)) {
         // Handle indirect results in `apply`.
         if (auto *ai = dyn_cast<ApplyInst>(&inst)) {
@@ -1661,7 +1661,7 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
     }
     // Propagate usefulness from basic block arguments to incoming phi values.
     for (auto i : indices(outputValues)) {
-      for (auto *arg : block->getArguments()) {
+      for (auto *arg : bb->getArguments()) {
         if (isUseful(arg, i)) {
           SmallVector<SILValue, 4> incomingValues;
           arg->getIncomingPhiValues(incomingValues);
@@ -1670,7 +1670,7 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
         }
       }
     }
-    postDomOrder.pushChildren(block);
+    postDomOrder.pushChildren(bb);
   }
 }
 
@@ -3890,12 +3890,6 @@ private:
   /// Local stack allocations.
   DenseMap<SILBasicBlock *, SmallVector<ValueWithCleanup, 8>> localAllocations;
 
-/*
-  /// Mapping from original basic blocks with multiple successors to primal
-  /// value struct allocations in the adjoint.
-  DenseMap<SILBasicBlock *, AllocStackInst *> primalValueStructAllocations;
-*/
-
   /// The seed argument in the adjoint function.
   SILArgument *seed = nullptr;
 
@@ -4308,23 +4302,6 @@ public:
       }
     }
 
-/*
-    // Create pullback struct allocations for adjoint basic blocks with
-    // multiple predecessors.
-    for (auto &bb : original) {
-      if (bb.getSuccessors().size() < 1)
-        continue;
-      auto pbStructSILType = pullbackInfo.getPullbackStructLoweredType(&bb);
-      auto *postDomBB = postDomInfo->getNode(&bb)->getIDom()->getBlock();
-      auto *adjPostDomBB = adjointBBMap[postDomBB];
-      SILBuilder allocBuilder(adjPostDomBB, adjPostDomBB->begin());
-      auto *alloc = allocBuilder.createAllocStack(adjLoc, pbStructSILType);
-      primalValueStructAllocations[&bb] = alloc;
-      ValueWithCleanup bufWithCleanup(alloc, makeCleanup(alloc, emitCleanup));
-      localAllocations[&bb].push_back(bufWithCleanup);
-    }
-*/
-
     auto *origExit = &*original.findReturnBB();
     auto *adjointEntry = adjoint.getEntryBlock();
     createEntryArguments(&adjoint);
@@ -4507,11 +4484,13 @@ public:
       auto localBlockAllocations = pair.getSecond();
 
       // Move builder to the post-dominator of the adjoint block.
+      // This is computed as the adjoint block f the original block's
+      // dominator.
       auto *domBB = domInfo->getNode(origBB)->getBlock();
       if (auto *dom = domInfo->getNode(origBB)->getIDom())
         domBB = dom->getBlock();
-      auto *adjDomBB = getAdjointBlock(domBB);
-      builder.setInsertionPoint(adjDomBB);
+      auto *adjPostDomBB = getAdjointBlock(domBB);
+      builder.setInsertionPoint(adjPostDomBB);
 
       // Create `dealloc_stack` instructions.
       for (auto alloc : localBlockAllocations) {

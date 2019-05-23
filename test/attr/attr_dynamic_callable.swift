@@ -421,3 +421,17 @@ func testGenericType5<T>(a: CallableGeneric5<T>) -> Double {
 func testArchetypeType5<T, C : CallableGeneric5<T>>(a: C) -> Double {
   return a(1, 2, 3) + a(x1: 1, 2, x3: 3)
 }
+
+//===----------------------------------------------------------------------===//
+// Edge cases
+//===----------------------------------------------------------------------===//
+
+// SR-10753: Test interaction with string interpolation.
+@dynamicCallable
+struct StringCallable {
+  func dynamicallyCall(withArguments arguments: [String]) {}
+}
+func testStringInterpolation(_ x: StringCallable) {
+  x("hello")
+  x("\(hello)")
+}

@@ -2419,6 +2419,9 @@ public:
       SILType caseTy = UI->getType().getEnumElementType(UI->getElement(),
                                                         F.getModule());
       if (UI->getModule().getStage() != SILStage::Lowered) {
+        llvm::errs() << "CASE TY VS LOWERED\n";
+        caseTy.dump();
+        UI->getOperand()->getType().dump();
         require(caseTy == UI->getOperand()->getType(),
                 "EnumInst operand type does not match type of case");
       }
@@ -4771,6 +4774,12 @@ public:
 
         } else if (auto term = dyn_cast<TermInst>(&i)) {
           if (term->isFunctionExiting()) {
+            if (!state.Stack.empty()) {
+              llvm::errs() << "SILVERIFIER ERROR: STACK ALLOCS NOT EMPTY\n";
+              for (auto alloc : state.Stack) {
+                alloc->dump();
+              }
+            }
             require(state.Stack.empty(),
                     "return with stack allocs that haven't been deallocated");
             require(state.ActiveOps.empty(),
@@ -4853,6 +4862,17 @@ public:
             };
             
             const auto &foundState = insertResult.first->second;
+            if (state.Stack != foundState.Stack) {
+              llvm::errs() << "SILVERIFIER INCONSISTENT STACK HEIGHTS\n";
+              llvm::errs() << "state.Stack: " << state.Stack.size() << "\n";
+              for (auto alloc : state.Stack) {
+                alloc->dump();
+              }
+              llvm::errs() << "foundState.Stack: " << foundState.Stack.size() << "\n";
+              for (auto alloc : foundState.Stack) {
+                alloc->dump();
+              }
+            }
             require(state.Stack == foundState.Stack || isUnreachable(),
                     "inconsistent stack heights entering basic block");
             require(state.ActiveOps == foundState.ActiveOps || isUnreachable(),

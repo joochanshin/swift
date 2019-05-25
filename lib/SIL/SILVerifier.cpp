@@ -4165,6 +4165,10 @@ public:
           if (F.getModule().getStage() != SILStage::Lowered) {
             // During the lowered stage, a function type might have different
             // signature
+            if (eltArgTy != bbArgTy) {
+              eltArgTy.getASTType()->dump();
+              bbArgTy.getASTType()->dump();
+            }
             require(eltArgTy == bbArgTy,
                     "switch_enum destination bbarg must match case arg type");
           }

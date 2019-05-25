@@ -3238,6 +3238,56 @@ public:
         getOpBasicBlock(cbi->getFalseBB()), falseArgs);
   }
 
+  void visitSwitchEnumInst(SwitchEnumInst *sei) {
+    // Build pullback struct value for original block.
+    auto *origBB = sei->getParent();
+    auto *pbStructVal = buildPullbackValueStructValue(sei);
+
+    // Creates a trampoline block for given original successor block. The
+    // trampoline block has the same arguments as the VJP successor block but
+    // drops the last predecessor enum argument. The generated `switch_enum`
+    // instruction branches to the trampoline block, and the trampoline block
+    // constructs a predecessor enum value and branches to the VJP successor
+    // block.
+    auto createTrampolineBasicBlock =
+      [&](SILBasicBlock *origSuccBB) -> SILBasicBlock * {
+        auto *vjpSuccBB = getOpBasicBlock(origSuccBB);
+        // Create the trampoline block.
+        auto *trampolineBB = vjp->createBasicBlockBefore(vjpSuccBB);
+        for (auto *arg : vjpSuccBB->getArguments().drop_back())
+          trampolineBB->createPhiArgument(arg->getType(),
+                                          arg->getOwnershipKind());
+        // Build predecessor enum value for successor block and branch to it.
+        SILBuilder trampolineBuilder(trampolineBB);
+        auto *succEnumVal = buildPredecessorEnumValue(
+            trampolineBuilder, origBB, origSuccBB, pbStructVal);
+        SmallVector<SILValue, 4> forwardedArguments(
+            trampolineBB->getArguments().begin(),
+            trampolineBB->getArguments().end());
+        forwardedArguments.push_back(succEnumVal);
+        trampolineBuilder.createBranch(
+            sei->getLoc(), vjpSuccBB, forwardedArguments);
+        return trampolineBB;
+      };
+
+    // Create trampoline successor basic blocks.
+    SmallVector<std::pair<EnumElementDecl *, SILBasicBlock *>, 4> caseBBs;
+    for (unsigned i : range(sei->getNumCases())) {
+      auto caseBB = sei->getCase(i);
+      auto *trampolineBB = createTrampolineBasicBlock(caseBB.second);
+      caseBBs.push_back({caseBB.first, trampolineBB});
+    }
+    // Create trampoline default basic block.
+    SILBasicBlock *newDefaultBB = nullptr;
+    if (auto *defaultBB = sei->getDefaultBBOrNull().getPtrOrNull())
+      newDefaultBB = createTrampolineBasicBlock(defaultBB);
+
+    // Create a new `switch_enum` instruction.
+    getBuilder().createSwitchEnum(
+        sei->getLoc(), getOpValue(sei->getOperand()),
+        newDefaultBB, caseBBs);
+  }
+
   void visitStructExtractInst(StructExtractInst *sei) {
     auto &strategies = context.getStructExtractDifferentiationStrategies();
     // Special handling logic only applies when the `struct_extract` is active.
@@ -4089,6 +4139,9 @@ private:
   /// value must not be present before this function is called.
   void initializeAdjointValue(SILBasicBlock *origBB, SILValue originalValue,
                               AdjointValue adjointValue) {
+    llvm::errs() << "initialAdjointValue in orig BB" << origBB->getDebugID() << " for original value " << originalValue.getOpaqueValue() << " with adjoint value\n";
+    originalValue->dump();
+    adjointValue.print(llvm::errs()); llvm::errs() << "\n";
     assert(origBB->getParent() == &getOriginal());
     auto insertion = valueMap[origBB].try_emplace(originalValue, adjointValue);
     assert(insertion.second && "Adjoint value inserted before");
@@ -4100,6 +4153,8 @@ private:
   /// This method first tries to find an entry in `adjointMap`. If an adjoint
   /// doesn't exist, create a zero adjoint.
   AdjointValue getAdjointValue(SILBasicBlock *origBB, SILValue originalValue) {
+    llvm::errs() << "getAdjointValue in orig BB" << origBB->getDebugID() << " for original value " << originalValue.getOpaqueValue() << "\n";
+    originalValue->dump();
     assert(origBB->getParent() == &getOriginal());
     assert(originalValue->getType().isObject());
     assert(originalValue->getFunction() == &getOriginal());
@@ -4193,6 +4248,8 @@ private:
   }
 
   ValueWithCleanup &getAdjointBuffer(SILValue originalBuffer) {
+    llvm::errs() << "getAdjointBuffer for original value " << originalBuffer.getOpaqueValue() << "\n";
+    originalBuffer->dump();
     assert(originalBuffer->getType().isAddress());
     assert(originalBuffer->getFunction() == &getOriginal());
     auto insertion = bufferMap.try_emplace(originalBuffer,
@@ -4223,13 +4280,25 @@ private:
     // allocation, or at the start of the adjoint entry BB if no local
     // allocations exist yet.
     auto *origBB = originalBuffer->getParentBlock();
-    auto *adjBB = getAdjointBlock(origBB);
+    auto *domAnalysis = getContext().getPassManager().getAnalysis<DominanceAnalysis>();
+    auto *domInfo = domAnalysis->get(&getOriginal());
+    auto *domBB = origBB;
+    auto *domBBNode = domInfo->getNode(origBB);
+    if (auto *domNode = domBBNode->getIDom())
+      domBB = domNode->getBlock();
+    auto *adjBB = getAdjointBlock(domBB);
+    // auto *adjBB = getAdjointBlock(origBB);
     auto &localBlockAllocations = localAllocations[origBB];
+    // localAllocBuilder.setInsertionPoint(builder.getInsertionBB(), builder.getInsertionBB()->begin());
+    localAllocBuilder.setInsertionPoint(adjBB, adjBB->begin());
+    /*
     if (localBlockAllocations.empty())
       localAllocBuilder.setInsertionPoint(adjBB, adjBB->begin());
     else
       localAllocBuilder.setInsertionPoint(
           localBlockAllocations.back().getValue()->getDefiningInstruction());
+    */
+
     // Allocate local buffer and initialize to zero.
     auto *newBuf = localAllocBuilder.createAllocStack(
         originalBuffer.getLoc(),
@@ -4251,6 +4320,8 @@ private:
     // Create cleanup for local buffer.
     ValueWithCleanup bufWithCleanup(newBuf, makeCleanup(newBuf, emitCleanup));
     localBlockAllocations.push_back(bufWithCleanup);
+    llvm::errs() << "NEW BUF WITH CLEANUP\n";
+    bufWithCleanup.getValue()->dump();
     return (insertion.first->getSecond() = bufWithCleanup);
   }
 
@@ -4632,16 +4703,36 @@ public:
       auto localBlockAllocations = pair.getSecond();
 
       // Move builder to the end of the adjoint block.
+      auto *domAnalysis = getContext().getPassManager().getAnalysis<DominanceAnalysis>();
+      auto *domInfo = domAnalysis->get(&getOriginal());
+      auto *domBB = domInfo->getNode(origBB)->getBlock();
+      if (auto *dom = domInfo->getNode(origBB)->getIDom())
+        domBB = dom->getBlock();
+      auto *adjDomBB = getAdjointBlock(domBB);
+      if (adjDomBB == getAdjointBlock(origEntry))
+        builder.setInsertionPoint(adjDomBB);
+      else
+        builder.setInsertionPoint(adjDomBB->getTerminator());
+
+      /*
       auto *adjBB = getAdjointBlock(origBB);
       if (adjBB == getAdjointBlock(origEntry))
         builder.setInsertionPoint(adjBB);
       else
         builder.setInsertionPoint(adjBB->getTerminator());
+       */
 
       // Create `dealloc_stack` instructions.
       for (auto alloc : localBlockAllocations) {
+      // for (auto alloc : reversed(localBlockAllocations)) {
         // Assert that local allocations have at least one use.
-        assert(adjBB == alloc.getValue()->getParentBlock());
+        // assert(adjDomBB == alloc.getValue()->getParentBlock());
+        /*
+        if (alloc.getValue()->getParentBlock() == getAdjointBlock(origExit))
+          builder.setInsertionPoint(alloc.getValue()->getParentBlock());
+        else
+          builder.setInsertionPoint(alloc.getValue()->getParentBlock());
+        */
         // Assert that local allocations have at least one use.
         // Buffers should not be allocated needlessly.
         assert(!alloc.getValue()->use_empty());

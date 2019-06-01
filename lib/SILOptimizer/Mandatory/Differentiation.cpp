@@ -3927,7 +3927,8 @@ private:
 
   /// Mapping from original basic blocks and original values to corresponding
   /// adjoint values.
-  DenseMap<std::pair<SILBasicBlock *, SILValue>, AdjointValue> valueMap;
+  // DenseMap<std::pair<SILBasicBlock *, SILValue>, AdjointValue> valueMap;
+  DenseMap<SILBasicBlock *, DenseMap<SILValue, AdjointValue>> valueMap;
 
   /// Mapping from original basic blocks and original buffers to corresponding
   /// adjoint buffers.
@@ -4101,7 +4102,7 @@ private:
   bool hasAdjointValue(SILBasicBlock *origBB, SILValue originalValue) const {
     assert(origBB->getParent() == &getOriginal());
     assert(originalValue->getType().isObject());
-    return valueMap.count({origBB, originalValue});
+    return valueMap.lookup(origBB).count(originalValue);
   }
 
   /// Initializes an original value's corresponding adjoint value. Its adjoint
@@ -4109,8 +4110,8 @@ private:
   void initializeAdjointValue(SILBasicBlock *origBB, SILValue originalValue,
                               AdjointValue adjointValue) {
     assert(origBB->getParent() == &getOriginal());
-    auto insertion =
-        valueMap.try_emplace({origBB, originalValue}, adjointValue);
+    auto insertion = valueMap[origBB].try_emplace(originalValue, adjointValue);
+    insertion.first->getSecond() = adjointValue;
     assert(insertion.second && "Adjoint value inserted before");
   }
 
@@ -4123,8 +4124,8 @@ private:
     assert(origBB->getParent() == &getOriginal());
     assert(originalValue->getType().isObject());
     assert(originalValue->getFunction() == &getOriginal());
-    auto insertion = valueMap.try_emplace(
-        {origBB, originalValue}, makeZeroAdjointValue(
+    auto insertion = valueMap[origBB].try_emplace(
+        originalValue, makeZeroAdjointValue(
             getRemappedTangentType(originalValue->getType())));
     auto it = insertion.first;
     return it->getSecond();
@@ -4147,7 +4148,7 @@ private:
                tanSpace->getCanonicalType()));
 #endif
     auto insertion =
-        valueMap.try_emplace({origBB, originalValue}, newAdjointValue);
+        valueMap[origBB].try_emplace(originalValue, newAdjointValue);
     auto inserted = insertion.second;
     if (inserted)
       return;
@@ -4155,7 +4156,7 @@ private:
     // adjoint.
     auto it = insertion.first;
     auto &&existingValue = it->getSecond();
-    valueMap.erase(it);
+    valueMap[origBB].erase(it);
     initializeAdjointValue(origBB, originalValue,
         accumulateAdjointsDirect(existingValue, newAdjointValue));
   }
@@ -4556,13 +4557,14 @@ public:
         // active values.
         else {
           adjointSuccBB = adjointTrampolineBB;
-          adjointSuccBB = getAdjointTrampolineBlock(predBB, bb);
           assert(adjointSuccBB && adjointSuccBB->getNumArguments() == 1);
           SILBuilder adjointTrampolineBBBuilder(adjointSuccBB);
           // Propagate pullback struct argument.
           SmallVector<SILValue, 8> arguments;
           arguments.push_back(adjointSuccBB->getArguments().front());
           // Propagate adjoint values/buffers of active values/buffers.
+          SmallPtrSet<SILValue, 8> activeValueSet(activeValues[predBB].begin(),
+                                                  activeValues[predBB].end());
           for (unsigned i : indices(activeValues[predBB])) {
             auto activeValue = activeValues[predBB][i];
             if (activeValue->getType().isObject()) {
@@ -4578,6 +4580,11 @@ public:
               if (!hasAdjointValue(predBB, activeValue)) {
                 auto forwardedArgAdj = makeConcreteAdjointValue(
                     ValueWithCleanup(adjointBB->getArgument(1 + i)));
+                /*
+              llvm::errs() << "PROPAGATING ADJ VALUE IN BB " << predBB->getDebugID() << "\n";
+              activeValue->dump();
+              forwardedArgAdj.print(llvm::errs()); llvm::errs() << "\n";
+                 */
                 initializeAdjointValue(predBB, activeValue, forwardedArgAdj);
               }
             } else {
@@ -4589,6 +4596,21 @@ public:
             }
           }
           adjointTrampolineBBBuilder.createBranch(adjLoc, adjointBB, arguments);
+        }
+
+        // TODO: Move propagation logic outside of if-else block above.
+        // Experiment: propagate adjoint values from bb to predBB.
+        // This leeds to dominance problems, need to rethink.
+        for (auto pair : valueMap[bb]) {
+          auto value = std::get<0>(pair);
+          auto adjValue = std::get<1>(pair);
+          if (!hasAdjointValue(predBB, value)) {
+            llvm::errs() << "EXPERIMENT PROPAGATE ADJVALUE FROM ORIG BB " << bb->getDebugID()
+            << " TO PRED BB " << predBB->getDebugID() << "\n";
+            value->dump();
+            adjValue.print(llvm::errs()); llvm::errs() << "\n";
+            initializeAdjointValue(predBB, value, adjValue);
+          }
         }
         auto *enumEltDecl =
             getPullbackInfo().lookUpPredecessorEnumElement(predBB, bb);
@@ -4617,6 +4639,43 @@ public:
             adjLoc, predEnumVal, /*DefaultBB*/ nullptr, adjointSuccessorCases);
       }
     }
+
+    llvm::errs() << "\nDEBUG ADJOINT VALUE MAP\n";
+    for (auto pair : valueMap) {
+      auto bb = std::get<0>(pair);
+      auto valMap = std::get<1>(pair);
+      llvm::errs() << "\nDEBUGGING MAP FOR BB " << bb->getDebugID() << "\n";
+      for (auto pair : valMap) {
+        llvm::errs() << "ORIG VS ADJ\n";
+        auto origVal = std::get<0>(pair);
+        auto adjVal = std::get<1>(pair);
+        origVal->dump();
+        adjVal.print(llvm::errs());
+        llvm::errs() << "\n";
+      }
+    }
+    llvm::errs() << "\n\n";
+
+    llvm::errs() << "\nDEBUG ADJOINT BB MAP\n";
+    for (auto pair : adjointBBMap) {
+      auto *origBB = std::get<0>(pair);
+      auto *adjBB = std::get<1>(pair);
+      llvm::errs() << "orig bb" << origBB->getDebugID()
+      << " -> adj bb" << adjBB->getDebugID() << "\n";
+    }
+    llvm::errs() << "\n\n";
+
+    llvm::errs() << "\nDEBUG ADJOINT TRAMPOLINE MAP\n";
+    for (auto pair : adjointTrampolineBBMap) {
+      auto bbPair = std::get<0>(pair);
+      auto *origBB = std::get<0>(bbPair);
+      auto *succBB = std::get<1>(bbPair);
+      auto *adjBB = std::get<1>(pair);
+      llvm::errs() << "TRAMPOLINE: (bb" << origBB->getDebugID()
+      << " -> bb" << succBB->getDebugID()
+      << ") = adj bb " << adjBB->getDebugID() << "\n";
+    }
+    llvm::errs() << "\n\n";
 
     // If errors occurred, back out.
     if (errorOccurred)
@@ -4649,6 +4708,10 @@ public:
                      << cleanup->getNumChildren() << " child cleanups\n");
           cleanup->applyRecursively(builder, adjLoc);
         }
+        llvm::errs() << "ADJ VAL FOR PARAM IDX " << parameterIndex << "\n";
+        origParam->dump();
+        adjVal.print(llvm::errs());
+        val.getValue()->dump();
         retElts.push_back(val);
       } else {
         auto adjBuf = getAdjointBuffer(origEntry, origParam);

@@ -3884,7 +3884,7 @@ private:
         {origBB, originalValue}, makeZeroAdjointValue(
             getRemappedTangentType(originalValue->getType())));
     auto it = insertion.first;
-    SWIFT_DEFER { valueMap.erase(it); };
+    // SWIFT_DEFER { valueMap.erase(it); };
     return std::move(it->getSecond());
   }
 

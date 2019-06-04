@@ -3560,6 +3560,11 @@ private:
   /*implicit*/ AdjointValue(AdjointValueBase *base = nullptr) : base(base) {}
 
 public:
+  AdjointValue(const AdjointValue &) = delete;
+  AdjointValue &operator=(const AdjointValue &) = delete;
+  AdjointValue(AdjointValue &&val) = default;
+  AdjointValue &operator=(AdjointValue &&) = default;
+
   AdjointValueBase *operator->() const { return base; }
   AdjointValueBase &operator*() const { return *base; }
 
@@ -3568,14 +3573,13 @@ public:
     return new (allocator.Allocate<AdjointValueBase>()) AdjointValueBase(value);
   }
 
-  template<typename EltRange>
+  template<typename EltMoveRange>
   static AdjointValue createAggregate(llvm::BumpPtrAllocator &allocator,
-                                      SILType type, EltRange elements) {
+                                      SILType type, EltMoveRange &&elements) {
     AdjointValue *buf = reinterpret_cast<AdjointValue *>(allocator.Allocate(
         elements.size() * sizeof(AdjointValue), alignof(AdjointValue)));
     MutableArrayRef<AdjointValue> elementsCopy(buf, elements.size());
-    std::uninitialized_copy(elements.begin(), elements.end(),
-                            elementsCopy.begin());
+    std::move(elements.begin(), elements.end(), elementsCopy.begin());
     return new (allocator.Allocate<AdjointValueBase>())
         AdjointValueBase(type, elementsCopy);
   }
@@ -3604,7 +3608,7 @@ public:
 
   AdjointValue takeAggregateElement(unsigned i) {
     assert(isAggregate());
-    return base->value.aggregate[i];
+    return std::move(base->value.aggregate[i]);
   }
 
   ValueWithCleanup getConcreteValue() const {
@@ -3765,8 +3769,8 @@ private:
 
   AdjointValue makeConcreteAdjointValue(ValueWithCleanup value);
 
-  template<typename EltRange>
-  AdjointValue makeAggregateAdjointValue(SILType type, EltRange elements);
+  template<typename EltMoveRange>
+  AdjointValue makeAggregateAdjointValue(SILType type, EltMoveRange &&elements);
 
   //--------------------------------------------------------------------------//
   // Managed value materializers
@@ -3774,18 +3778,18 @@ private:
 
   /// Materialize an adjoint value. The type of the given adjoint value must be
   /// loadable.
-  ValueWithCleanup materializeAdjointDirect(AdjointValue val,
+  ValueWithCleanup materializeAdjointDirect(AdjointValue &&val,
                                             SILLocation loc);
 
   /// Materialize an adjoint value indirectly to a SIL buffer.
   void materializeAdjointIndirect(
-      AdjointValue val, ValueWithCleanup &destBuffer);
+      AdjointValue &&val, ValueWithCleanup &destBuffer);
 
   /// Materialize the given adjoint value indirectly to the specified buffer.
   /// The root address derivation of `seedBufAccess` must be the result of
   /// a `begin_access`.
   void materializeAdjointIndirectHelper(
-      AdjointValue val, ValueWithCleanup &destBufferAccess);
+      AdjointValue &&val, ValueWithCleanup &destBufferAccess);
 
   //--------------------------------------------------------------------------//
   // Helpers for managed value materializers
@@ -3804,10 +3808,10 @@ private:
   //--------------------------------------------------------------------------//
 
   /// Materialize an adjoint value in the most efficient way.
-  ValueWithCleanup materializeAdjoint(AdjointValue val, SILLocation loc);
+  ValueWithCleanup materializeAdjoint(AdjointValue &&val, SILLocation loc);
 
   /// Given two adjoint values, accumulate them.
-  AdjointValue accumulateAdjointsDirect(AdjointValue lhs, AdjointValue rhs);
+  AdjointValue accumulateAdjointsDirect(AdjointValue &&lhs, AdjointValue &&rhs);
 
   /// Given two materialized adjoint values, accumulate them. These two
   /// adjoints must be objects of loadable type.
@@ -3863,7 +3867,7 @@ private:
                               AdjointValue adjointValue) {
     assert(origBB->getParent() == &getOriginal());
     auto insertion =
-        valueMap.try_emplace({origBB, originalValue}, adjointValue);
+        valueMap.try_emplace({origBB, originalValue}, std::move(adjointValue));
     assert(insertion.second && "Adjoint value inserted before");
   }
 
@@ -3880,12 +3884,13 @@ private:
         {origBB, originalValue}, makeZeroAdjointValue(
             getRemappedTangentType(originalValue->getType())));
     auto it = insertion.first;
-    return it->getSecond();
+    SWIFT_DEFER { valueMap.erase(it); };
+    return std::move(it->getSecond());
   }
 
   /// Add an adjoint value for the given original value.
   void addAdjointValue(SILBasicBlock *origBB, SILValue originalValue,
-                       AdjointValue newAdjointValue) {
+                       AdjointValue &&newAdjointValue) {
     assert(origBB->getParent() == &getOriginal());
     assert(originalValue->getType().isObject());
     assert(newAdjointValue.getType().isObject());
@@ -3899,8 +3904,8 @@ private:
     assert(tanSpace && newAdjointValue.getType().getASTType()->isEqual(
                tanSpace->getCanonicalType()));
 #endif
-    auto insertion =
-        valueMap.try_emplace({origBB, originalValue}, newAdjointValue);
+    auto insertion = valueMap.try_emplace(
+        {origBB, originalValue}, std::move(newAdjointValue));
     auto inserted = insertion.second;
     if (inserted)
       return;
@@ -3910,7 +3915,7 @@ private:
     auto &&existingValue = it->getSecond();
     valueMap.erase(it);
     initializeAdjointValue(origBB, originalValue,
-        accumulateAdjointsDirect(existingValue, newAdjointValue));
+        accumulateAdjointsDirect(std::move(existingValue), std::move(newAdjointValue)));
   }
 
   /// Get the adjoint block argument corresponding to the given original block
@@ -4332,7 +4337,7 @@ public:
         for (auto pair : incomingValues) {
           auto *predBB = std::get<0>(pair);
           auto incomingValue = std::get<1>(pair);
-          initializeAdjointValue(predBB, incomingValue, bbArgAdj);
+          initializeAdjointValue(predBB, incomingValue, std::move(bbArgAdj));
         }
       }
 
@@ -4368,7 +4373,7 @@ public:
             if (activeValue->getType().isObject()) {
               auto activeValueAdj = getAdjointValue(bb, activeValue);
               auto concreteActiveValueAdj =
-                  materializeAdjointDirect(activeValueAdj, adjLoc);
+              materializeAdjointDirect(std::move(activeValueAdj), adjLoc);
               trampolineArguments.push_back(concreteActiveValueAdj);
               // If the adjoint block does not yet have a registered adjoint
               // value for the active value, set the adjoint value to the
@@ -4380,7 +4385,8 @@ public:
                     getActiveValueAdjointBlockArgument(predBB, activeValue);
                 auto forwardedArgAdj =
                     makeConcreteAdjointValue(ValueWithCleanup(adjointBBArg));
-                initializeAdjointValue(predBB, activeValue, forwardedArgAdj);
+                initializeAdjointValue(
+                    predBB, activeValue, std::move(forwardedArgAdj));
               }
             } else {
               // Propagate adjoint buffers using `copy_addr`.
@@ -4444,7 +4450,7 @@ public:
       auto origParam = origParams[parameterIndex];
       if (origParam->getType().isObject()) {
         auto adjVal = getAdjointValue(origEntry, origParam);
-        auto val = materializeAdjointDirect(adjVal, adjLoc);
+        auto val = materializeAdjointDirect(std::move(adjVal), adjLoc);
         if (auto *cleanup = val.getCleanup()) {
           LLVM_DEBUG(getADDebugStream() << "Disabling cleanup for "
                      << val.getValue() << "for return\n");
@@ -4860,7 +4866,7 @@ public:
       auto tupleTy = tei->getTupleType();
       auto tupleTanTupleTy = tupleTanTy.getAs<TupleType>();
       if (!tupleTanTupleTy) {
-        addAdjointValue(bb, tei->getOperand(), av);
+        addAdjointValue(bb, tei->getOperand(), std::move(av));
         break;
       }
       SmallVector<AdjointValue, 8> elements;
@@ -4878,7 +4884,7 @@ public:
                       ->getCanonicalType()))));
       }
       if (elements.size() == 1) {
-        addAdjointValue(bb, tei->getOperand(), elements.front());
+        addAdjointValue(bb, tei->getOperand(), std::move(elements.front()));
         break;
       }
       addAdjointValue(bb, tei->getOperand(),
@@ -5123,14 +5129,14 @@ AdjointEmitter::makeConcreteAdjointValue(ValueWithCleanup value) {
   return AdjointValue::createConcrete(allocator, value);
 }
 
-template<typename EltRange>
+template<typename EltMoveRange>
 AdjointValue AdjointEmitter::makeAggregateAdjointValue(
-    SILType type, EltRange elements) {
+    SILType type, EltMoveRange &&elements) {
   return AdjointValue::createAggregate(allocator, remapType(type), elements);
 }
 
 ValueWithCleanup AdjointEmitter::materializeAdjointDirect(
-    AdjointValue val, SILLocation loc) {
+    AdjointValue &&val, SILLocation loc) {
   assert(val.getType().isObject());
   LLVM_DEBUG(getADDebugStream() <<
              "Materializing adjoints for " << val << '\n');
@@ -5166,19 +5172,19 @@ ValueWithCleanup AdjointEmitter::materializeAdjointDirect(
 }
 
 void AdjointEmitter::materializeAdjointIndirect(
-    AdjointValue val, ValueWithCleanup &destBuffer) {
+    AdjointValue &&val, ValueWithCleanup &destBuffer) {
   ValueWithCleanup access(
       builder.createBeginAccess(
           destBuffer.getLoc(), destBuffer, SILAccessKind::Init,
           SILAccessEnforcement::Static, /*noNestedConflict*/ true,
           /*fromBuiltin*/ false),
           /*cleanup*/ nullptr);
-  materializeAdjointIndirectHelper(val, access);
+  materializeAdjointIndirectHelper(std::move(val), access);
   destBuffer.setCleanup(access.getCleanup());
   builder.createEndAccess(access.getLoc(), access, /*aborted*/ false);
 }
 
-ValueWithCleanup AdjointEmitter::materializeAdjoint(AdjointValue val,
+ValueWithCleanup AdjointEmitter::materializeAdjoint(AdjointValue &&val,
                                                     SILLocation loc) {
   if (val.isConcrete()) {
     LLVM_DEBUG(getADDebugStream()
@@ -5187,11 +5193,11 @@ ValueWithCleanup AdjointEmitter::materializeAdjoint(AdjointValue val,
   }
   LLVM_DEBUG(getADDebugStream() << "Materializing adjoint: Value is "
                                    "non-concrete. Materializing directly.\n");
-  return materializeAdjointDirect(val, loc);
+  return materializeAdjointDirect(std::move(val), loc);
 }
 
 void AdjointEmitter::materializeAdjointIndirectHelper(
-    AdjointValue val, ValueWithCleanup &destBufferAccess) {
+    AdjointValue &&val, ValueWithCleanup &destBufferAccess) {
   auto loc = destBufferAccess.getLoc();
   auto soq = getBufferSOQ(val.getType().getASTType(), builder.getFunction());
   switch (val.getKind()) {
@@ -5299,8 +5305,8 @@ SILValue AdjointEmitter::emitZeroDirect(CanType type, SILLocation loc) {
 }
 
 AdjointValue
-AdjointEmitter::accumulateAdjointsDirect(AdjointValue lhs,
-                                         AdjointValue rhs) {
+AdjointEmitter::accumulateAdjointsDirect(AdjointValue &&lhs,
+                                         AdjointValue &&rhs) {
   LLVM_DEBUG(getADDebugStream()
              << "Materializing adjoint directly.\nLHS: " << lhs
              << "\nRHS: " << rhs << '\n');
@@ -5320,7 +5326,7 @@ AdjointEmitter::accumulateAdjointsDirect(AdjointValue lhs,
     }
     // x + 0 => x
     case AdjointValueKind::Zero:
-      return lhs;
+      return std::move(lhs);
     // x + (y, z) => (x.0 + y, x.1 + z)
     case AdjointValueKind::Aggregate:
       SmallVector<AdjointValue, 8> newElements;
@@ -5333,7 +5339,7 @@ AdjointEmitter::accumulateAdjointsDirect(AdjointValue lhs,
           newElements.push_back(accumulateAdjointsDirect(
               makeConcreteAdjointValue(
                   ValueWithCleanup(lhsElt, lhsVal.getCleanup())),
-              rhsElt));
+              std::move(rhsElt)));
         }
       } else if (auto *structDecl = lhsTy->getStructOrBoundGenericStruct()) {
         auto fieldIt = structDecl->getStoredProperties().begin();
@@ -5345,7 +5351,7 @@ AdjointEmitter::accumulateAdjointsDirect(AdjointValue lhs,
           newElements.push_back(accumulateAdjointsDirect(
               makeConcreteAdjointValue(
                   ValueWithCleanup(lhsElt, lhsVal.getCleanup())),
-              rhsElt));
+              std::move(rhsElt)));
         }
       } else {
         llvm_unreachable("Not an aggregate type");
@@ -5356,7 +5362,7 @@ AdjointEmitter::accumulateAdjointsDirect(AdjointValue lhs,
   // 0
   case AdjointValueKind::Zero:
     // 0 + x => x
-    return rhs;
+    return std::move(rhs);
   // (x, y)
   case AdjointValueKind::Aggregate:
     switch (rhs.getKind()) {
@@ -5364,7 +5370,7 @@ AdjointEmitter::accumulateAdjointsDirect(AdjointValue lhs,
     case AdjointValueKind::Concrete:
     // x + 0 => x
     case AdjointValueKind::Zero:
-      return lhs;
+      return std::move(lhs);
     // (x, y) + (z, w) => (x + z, y + w)
     case AdjointValueKind::Aggregate: {
       SmallVector<AdjointValue, 8> newElements;

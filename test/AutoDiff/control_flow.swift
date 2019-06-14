@@ -424,4 +424,26 @@ ControlFlowTests.test("Recursion") {
   expectEqual(1, gradient(at: 100, in: { x in product(x, count: 1) }))
 }
 
+ControlFlowTests.test("Recursion") {
+  enum Enum {
+    case a(Float)
+    case b(Double, Float80)
+  }
+  
+  func enum_notactive(_ e: Enum, _ x: Float) -> Float {
+    if x > 0 {
+      switch e {
+        case .a: return x * x * x
+        case .b: return -x
+      }
+    } else if case .b = e {
+      return -x
+    }
+    return x * x
+  }
+  
+  print(gradient(at: Float(2), in: { x in enum_notactive(.a(1), x) }))
+  print(gradient(at: Float(2), in: { x in enum_notactive(.b(1, 1), x) }))
+}
+
 runAllTests()

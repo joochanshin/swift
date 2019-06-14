@@ -1533,6 +1533,15 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
               setVaried(cbi->getFalseBB()->getArgument(opIdx), i);
           }
         }
+        // Handle `switch_enum`.
+        else if (auto *sei = dyn_cast<SwitchEnumInst>(&inst)) {
+          if (isVaried(sei->getOperand(), i)) {
+            for (auto *succBB : sei->getSuccessorBlocks())
+              for (auto *arg : succBB->getArguments())
+                setVaried(arg, i);
+            // Default block cannot have arguments.
+          }
+        }
         // Handle everything else.
         else {
           for (auto &op : inst.getAllOperands())
@@ -1767,8 +1776,9 @@ static bool diagnoseUnsupportedControlFlow(ADContext &context,
   // Diagnose unsupported branching terminators.
   for (auto &bb : *original) {
     auto *term = bb.getTerminator();
-    // Supported terminators are: `br`, `cond_br`.
-    if (isa<BranchInst>(term) || isa<CondBranchInst>(term))
+    // Supported terminators are: `br`, `cond_br`, `switch_enum`.
+    if (isa<BranchInst>(term) || isa<CondBranchInst>(term) ||
+        isa<SwitchEnumInst>(term))
       continue;
     // If terminator is an unsupported branching terminator, emit an error.
     if (term->isBranch()) {
@@ -3134,6 +3144,56 @@ public:
         getOpBasicBlock(cbi->getFalseBB()), falseArgs);
   }
 
+  void visitSwitchEnumInst(SwitchEnumInst *sei) {
+    // Build pullback struct value for original block.
+    auto *origBB = sei->getParent();
+    auto *pbStructVal = buildPullbackValueStructValue(sei);
+
+    // Creates a trampoline block for given original successor block. The
+    // trampoline block has the same arguments as the VJP successor block but
+    // drops the last predecessor enum argument. The generated `switch_enum`
+    // instruction branches to the trampoline block, and the trampoline block
+    // constructs a predecessor enum value and branches to the VJP successor
+    // block.
+    auto createTrampolineBasicBlock =
+      [&](SILBasicBlock *origSuccBB) -> SILBasicBlock * {
+        auto *vjpSuccBB = getOpBasicBlock(origSuccBB);
+        // Create the trampoline block.
+        auto *trampolineBB = vjp->createBasicBlockBefore(vjpSuccBB);
+        for (auto *arg : vjpSuccBB->getArguments().drop_back())
+          trampolineBB->createPhiArgument(arg->getType(),
+                                          arg->getOwnershipKind());
+        // Build predecessor enum value for successor block and branch to it.
+        SILBuilder trampolineBuilder(trampolineBB);
+        auto *succEnumVal = buildPredecessorEnumValue(
+            trampolineBuilder, origBB, origSuccBB, pbStructVal);
+        SmallVector<SILValue, 4> forwardedArguments(
+            trampolineBB->getArguments().begin(),
+            trampolineBB->getArguments().end());
+        forwardedArguments.push_back(succEnumVal);
+        trampolineBuilder.createBranch(
+            sei->getLoc(), vjpSuccBB, forwardedArguments);
+        return trampolineBB;
+      };
+
+    // Create trampoline successor basic blocks.
+    SmallVector<std::pair<EnumElementDecl *, SILBasicBlock *>, 4> caseBBs;
+    for (unsigned i : range(sei->getNumCases())) {
+      auto caseBB = sei->getCase(i);
+      auto *trampolineBB = createTrampolineBasicBlock(caseBB.second);
+      caseBBs.push_back({caseBB.first, trampolineBB});
+    }
+    // Create trampoline default basic block.
+    SILBasicBlock *newDefaultBB = nullptr;
+    if (auto *defaultBB = sei->getDefaultBBOrNull().getPtrOrNull())
+      newDefaultBB = createTrampolineBasicBlock(defaultBB);
+
+    // Create a new `switch_enum` instruction.
+    getBuilder().createSwitchEnum(
+        sei->getLoc(), getOpValue(sei->getOperand()),
+        newDefaultBB, caseBBs);
+  }
+
   // If an `apply` has active results or active inout parameters, replace it
   // with an `apply` of its VJP.
   void visitApplyInst(ApplyInst *ai) {
@@ -4155,6 +4215,12 @@ public:
       auto addActiveValue = [&](SILValue v) {
         if (visited.count(v))
           return;
+        if (v->getType().getEnumOrBoundGenericEnum()) {
+          auto enumType = v->getType().getASTType();
+          getContext().emitNondifferentiabilityError(
+              v, getInvoker(), diag::autodiff_nondifferentiable_enum, enumType);
+          errorOccurred = true;
+        }
         // Skip address projections.
         // Address projections do not need their own adjoint buffers; they
         // become projections into their adjoint base buffer.
@@ -4175,8 +4241,12 @@ public:
           if (getActivityInfo().isActive(result, getIndices()))
             addActiveValue(result);
       }
+      if (errorOccurred)
+        break;
       domOrder.pushChildren(bb);
     }
+    if (errorOccurred)
+      return true;
 
     // Create adjoint blocks and arguments, visiting original blocks in
     // post-order.
@@ -5590,6 +5660,7 @@ bool VJPEmitter::run() {
                                      entry->getArguments().end());
   cloneFunctionBody(original, entry, entryArgs);
   // If errors occurred, back out.
+  llvm::errs() << "ERROR OCCURRED? " << errorOccurred << ", original: " << original->getName() << "\n";
   if (errorOccurred)
     return true;
 

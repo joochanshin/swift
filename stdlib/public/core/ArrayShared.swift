@@ -46,6 +46,16 @@ func _allocateUninitializedArray<Element>(_  builtinCount: Builtin.Word)
   return (array, ptr._rawValue)
 }
 
+/*
+@_semantics("array.uninitialized_vjp_intrinsic")
+@inlinable
+func _vjpAllocateUninitializedArray<Element : Differentiable>(_  builtinCount: Builtin.Word)
+    -> (value: (Array<Element>, Builtin.RawPointer),
+        pullback: (Array<Element>.TangentVector) -> ()) {
+  
+}
+*/
+
 // Referenced by the compiler to deallocate array literals on the
 // error path.
 @inlinable

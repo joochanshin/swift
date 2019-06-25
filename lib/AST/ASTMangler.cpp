@@ -369,6 +369,38 @@ std::string ASTMangler::mangleReabstractionThunkHelper(
   return finalize();
 }
 
+std::string ASTMangler::mangleDerivativeHelper(
+                                                       SILFunction *original,
+SILAutoDiffIndices &indices,
+ArrayRef<Requirement> requirements,
+ModuleDecl *Module) {
+  Mod = Module;
+  appendIdentifier(original->getName());
+  /*
+  GenericSignature *GenSig = ThunkType->getGenericSignature();
+  if (GenSig)
+    CurGenericSignature = GenSig->getCanonicalSignature();
+
+  beginMangling();
+  appendType(FromType);
+  appendType(ToType);
+  if (SelfType)
+    appendType(SelfType);
+
+  if (GenSig)
+    appendGenericSignature(GenSig);
+
+  if (SelfType)
+    appendOperator("Ty");
+  else
+    appendOperator("TR");
+
+   */
+
+  return finalize();
+}
+
+
 std::string ASTMangler::mangleTypeForDebugger(Type Ty, const DeclContext *DC) {
   PrettyStackTraceType prettyStackTrace(Ty->getASTContext(),
                                         "mangling type for debugger", Ty);

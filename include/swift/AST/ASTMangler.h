@@ -151,6 +151,11 @@ public:
                                              Type FromType, Type ToType,
                                              Type SelfType,
                                              ModuleDecl *Module);
+
+  std::string mangleDerivativeHelper(SILFunction *originial,
+                                     SILAutoDiffIndices &indices,
+                                     ArrayRef<Requirement> requirements,
+                                     ModuleDecl *Module);
   
   std::string mangleKeyPathGetterThunkHelper(const AbstractStorageDecl *property,
                                              GenericSignature *signature,

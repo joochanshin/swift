@@ -3018,7 +3018,7 @@ static bool checkDifferentiationParameters(
 // SWIFT_ENABLE_TENSORFLOW
 void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   auto &ctx = TC.Context;
-  auto lookupConformance =
+  LookupConformanceFn lookupConformance =
       LookUpConformanceInModule(D->getDeclContext()->getParentModule());
 
   // If functions is marked as linear, you cannot have a custom VJP and/or
@@ -3153,6 +3153,8 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     whereClauseGenEnv = whereClauseGenSig->createGenericEnvironment();
     // Store the resolved requirements in the attribute.
     attr->setRequirements(ctx, whereClauseGenSig->getRequirements());
+
+    lookupConformance = LookUpConformanceInSignature(*whereClauseGenSig->getCanonicalSignature());
   }
 
   // Validate the 'wrt:' parameters.
@@ -3257,7 +3259,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   // Resolve the JVP declaration, if it exists.
   if (attr->getJVP()) {
     AnyFunctionType *expectedJVPFnTy =
-        originalFnTy->getAutoDiffAssociatedFunctionType(
+        derivativeFnTy->getAutoDiffAssociatedFunctionType(
             checkedWrtParamIndices, /*resultIndex*/ 0,
             /*differentiationOrder*/ 1, AutoDiffAssociatedFunctionKind::JVP,
             lookupConformance, whereClauseGenSig, /*makeSelfParamFirst*/ true);
@@ -3283,7 +3285,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   // Resolve the VJP declaration, if it exists.
   if (attr->getVJP()) {
     AnyFunctionType *expectedVJPFnTy =
-        originalFnTy->getAutoDiffAssociatedFunctionType(
+        derivativeFnTy->getAutoDiffAssociatedFunctionType(
             checkedWrtParamIndices, /*resultIndex*/ 0,
             /*differentiationOrder*/ 1, AutoDiffAssociatedFunctionKind::VJP,
             lookupConformance, whereClauseGenSig, /*makeSelfParamFirst*/ true);

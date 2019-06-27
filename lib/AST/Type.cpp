@@ -4588,6 +4588,13 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
                   ->getType()));
     } else {
       assert(resultIndex == 0 && "resultIndex out of bounds");
+      auto originalResultTangent =
+          originalResult->getAutoDiffAssociatedTangentSpace(lookupConformance);
+      if (!originalResultTangent) {
+        llvm::errs() << "ORIG RESULT NO TANGENT\n";
+        originalResult->dump();
+        assert(false);
+      }
       pullbackParams.push_back(
           AnyFunctionType::Param(originalResult
               ->getAutoDiffAssociatedTangentSpace(lookupConformance)

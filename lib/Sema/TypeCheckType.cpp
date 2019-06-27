@@ -2665,13 +2665,9 @@ Type TypeResolver::resolveASTFunctionType(FunctionTypeRepr *repr,
 
 // SWIFT_ENABLE_TENSORFLOW
 bool TypeResolver::isDifferentiableType(Type ty) {
-  if (resolution.getStage() != TypeResolutionStage::Contextual) {
+  if (resolution.getStage() != TypeResolutionStage::Contextual)
     ty = DC->mapTypeIntoContext(ty);
-  }
-  return ty
-      ->getAutoDiffAssociatedTangentSpace(
-          LookUpConformanceInModule(DC->getParentModule()))
-      .hasValue();
+  return ty->getAutoDiffAssociatedTangentSpace(DC).hasValue();
 }
 
 Type TypeResolver::resolveSILBoxType(SILBoxTypeRepr *repr,

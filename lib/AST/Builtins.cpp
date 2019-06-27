@@ -1032,7 +1032,7 @@ static ValueDecl *getAutoDiffApplyAssociatedFunction(
       [=, &Context](BuiltinGenericSignatureBuilder &builder) -> Type {
         auto assocFnTy = origFnTy->getAutoDiffAssociatedFunctionType(
             paramIndices, /*resultIndex*/ 0, /*differentiationOrder*/ 1, kind,
-            LookUpConformanceInModule(Context.TheBuiltinModule));
+            Context.TheBuiltinModule);
         return assocFnTy->getResult();
       }};
   builder.addParameter(firstArgGen);

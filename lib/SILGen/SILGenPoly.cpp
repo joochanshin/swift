@@ -3299,7 +3299,7 @@ static ManagedValue createAutoDiffThunk(SILGenFunction &SGF,
           -> CanAnyFunctionType {
         auto assocTy = fnTy->getAutoDiffAssociatedFunctionType(
             parameterIndices, /*resultIndex*/ 0, /*differentiationOrder*/ 1,
-            kind, LookUpConformanceInModule(SGF.SGM.M.getSwiftModule()));
+            kind, SGF.SGM.M.getSwiftModule());
         return cast<AnyFunctionType>(assocTy->getCanonicalType());
       };
   auto getAssocFnPattern =

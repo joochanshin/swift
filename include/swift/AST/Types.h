@@ -1112,8 +1112,8 @@ public:
   /// the elementwise tangent type of its elements. If the type is a builtin
   /// float, then the associated tangent type is itself. Otherwise, there is no
   /// associated type.
-  Optional<VectorSpace>
-  getAutoDiffAssociatedTangentSpace(LookupConformanceFn lookupConformance);
+  // Optional<VectorSpace> getAutoDiffAssociatedTangentSpace(ModuleDecl *module);
+  Optional<VectorSpace> getAutoDiffAssociatedTangentSpace(DeclContext *DC);
 
 private:
   // Make vanilla new/delete illegal for Types.
@@ -3101,7 +3101,8 @@ public:
   AnyFunctionType *getAutoDiffAssociatedFunctionType(
       AutoDiffParameterIndices *indices, unsigned resultIndex,
       unsigned differentiationOrder, AutoDiffAssociatedFunctionKind kind,
-      LookupConformanceFn lookupConformance,
+      // ModuleDecl *module,
+      DeclContext *DC,
       GenericSignature *whereClauseGenericSignature = nullptr,
       bool makeSelfParamFirst = false);
 

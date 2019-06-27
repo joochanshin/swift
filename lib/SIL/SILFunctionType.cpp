@@ -160,6 +160,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
 
   auto &ctx = getASTContext();
   auto &typeConverter = module.Types;
+  auto *swiftMod = module.getSwiftModule();
   if (!whereClauseGenSig)
     whereClauseGenSig = getGenericSignature();
   Lowering::GenericContextScope genericContextScope(
@@ -232,14 +233,14 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
     SmallVector<SILParameterInfo, 8> differentialParams;
     for (auto &param : wrtParams) {
       differentialParams.push_back(
-          {param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+          {param.getType()->getAutoDiffAssociatedTangentSpace(swiftMod)
               ->getCanonicalType(),
            param.getConvention()});
     }
     SmallVector<SILResultInfo, 8> differentialResults;
     auto &result = getResults()[resultIndex];
     differentialResults.push_back(
-        {result.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+        {result.getType()->getAutoDiffAssociatedTangentSpace(swiftMod)
             ->getCanonicalType(),
          result.getConvention()});
     closureType = SILFunctionType::get(
@@ -252,7 +253,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
     SmallVector<SILParameterInfo, 8> pullbackParams;
     auto &origRes = getResults()[resultIndex];
     auto tangentAssocTy =
-        origRes.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+        origRes.getType()->getAutoDiffAssociatedTangentSpace(swiftMod)
             ->getCanonicalType();
     pullbackParams.push_back(
         getTangentParameterInfoForOriginalResult(tangentAssocTy,
@@ -260,7 +261,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
     SmallVector<SILResultInfo, 8> pullbackResults;
     for (auto &param : wrtParams) {
       auto paramTangentTy =
-          param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+          param.getType()->getAutoDiffAssociatedTangentSpace(swiftMod)
               ->getCanonicalType();
       pullbackResults.push_back(
           getTangentResultInfoForOriginalParameter(paramTangentTy,

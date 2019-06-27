@@ -4441,9 +4441,10 @@ makeFunctionType(AnyFunctionType *copy, ArrayRef<AnyFunctionType::Param> params,
   return FunctionType::get(params, retTy, copy->getExtInfo());
 }
 
+#if 0
 Optional<VectorSpace> TypeBase::getAutoDiffAssociatedTangentSpace(
-    LookupConformanceFn lookupConformance) {
-  assert(lookupConformance);
+    ModuleDecl *module) {
+  assert(module);
   auto &ctx = getASTContext();
 
   Type cacheKey = this;
@@ -4459,7 +4460,7 @@ Optional<VectorSpace> TypeBase::getAutoDiffAssociatedTangentSpace(
   // being replaced by its tangent.
   if (auto *fnTy = getAs<AnyFunctionType>()) {
     auto resultSpace = fnTy->getResult()->getAutoDiffAssociatedTangentSpace(
-        lookupConformance);
+        module);
     if (!resultSpace)
       return cache(None);
     return cache(VectorSpace::getFunction(
@@ -4471,8 +4472,7 @@ Optional<VectorSpace> TypeBase::getAutoDiffAssociatedTangentSpace(
   if (auto *tupleTy = getAs<TupleType>()) {
     SmallVector<TupleTypeElt, 8> newElts;
     for (auto elt : tupleTy->getElements()) {
-      auto eltSpace = elt.getType()
-          ->getAutoDiffAssociatedTangentSpace(lookupConformance);
+      auto eltSpace = elt.getType()->getAutoDiffAssociatedTangentSpace(module);
       if (!eltSpace)
         continue;
       newElts.push_back(elt.getWithType(eltSpace->getType()));
@@ -4490,6 +4490,16 @@ Optional<VectorSpace> TypeBase::getAutoDiffAssociatedTangentSpace(
   auto *differentiableProtocol =
       ctx.getProtocol(KnownProtocolKind::Differentiable);
   assert(differentiableProtocol && "Could not find Differentiable protocol");
+  auto conf = module->conformsToProtocol(this, differentiableProtocol);
+  if (conf) {
+    auto tanType = conf->getTypeWitnessByName(this, ctx.Id_TangentVector);
+    if (tanType)
+      return cache(VectorSpace::getVector(tanType));
+  }
+
+  // There is no associated vector space.
+  return cache(None);
+#if 0
   auto associatedTypeLookup =
       differentiableProtocol->lookupDirect(ctx.Id_TangentVector);
   assert(associatedTypeLookup.size() == 1);
@@ -4501,6 +4511,7 @@ Optional<VectorSpace> TypeBase::getAutoDiffAssociatedTangentSpace(
   // associated type, and return it if found.
   if (auto assocTy = dependentType->substBaseType(this, lookupConformance))
     return cache(VectorSpace::getVector(assocTy));
+#endif
 
   // There is no associated vector space.
   return cache(None);
@@ -4509,8 +4520,8 @@ Optional<VectorSpace> TypeBase::getAutoDiffAssociatedTangentSpace(
 AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
     AutoDiffParameterIndices *indices, unsigned resultIndex,
     unsigned differentiationOrder, AutoDiffAssociatedFunctionKind kind,
-    LookupConformanceFn lookupConformance,
-    GenericSignature *whereClauseGenSig, bool makeSelfParamFirst) {
+    ModuleDecl *module, GenericSignature *whereClauseGenSig,
+    bool makeSelfParamFirst) {
   // JVP: (T...) -> ((R...),
   //                 (T.TangentVector...) -> (R.TangentVector...))
   // VJP: (T...) -> ((R...),
@@ -4554,19 +4565,18 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
     for (auto wrtParamType : wrtParamTypes)
       differentialParams.push_back(
           AnyFunctionType::Param(
-              wrtParamType->getAutoDiffAssociatedTangentSpace(lookupConformance)
+              wrtParamType->getAutoDiffAssociatedTangentSpace(module)
                   ->getType()));
 
     SmallVector<TupleTypeElt, 8> differentialResults;
     if (auto *resultTuple = originalResult->getAs<TupleType>()) {
       auto resultTupleEltType = resultTuple->getElementType(resultIndex);
       differentialResults.push_back(resultTupleEltType
-          ->getAutoDiffAssociatedTangentSpace(lookupConformance)->getType());
+          ->getAutoDiffAssociatedTangentSpace(module)->getType());
     } else {
       assert(resultIndex == 0 && "resultIndex out of bounds");
       differentialResults.push_back(
-          originalResult->getAutoDiffAssociatedTangentSpace(lookupConformance)
-              ->getType());
+          originalResult->getAutoDiffAssociatedTangentSpace(module)->getType());
     }
     Type differentialResult =
         differentialResults.size() > 1
@@ -4584,25 +4594,33 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
       auto resultTupleEltType = resultTuple->getElementType(resultIndex);
       pullbackParams.push_back(
           AnyFunctionType::Param(resultTupleEltType
-              ->getAutoDiffAssociatedTangentSpace(lookupConformance)
-                  ->getType()));
+              ->getAutoDiffAssociatedTangentSpace(module)->getType()));
     } else {
       assert(resultIndex == 0 && "resultIndex out of bounds");
+      auto originalResultTangent =
+          originalResult->getAutoDiffAssociatedTangentSpace(module);
+      if (!originalResultTangent) {
+        llvm::errs() << "ORIG RESULT NO TANGENT\n";
+        originalResult->dump();
+        assert(false);
+      }
       pullbackParams.push_back(
-          AnyFunctionType::Param(originalResult
-              ->getAutoDiffAssociatedTangentSpace(lookupConformance)
-                  ->getType()));
+          AnyFunctionType::Param(originalResultTangent->getType()));
     }
 
     SmallVector<TupleTypeElt, 8> pullbackResults;
     for (auto wrtParamType : wrtParamTypes)
-      pullbackResults.push_back(wrtParamType
-          ->getAutoDiffAssociatedTangentSpace(lookupConformance)
-              ->getType());
+      pullbackResults.push_back(
+          wrtParamType->getAutoDiffAssociatedTangentSpace(module)->getType());
     Type pullbackResult = pullbackResults.size() > 1
                               ? TupleType::get(pullbackResults, ctx)
                               : pullbackResults[0].getType();
 
+    llvm::errs() << "PULLBACK PARAMS\n";
+    for (auto param : pullbackParams)
+      param.getParameterType()->dump();
+    llvm::errs() << "PULLBACK RESULT\n";
+    pullbackResult->dump();
     closure = FunctionType::get(pullbackParams, pullbackResult);
     break;
   }
@@ -4631,6 +4649,7 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
 
   return associatedFunction;
 }
+#endif
 
 // SWIFT_ENABLE_TENSORFLOW
 // Compute the original function type corresponding to the given derivative

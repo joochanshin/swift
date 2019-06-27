@@ -1491,8 +1491,13 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
               projType = assocGenSig->getCanonicalTypeInContext(
                   projType->mapTypeOutOfContext());
             if (projType->getAutoDiffAssociatedTangentSpace(
+                function.getModule().getSwiftModule()))
+              setVaried(teai, i);
+#if 0
+            if (projType->getAutoDiffAssociatedTangentSpace(
                 LookUpConformanceInSignature(*assocGenSig)))
               setVaried(teai, i);
+#endif
           }
         }
 
@@ -2769,8 +2774,8 @@ public:
 
   SILFunction *createEmptyAdjoint() {
     auto &module = context.getModule();
+    auto *swiftMod = module.getSwiftModule();
     auto origTy = original->getLoweredFunctionType();
-    auto lookupConformance = LookUpConformanceInModule(module.getSwiftModule());
 
     // RAII that pushes the original function's generic signature to
     // `module.Types` so that the calls `module.Types.getTypeLowering()` below
@@ -2843,7 +2848,7 @@ public:
     auto origResInfo = origTy->getResults()[indices.source];
     adjParams.push_back(getTangentParameterInfoForOriginalResult(
         origResInfo.getType()
-            ->getAutoDiffAssociatedTangentSpace(lookupConformance)
+            ->getAutoDiffAssociatedTangentSpace(swiftMod)
             ->getCanonicalType(), origResInfo.getConvention()));
 
     // Accept a pullback struct in the adjoint parameter list. This is the
@@ -2859,7 +2864,7 @@ public:
       auto origParam = origParams[i];
       adjResults.push_back(getTangentResultInfoForOriginalParameter(
           origParam.getType()
-              ->getAutoDiffAssociatedTangentSpace(lookupConformance)
+              ->getAutoDiffAssociatedTangentSpace(swiftMod)
               ->getCanonicalType(), origParam.getConvention()));
     }
 
@@ -3817,7 +3822,7 @@ private:
 
   Optional<VectorSpace> getTangentSpace(CanType type) {
     return type->getAutoDiffAssociatedTangentSpace(
-        LookUpConformanceInModule(getModule().getSwiftModule()));
+        getModule().getSwiftModule());
   }
 
   /// Assuming the given type conforms to `Differentiable` after remapping,
@@ -5507,8 +5512,7 @@ void AdjointEmitter::accumulateIndirect(
   auto adjointTy = lhsBufAccess->getType();
   auto adjointASTTy = adjointTy.getASTType();
   auto *swiftMod = getModule().getSwiftModule();
-  auto tangentSpace = adjointASTTy->getAutoDiffAssociatedTangentSpace(
-      LookUpConformanceInModule(swiftMod));
+  auto tangentSpace = adjointASTTy->getAutoDiffAssociatedTangentSpace(swiftMod);
   assert(tangentSpace && "No tangent space for this type");
   switch (tangentSpace->getKind()) {
   case VectorSpace::Kind::Vector: {
@@ -5566,8 +5570,7 @@ void AdjointEmitter::accumulateIndirect(SILValue lhsDestAccess,
   auto type = lhsDestAccess->getType();
   auto astType = type.getASTType();
   auto *swiftMod = getModule().getSwiftModule();
-  auto tangentSpace = astType->getAutoDiffAssociatedTangentSpace(
-      LookUpConformanceInModule(swiftMod));
+  auto tangentSpace = astType->getAutoDiffAssociatedTangentSpace(swiftMod);
   assert(tangentSpace && "No tangent space for this type");
   switch (tangentSpace->getKind()) {
   case VectorSpace::Kind::Vector: {
@@ -5915,8 +5918,7 @@ ADContext::getOrCreateSubsetParametersThunkForLinearMap(
     auto zeroSILObjType = zeroSILType.getObjectType();
     auto zeroType = zeroSILType.getASTType();
     auto *swiftMod = getModule().getSwiftModule();
-    auto tangentSpace = zeroType->getAutoDiffAssociatedTangentSpace(
-      LookUpConformanceInModule(swiftMod));
+    auto tangentSpace = zeroType->getAutoDiffAssociatedTangentSpace(swiftMod);
     assert(tangentSpace && "No tangent space for this type");
     switch (tangentSpace->getKind()) {
     case VectorSpace::Kind::Vector: {

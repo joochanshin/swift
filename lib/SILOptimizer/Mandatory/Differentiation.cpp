@@ -435,12 +435,15 @@ private:
   // contain all synthesized implicit type declarations.
   SourceFile &getDeclarationFileUnit() {
     if (original->hasLocation())
-      if (auto *declContext = original->getLocation().getAsDeclContext())
+      if (auto *declContext = original->getDeclContext())
         if (auto *parentSourceFile = declContext->getParentSourceFile())
           return *parentSourceFile;
+    /*
     for (auto *file : original->getModule().getSwiftModule()->getFiles())
       if (auto *src = dyn_cast<SourceFile>(file))
         return *src;
+    */
+    original->dump();
     llvm_unreachable("No files?");
   }
 

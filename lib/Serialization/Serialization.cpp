@@ -2044,6 +2044,7 @@ bool Serializer::isDeclXRef(const Decl *D) const {
     // FIXME(TF-623): Find a robust way to special-casing structs/enums
     // synthesized during SIL differentiation transform.
     auto isDifferentiationDataStructure = [](const Decl *D) {
+#if 0
       auto *valueDecl = dyn_cast<ValueDecl>(D);
       if (!valueDecl)
         return false;
@@ -2053,8 +2054,13 @@ bool Serializer::isDeclXRef(const Decl *D) const {
       if (auto *enumDecl =
               valueDecl->getInterfaceType()->getEnumOrBoundGenericEnum())
         return enumDecl->getNameStr().contains("__Pred__");
+#endif
       return false;
     };
+    if (!(isa<GenericTypeParamDecl>(D) || isDifferentiationDataStructure(D))) {
+      llvm::errs() << "AST SERIALIZATION FAILURE!\n";
+      D->dump();
+    }
     assert(
         (isa<GenericTypeParamDecl>(D) || isDifferentiationDataStructure(D)) &&
         "unexpected decl kind");

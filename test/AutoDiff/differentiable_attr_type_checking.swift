@@ -60,15 +60,14 @@ struct ComputedPropertyDupeAttributes<T : Differentiable> : Differentiable {
   }
 }
 
-class Class {}
-// expected-error @+1 {{class objects and protocol existentials ('Class') cannot be differentiated with respect to}}
+class Class : Differentiable {}
 @differentiable(wrt: x)
 func invalidDiffWrtClass(_ x: Class) -> Class {
   return x
 }
 
 protocol Proto {}
-// expected-error @+1 {{class objects and protocol existentials ('Proto') cannot be differentiated with respect to}}
+// expected-error @+1 {{cannot differentiate with respect to protocol existential ('Proto')}}
 @differentiable(wrt: x)
 func invalidDiffWrtExistential(_ x: Proto) -> Proto {
   return x

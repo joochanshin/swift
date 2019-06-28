@@ -13,7 +13,7 @@
 // SWIFT_ENABLE_TENSORFLOW
 //
 // This file implements explicit derivation of the Differentiable protocol for
-// struct types.
+// struct and class types.
 //
 //===----------------------------------------------------------------------===//
 
@@ -120,9 +120,8 @@ static StructDecl *getAssociatedStructDecl(DeclContext *DC, Identifier id) {
 
 bool DerivedConformance::canDeriveDifferentiable(NominalTypeDecl *nominal,
                                                  DeclContext *DC) {
-  // Nominal type must be a struct. (Zero stored properties is okay.)
-  auto *structDecl = dyn_cast<StructDecl>(nominal);
-  if (!structDecl)
+  // Nominal type must be a struct or class. (No stored properties is okay.)
+  if (!isa<StructDecl>(nominal) && !isa<ClassDecl>(nominal))
     return false;
   auto &C = nominal->getASTContext();
   auto *lazyResolver = C.getLazyResolver();
@@ -199,7 +198,7 @@ bool DerivedConformance::canDeriveDifferentiable(NominalTypeDecl *nominal,
   //     initializers that initialize all stored properties, including initial
   //     value information.
   SmallVector<VarDecl *, 16> diffProperties;
-  getStoredPropertiesForDifferentiation(structDecl, DC, diffProperties);
+  getStoredPropertiesForDifferentiation(nominal, DC, diffProperties);
   return llvm::all_of(diffProperties, [&](VarDecl *v) {
     if (!v->hasInterfaceType())
       lazyResolver->resolveDeclSignature(v);
@@ -325,7 +324,8 @@ static ValueDecl *deriveDifferentiable_method(
                                     /*Throws*/ false, SourceLoc(),
                                     /*GenericParams=*/nullptr, params,
                                     TypeLoc::withoutLoc(returnType), parentDC);
-  funcDecl->setSelfAccessKind(SelfAccessKind::Mutating);
+  if (!nominal->getSelfClassDecl())
+    funcDecl->setSelfAccessKind(SelfAccessKind::Mutating);
   funcDecl->setImplicit();
   funcDecl->setBodySynthesizer(bodySynthesizer.Fn, bodySynthesizer.Context);
 

@@ -2841,9 +2841,8 @@ ERROR(diff_params_clause_no_inferred_parameters,PointsToFirstBadToken,
       "no differentiation parameters could be inferred; must differentiate "
       "with respect to at least one parameter conforming to 'Differentiable'",
       ())
-ERROR(diff_params_clause_cannot_diff_wrt_objects_or_existentials,none,
-      "class objects and protocol existentials (%0) cannot be differentiated "
-      "with respect to", (Type))
+ERROR(diff_params_clause_cannot_diff_wrt_existentials,none,
+      "cannot differentiate with respect to protocol existentials (%0)", (Type))
 ERROR(diff_params_clause_cannot_diff_wrt_functions,none,
       "functions (%0) cannot be differentiated with respect to", (Type))
 ERROR(diff_params_clause_param_not_differentiable,none,

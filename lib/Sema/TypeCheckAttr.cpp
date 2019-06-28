@@ -2989,13 +2989,10 @@ static bool checkDifferentiationParameters(
     SourceLoc loc = parsedWrtParams.empty()
         ? attrLoc
         : parsedWrtParams[i].getLoc();
-    // Parameter cannot have a class or existential type.
-    if ((!wrtParamType->hasTypeParameter() &&
-         wrtParamType->isAnyClassReferenceType()) ||
-        wrtParamType->isExistentialType()) {
+    // Parameter cannot have an existential type.
+    if (wrtParamType->isExistentialType()) {
       TC.diagnose(
-           loc,
-           diag::diff_params_clause_cannot_diff_wrt_objects_or_existentials,
+           loc, diag::diff_params_clause_cannot_diff_wrt_existentials,
            wrtParamType);
       return true;
     }

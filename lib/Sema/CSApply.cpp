@@ -6460,6 +6460,27 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
       expr = cs.cacheType(new (tc.Context)
           AutoDiffFunctionExtractOriginalExpr(expr, fromFunc));
     }
+    // SWIFT_ENABLE_TENSORFLOW
+    auto toEINoADConversion =
+        toEI.withDifferentiabilityKind(fromEI.getDifferentiabilityKind());
+    auto toFuncNoADConversion = toFunc->withExtInfo(toEINoADConversion);
+    if (toEI.isDifferentiable() && !fromEI.isDifferentiable())
+      toFuncNoADConversion =
+          toFuncNoADConversion->getWithoutDifferentiability();
+      // maybeDiagnoseUnsupportedFunctionConversion(cs, expr, toFunc);
+    expr = cs.cacheType(new (tc.Context)
+                            FunctionConversionExpr(expr,
+                                                   toFuncNoADConversion));
+
+    // Make the conversion to @differentiable happen after all other conversions,
+    // because some of the other conversions are not currently supported on
+    // @differentiable functions. (e.g. escape_to_noescape).
+    // After we do support those conversions, the order will no longer matter.
+    if (!fromEI.isDifferentiable() && toEI.isDifferentiable()) {
+      expr = cs.cacheType(new (tc.Context)
+                              AutoDiffFunctionExpr(expr, toFunc));
+    }
+
     // If we have a ClosureExpr, then we can safely propagate the 'no escape'
     // bit to the closure without invalidating prior analysis.
     fromEI = fromFunc->getExtInfo();
@@ -6491,25 +6512,6 @@ Expr *ExprRewriter::coerceToType(Expr *expr, Type toType,
     }
 
     maybeDiagnoseUnsupportedFunctionConversion(cs, expr, toFunc);
-
-    // SWIFT_ENABLE_TENSORFLOW
-    auto toEINoADConversion =
-        toEI.withDifferentiabilityKind(fromEI.getDifferentiabilityKind());
-    auto toFuncNoADConversion = toFunc->withExtInfo(toEINoADConversion);
-    if (toEI.isDifferentiable() && !fromEI.isDifferentiable())
-      toFuncNoADConversion =
-          toFuncNoADConversion->getWithoutDifferentiability();
-    expr = cs.cacheType(new (tc.Context)
-                            FunctionConversionExpr(expr,
-                                                   toFuncNoADConversion));
-
-    // Make the conversion to @differentiable happen after all other conversions,
-    // because some of the other conversions are not currently supported on
-    // @differentiable functions. (e.g. escape_to_noescape).
-    // After we do support those conversions, the order will no longer matter.
-    if (!fromEI.isDifferentiable() && toEI.isDifferentiable())
-      expr = cs.cacheType(new (tc.Context)
-                              AutoDiffFunctionExpr(expr, toFunc));
 
     return expr;
   }

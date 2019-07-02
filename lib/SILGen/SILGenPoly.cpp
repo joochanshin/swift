@@ -3208,6 +3208,11 @@ static ManagedValue createThunk(SILGenFunction &SGF,
                                       genericEnv,
                                       interfaceSubs,
                                       dynamicSelfType);
+#if 0
+  bool isDifferentiableThunk = thunkType->isDifferentiable();
+                                  llvm::errs() << "THUNK TYPE\n";
+                                  thunkType->dump();
+#endif
   auto thunk = SGF.SGM.getOrCreateReabstractionThunk(
                                        thunkType,
                                        sourceType,

@@ -1491,6 +1491,10 @@ public:
             adfi->getParameterIndices(), /*resultIndex*/ 0, order,
             AutoDiffAssociatedFunctionKind::JVP, F.getModule(),
             LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        LLVM_DEBUG(llvm::dbgs() << "Expected JVP type:";
+                   expectedJVPType.dump();
+                   llvm::dbgs() << "Actual JVP type:";
+                   jvpType.dump(););
         require(expectedJVPType == jvpType, "Unexpected JVP function type");
         auto vjpType = pair.second->getType().getAs<SILFunctionType>();
         require(vjpType, "The VJP function must have a function type");
@@ -1500,6 +1504,10 @@ public:
             adfi->getParameterIndices(), /*resultIndex*/ 0, order,
             AutoDiffAssociatedFunctionKind::VJP, F.getModule(),
             LookUpConformanceInModule(F.getModule().getSwiftModule()));
+        LLVM_DEBUG(llvm::dbgs() << "Expected VJP type:";
+                   expectedVJPType.dump();
+                   llvm::dbgs() << "Actual VJP type:";
+                   vjpType.dump(););
         require(expectedVJPType == vjpType, "Unexpected VJP function type");
       }
     }

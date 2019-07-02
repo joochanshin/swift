@@ -982,6 +982,7 @@ public:
       // NOTE: `rda` may come from a un-partial-applied function and have larger
       // capacity than the desired indices. We expect this logic to go away when
       // we support `@differentiable` partial apply.
+      llvm::errs() << "HELLO: " << original->getName() << "\n";
       if (rdaIndexSet->isSupersetOf(
               indexSet->extendingCapacity(getASTContext(),
                                           rdaIndexSet->getCapacity())) &&
@@ -2080,10 +2081,15 @@ emitAssociatedFunctionReference(
     if (originalFn->isThunk() == IsReabstractionThunk) {
       // Handle here.
     }
+#if 0
     auto convertedRef = reapplyFunctionConversion(
         assocFnRef, originalFRI, original, builder, loc,
         assocFn->getLoweredFunctionType()->getGenericSignature());
+    llvm::errs() << "CONVERTED REF:\n";
+    convertedRef->dump();
     return std::make_pair(convertedRef, minimalAttr->getIndices());
+#endif
+    return std::make_pair(SILValue(assocFnRef), minimalAttr->getIndices());
   }
 
   // Find witness method retrieval.
@@ -2136,9 +2142,12 @@ emitAssociatedFunctionReference(
         loc, witnessMethod->getLookupType(), witnessMethod->getConformance(),
         requirement.asAutoDiffAssociatedFunction(autoDiffFuncId),
         SILType::getPrimitiveObjectType(assocType));
+#if 0
     auto convertedRef =
         reapplyFunctionConversion(ref, witnessMethod, original, builder, loc);
     return std::make_pair(convertedRef, requirementIndices);
+#endif
+    return std::make_pair(SILValue(ref), requirementIndices);
   }
 
   // Reject class methods.
@@ -6235,7 +6244,20 @@ SILValue ADContext::promoteToDifferentiableFunction(
     AutoDiffFunctionInst *inst, SILBuilder &builder, SILLocation loc,
     DifferentiationInvoker invoker) {
   auto origFnOperand = inst->getOriginalFunction();
-  auto origFnTy = origFnOperand->getType().castTo<SILFunctionType>();
+
+      SILValue origFn;
+      if (auto *origFnRef = peerThroughFunctionConversions<FunctionRefInst>(origFnOperand)) {
+        origFn = origFnRef;
+      } else if (auto *witnessMethod = peerThroughFunctionConversions<WitnessMethodInst>(origFnOperand)) {
+        origFn = witnessMethod;
+      }
+      assert(origFn && "Expected bare orig fn");
+      llvm::errs() << "ABOUT TO REAPPLY\n";
+      origFn->dump();
+      origFnOperand->dump();
+      auto origFnTy = origFn->getType().castTo<SILFunctionType>();
+
+  // auto origFnTy = origFnOperand->getType().castTo<SILFunctionType>();
   auto parameterIndices = inst->getParameterIndices();
   unsigned resultIndex = resultIndices[inst];
   unsigned differentiationOrder = inst->getDifferentiationOrder();
@@ -6370,10 +6392,19 @@ SILValue ADContext::promoteToDifferentiableFunction(
   }
 
   auto *adfi = createAutoDiffFunction(
-      builder, loc, parameterIndices, differentiationOrder, origFnOperand,
+      // builder, loc, parameterIndices, differentiationOrder, origFnOperand,
+      builder, loc, parameterIndices, differentiationOrder, origFn,
       assocFns);
   resultIndices[adfi] = resultIndex;
   getAutoDiffFunctionInsts().push_back(adfi);
+  auto convertedRef = reapplyFunctionConversion(
+      adfi, origFn, origFnOperand, builder, loc);
+  llvm::errs() << "ORIG FN OPERAND CONVERTED\n";
+  origFnOperand->dump();
+
+  llvm::errs() << "CONVERTED BUNDLE\n";
+  convertedRef->dump();
+      // assocFn->getLoweredFunctionType()->getGenericSignature());
   return adfi;
 }
 

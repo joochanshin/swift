@@ -87,6 +87,23 @@ template <class T> class SILVTableVisitor {
     assert(!fd->hasClangNode());
 
     maybeAddEntry(SILDeclRef(fd, SILDeclRef::Kind::Func));
+
+    // SWIFT_ENABLE_TENSORFLOW
+    if (auto *DA = fd->getAttrs().getAttribute<DifferentiableAttr>()) {
+      auto constant = SILDeclRef(fd, SILDeclRef::Kind::Func);
+      auto jvpConstant = constant.asAutoDiffAssociatedFunction(
+          AutoDiffAssociatedFunctionIdentifier::get(
+          AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
+          DA->getParameterIndices(), fd->getASTContext()));
+      maybeAddEntry(jvpConstant);
+
+      auto vjpConstant = constant.asAutoDiffAssociatedFunction(
+          AutoDiffAssociatedFunctionIdentifier::get(
+          AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
+          DA->getParameterIndices(), fd->getASTContext()));
+      maybeAddEntry(vjpConstant);
+    }
+    // SWIFT_ENABLE_TENSORFLOW END
   }
 
   void maybeAddConstructor(ConstructorDecl *cd) {

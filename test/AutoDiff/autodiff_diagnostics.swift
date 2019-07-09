@@ -174,8 +174,8 @@ struct TF_305 : Differentiable {
 // Classes and existentials (not yet supported)
 //===----------------------------------------------------------------------===//
 
-class Foo {
-  // @differentiable cannot be put here. It's rejected by Sema already.
+class Foo : Differentiable {
+  @differentiable
   func class_method(_ x: Float) -> Float {
     return x
   }
@@ -184,8 +184,6 @@ class Foo {
 // Nested call case.
 @differentiable
 func triesToDifferentiateClassMethod(x: Float) -> Float {
-  // expected-error @+2 {{expression is not differentiable}}
-  // expected-note @+1 {{differentiating class members is not yet supported}}
   return Foo().class_method(x)
 }
 

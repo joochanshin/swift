@@ -69,15 +69,14 @@ protocol WrtOnlySelfProtocol : Differentiable {
   func method() -> Float
 }
 
-class Class {}
-// expected-error @+1 {{class objects and protocol existentials ('Class') cannot be differentiated with respect to}}
+class Class : Differentiable {}
 @differentiable(wrt: x)
 func invalidDiffWrtClass(_ x: Class) -> Class {
   return x
 }
 
 protocol Proto {}
-// expected-error @+1 {{class objects and protocol existentials ('Proto') cannot be differentiated with respect to}}
+// expected-error @+1 {{cannot differentiate with respect to protocol existential ('Proto')}}
 @differentiable(wrt: x)
 func invalidDiffWrtExistential(_ x: Proto) -> Proto {
   return x
@@ -247,10 +246,8 @@ func jvpAmbiguousVJP(x: Float) -> (Float, (Float) -> Float) {
   return (x, { $0 })
 }
 
-// TF-153: Class methods are not supported yet.
-class Foo {
+class DifferentiableClassMethod {
   // Direct differentiation case.
-  // expected-error @+1 {{class members cannot be marked with '@differentiable'}}
   @differentiable
   func foo(_ x: Float) -> Float {
     return x

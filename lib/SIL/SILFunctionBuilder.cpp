@@ -97,10 +97,33 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
       auto *AFD = constant.getAbstractFunctionDecl();
       auto selfParamIndex =
           F->getLoweredFunctionType()->getNumParameters() - 1;
-      if (AFD && AFD->isInstanceMember() &&
+      auto isSelfReorderedMethod =
+          AFD && AFD->isInstanceMember() &&
           F->getLoweredFunctionType()->hasSelfParam() &&
           indices.isWrtParameter(selfParamIndex) &&
-          indices.parameters->getNumIndices() > 1) {
+          indices.parameters->getNumIndices() > 1;
+      // auto isClassMethod = AFD && AFD->isInstanceMember() &&
+      //                      AFD->getParent()->getSelfClassDecl();
+      auto isClassMethod = false;
+      // WHICH ONE FIRST?
+#if 0
+      llvm::errs() << "IS CLASS METHOD? " << AFD->getEffectiveFullName() << ": " << isClassMethod << "\n";
+      llvm::errs() << "CLASS: " << AFD->getSelfClassDecl() << "\n";
+      llvm::errs() << "IS INSTANCE: " << AFD->isInstanceMember() << "\n\n";
+#endif
+      if (isClassMethod) {
+        auto &ctx = F->getASTContext();
+        if (auto *jvpFn = A->getJVPFunction())
+          jvpName = SILDeclRef(jvpFn).mangle();
+        else
+          jvpName = ctx.getIdentifier(
+              "AD__" + constant.mangle() + "__jvp_" + indices.mangle()).str();
+        if (auto *vjpFn = A->getVJPFunction())
+          vjpName = SILDeclRef(vjpFn).mangle();
+        else
+          vjpName = ctx.getIdentifier(
+              "AD__" + constant.mangle() + "__vjp_" + indices.mangle()).str();
+      } else if (isSelfReorderedMethod) {
         auto &ctx = F->getASTContext();
         if (A->getJVPFunction())
           jvpName = ctx.getIdentifier(

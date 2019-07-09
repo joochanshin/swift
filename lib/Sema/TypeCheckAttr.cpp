@@ -2695,8 +2695,8 @@ TypeChecker::inferDifferentiableParameters(
       paramType = derivativeGenEnv->mapTypeIntoContext(paramType);
     else
       paramType = AFD->mapTypeIntoContext(paramType);
-    // Return false for class/existential types.
-    if (paramType->isAnyClassReferenceType() || paramType->isExistentialType())
+    // Return false for existential types.
+    if (paramType->isExistentialType())
       return false;
     // Return false for function types.
     if (paramType->is<AnyFunctionType>())
@@ -3122,13 +3122,10 @@ static bool checkDifferentiationParameters(
           derivativeGenEnv->mapTypeIntoContext(wrtParamType);
     else
       wrtParamType = AFD->mapTypeIntoContext(wrtParamType);
-    // Parameter cannot have a class or existential type.
-    if ((!wrtParamType->hasTypeParameter() &&
-         wrtParamType->isAnyClassReferenceType()) ||
-        wrtParamType->isExistentialType()) {
+    // Parameter cannot have an existential type.
+    if (wrtParamType->isExistentialType()) {
       TC.diagnose(
-           loc,
-           diag::diff_params_clause_cannot_diff_wrt_objects_or_existentials,
+           loc, diag::diff_params_clause_cannot_diff_wrt_existentials,
            wrtParamType);
       return true;
     }
@@ -3170,13 +3167,10 @@ static bool checkTransposingParameters(
     SourceLoc loc = parsedWrtParams.empty()
         ? attrLoc
         : parsedWrtParams[i].getLoc();
-    // Parameter cannot have a class or existential type.
-    if ((!wrtParamType->hasTypeParameter() &&
-         wrtParamType->isAnyClassReferenceType()) ||
-         wrtParamType->isExistentialType()) {
-      TC.diagnose(
-          loc, diag::diff_params_clause_cannot_diff_wrt_objects_or_existentials,
-          wrtParamType);
+    // Parameter cannot have an existential type.
+    if (wrtParamType->isExistentialType()) {
+      TC.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_existentials,
+                  wrtParamType);
       return true;
     }
     // Parameter cannot have a function type.
@@ -3236,13 +3230,6 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   // this.
   if (!original) {
     diagnoseAndRemoveAttr(attr, diag::invalid_decl_attribute, attr);
-    return;
-  }
-
-  // Class members are not supported by differentiation yet.
-  if (original->getInnermostTypeContext() &&
-      isa<ClassDecl>(original->getInnermostTypeContext())) {
-    diagnoseAndRemoveAttr(attr, diag::differentiable_attr_class_unsupported);
     return;
   }
 

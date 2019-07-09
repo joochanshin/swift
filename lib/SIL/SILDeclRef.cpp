@@ -842,7 +842,9 @@ SILDeclRef SILDeclRef::getOverridden() const {
   if (!overridden)
     return SILDeclRef();
 
-  return SILDeclRef(overridden, kind, isCurried);
+  // SWIFT_ENABLE_TENSORFLOW
+  return SILDeclRef(overridden, kind, isCurried, isForeign,
+                    autoDiffAssociatedFunctionIdentifier);
 }
 
 SILDeclRef SILDeclRef::getNextOverriddenVTableEntry() const {
@@ -902,7 +904,9 @@ SILDeclRef SILDeclRef::getNextOverriddenVTableEntry() const {
 SILDeclRef SILDeclRef::getOverriddenWitnessTableEntry() const {
   auto bestOverridden =
     getOverriddenWitnessTableEntry(cast<AbstractFunctionDecl>(getDecl()));
-  return SILDeclRef(bestOverridden, kind, isCurried);
+  // SWIFT_ENABLE_TENSORFLOW
+  return SILDeclRef(bestOverridden, kind, isCurried, isForeign,
+                    autoDiffAssociatedFunctionIdentifier);
 }
 
 AbstractFunctionDecl *SILDeclRef::getOverriddenWitnessTableEntry(

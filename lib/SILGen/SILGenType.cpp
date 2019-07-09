@@ -41,6 +41,8 @@ Optional<SILVTable::Entry>
 SILGenModule::emitVTableMethod(ClassDecl *theClass,
                                SILDeclRef derived, SILDeclRef base) {
   assert(base.kind == derived.kind);
+  llvm::dbgs() << "emitVTableMethod\n";
+  llvm::dbgs() << "derived " << derived << "\nbase " << base << "\n";
 
   auto *baseDecl = cast<AbstractFunctionDecl>(base.getDecl());
   auto *derivedDecl = cast<AbstractFunctionDecl>(derived.getDecl());
@@ -85,6 +87,38 @@ SILGenModule::emitVTableMethod(ClassDecl *theClass,
 
   if (usesObjCDynamicDispatch) {
     implFn = getDynamicThunk(derived, Types.getConstantInfo(derived).SILFnType);
+  // SWIFT_ENABLE_TENSORFLOW
+  } else if (auto *adafi = derived.autoDiffAssociatedFunctionIdentifier) {
+    auto *decl = derived.getDecl();
+    auto *DA = decl->getAttrs().getAttribute<DifferentiableAttr>();
+    assert(DA);
+    llvm::errs() << "EMIT VTABLE METHOD!: " << decl->getFullName() << "\n";
+    // decl->dump();
+    DA->print(llvm::errs(), decl); llvm::errs() << "\n";
+    // Try to get autodiff associated function declaration.
+    FuncDecl *assocDecl = nullptr;
+    switch (adafi->getKind()) {
+    case AutoDiffAssociatedFunctionKind::JVP:
+      assocDecl = DA->getJVPFunction();
+      break;
+    case AutoDiffAssociatedFunctionKind::VJP:
+      assocDecl = DA->getVJPFunction();
+      break;
+    }
+    // If declaration exists, get corresponding SIL function.
+    if (assocDecl) {
+      SILDeclRef assocRef(assocDecl, SILDeclRef::Kind::Func);
+      implFn = getFunction(assocRef, NotForDefinition);
+    }
+    // Otherwise, create an autodiff thunk. The thunk contains an
+    // `autodiff_function` instruction, which is later filled during
+    // differentiation transform.
+    // TODO(TF-524): Generalize canonical JVP/VJP thunk generation.
+    else {
+      implFn =
+          getAutoDiffThunk(derived, Types.getConstantInfo(derived).SILFnType);
+    }
+  // SWIFT_ENABLE_TENSORFLOW END
   } else {
     implFn = getFunction(derived, NotForDefinition);
   }
@@ -261,6 +295,7 @@ public:
 
   // Try to find an overridden entry.
   void addMethodOverride(SILDeclRef baseRef, SILDeclRef declRef) {
+    llvm::dbgs() << "addMethodOverride " << baseRef << " " << declRef << "\n";
     auto found = baseToIndexMap.find(baseRef);
     assert(found != baseToIndexMap.end());
     auto &method = vtableMethods[found->second];

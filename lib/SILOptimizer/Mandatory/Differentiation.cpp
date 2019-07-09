@@ -1569,7 +1569,11 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
   for (auto output : outputValues) {
     usefulValueSets.push_back({});
     // If the output has an address type, propagate usefulness recursively.
-    if (output->getType().isAddress())
+    llvm::errs() << "OUTPUT HAS ADDRESS TYPE? " << output->getType().isAddress() << "\n";
+    output->dump();
+    output->getType().dump();
+    if (output->getType().isAddress() ||
+        output->getType().isClassOrClassMetatype())
       propagateUsefulThroughBuffer(output, usefulValueSets.size() - 1);
     // Otherwise, just mark the output as useful.
     else
@@ -1704,7 +1708,8 @@ void DifferentiableActivityInfo::recursivelySetVaried(
 
 void DifferentiableActivityInfo::propagateUsefulThroughBuffer(
     SILValue value, unsigned dependentVariableIndex) {
-  assert(value->getType().isAddress());
+  assert(value->getType().isAddress() ||
+         value->getType().isClassOrClassMetatype());
   // Check whether value is already useful to prevent infinite recursion.
   if (isUseful(value, dependentVariableIndex))
     return;
@@ -2165,9 +2170,9 @@ emitAssociatedFunctionReference(
                                           loweredRequirementIndices);
 
     // NOTE: We need to extend the capacity of desired parameter indices to
-    // requirement parameter indices, because there's a argument count mismatch.
-    // When `@differentiable` partial apply is supported, this problem will go
-    // away.
+    // requirement parameter indices, because there's an argument count
+    // mismatch. When `@differentiable` partial apply is supported, this problem
+    // will go away.
     if (desiredIndices.source != requirementIndices.source ||
         !desiredIndices.parameters->extendingCapacity(
             context.getASTContext(),
@@ -2184,7 +2189,7 @@ emitAssociatedFunctionReference(
         /*differentiationOrder*/ 1, kind, builder.getModule(),
         LookUpConformanceInModule(builder.getModule().getSwiftModule()));
 
-    // Emit a witness_method instruction pointing at the associated function.
+    // Emit a `witness_method` instruction for the associated function.
     auto *autoDiffFuncId = AutoDiffAssociatedFunctionIdentifier::get(
         kind, /*differentiationOrder*/ 1, requirementParameterIndices,
         context.getASTContext());
@@ -2197,12 +2202,57 @@ emitAssociatedFunctionReference(
     return std::make_pair(convertedRef, requirementIndices);
   }
 
-  // Reject class methods.
-  if (auto *classMethod =
+  // Find class method.
+  if (auto *classMethodInst =
           peerThroughFunctionConversions<ClassMethodInst>(original)) {
-    context.emitNondifferentiabilityError(original, invoker,
-        diag::autodiff_class_member_not_supported);
-    return None;
+    auto loc = classMethodInst->getLoc();
+    auto methodRef = classMethodInst->getMember();
+    auto *methodDecl = methodRef.getDecl();
+    auto *diffAttr = methodDecl->getAttrs().getAttribute<DifferentiableAttr>();
+    if (!diffAttr) {
+      context.emitNondifferentiabilityError(
+          original, invoker,
+          diag::autodiff_class_member_not_differentiable);
+      return None;
+    }
+
+    auto *methodParameterIndices = diffAttr->getParameterIndices();
+    auto loweredMethodIndices = methodParameterIndices->getLowered(
+        context.getASTContext(),
+        methodDecl->getInterfaceType()->castTo<AnyFunctionType>());
+    SILAutoDiffIndices methodIndices(/*source*/ 0, loweredMethodIndices);
+
+    // NOTE: We need to extend the capacity of desired parameter indices to
+    // requirement parameter indices, because there's an argument count
+    // mismatch. When `@differentiable` partial apply is supported, this problem
+    // will go away.
+    if (desiredIndices.source != methodIndices.source ||
+        !desiredIndices.parameters->extendingCapacity(
+            context.getASTContext(),
+            methodIndices.parameters->getCapacity())
+                ->isSubsetOf(methodIndices.parameters)) {
+      context.emitNondifferentiabilityError(original, invoker,
+          diag::autodiff_protocol_member_subset_indices_not_differentiable);
+      return None;
+    }
+
+    auto originalType = classMethodInst->getType().castTo<SILFunctionType>();
+    auto assocType = originalType->getAutoDiffAssociatedFunctionType(
+        methodIndices.parameters, methodIndices.source,
+        /*differentiationOrder*/ 1, kind, builder.getModule(),
+        LookUpConformanceInModule(builder.getModule().getSwiftModule()));
+
+    // Emit a `class_method` instruction for the associated function.
+    auto *autoDiffFuncId = AutoDiffAssociatedFunctionIdentifier::get(
+        kind, /*differentiationOrder*/ 1, methodParameterIndices,
+        context.getASTContext());
+    auto *ref = builder.createClassMethod(
+        loc, classMethodInst->getOperand(),
+        methodRef.asAutoDiffAssociatedFunction(autoDiffFuncId),
+        SILType::getPrimitiveObjectType(assocType));
+    auto convertedRef =
+        reapplyFunctionConversion(ref, classMethodInst, original, builder, loc);
+    return std::make_pair(convertedRef, methodIndices);
   }
 
   // Emit the general opaque function error.
@@ -4006,6 +4056,39 @@ private:
       return builder.createStructElementAddr(
           seai->getLoc(), adjSource.getValue(), tanField);
     }
+    // Handle `ref_element_addr`.
+    if (auto *reai = dyn_cast<RefElementAddrInst>(originalProjection)) {
+      llvm::errs() << "SOURCE VALUE\n";
+      reai->getOperand()->dump();
+      auto adjSourceVal = getAdjointValue(origBB, reai->getOperand());
+      llvm::errs() << "ADJ SOURCE ADJ VALUE\n";
+      adjSourceVal.print(llvm::errs()); llvm::errs() << "\n";
+      adjSourceVal.getType().dump();
+      auto adjSource = materializeAdjoint(adjSourceVal, reai->getLoc());
+      llvm::errs() << "REF ELEMENT ADDR\n";
+      llvm::errs() << "ADJ SOURCE!\n";
+      adjSource.getValue()->dump();
+      auto *tangentVectorDecl =
+          adjSource.getType().getStructOrBoundGenericStruct();
+      auto tanFieldLookup =
+          tangentVectorDecl->lookupDirect(reai->getField()->getName());
+      assert(tanFieldLookup.size() == 1);
+      auto *tanField = cast<VarDecl>(tanFieldLookup.front());
+      auto *result = builder.createStructExtract(
+          reai->getLoc(), adjSource.getValue(), tanField);
+#if 0
+      auto *result = builder.createStructElementAddr(
+          reai->getLoc(), adjSource.getValue(), tanField);
+#endif
+      llvm::errs() << "ADJ OF REF ELEMENT ADDR!\n";
+      result->dump();
+      result->getType().dump();
+      return result;
+#if 0
+      return builder.createStructElementAddr(
+          reai->getLoc(), adjSource.getValue(), tanField);
+#endif
+    }
     // Handle `tuple_element_addr`.
     if (auto *teai = dyn_cast<TupleElementAddrInst>(originalProjection)) {
       auto source = teai->getOperand();
@@ -5069,6 +5152,26 @@ public:
     }
   }
 
+#if 0
+  /// Handle `ref_element_addr` instruction.
+  ///   Original: y = ref_element_addr x, #field
+  ///    Adjoint: adj[x] += struct (0, ..., #field': adj[y], ..., 0)
+  ///                                       ^~~~~~~
+  ///                     field in tangent space corresponding to #field
+  void visitRefElementAddrInst(RefElementAddrInst *reai) {
+    auto *bb = reai->getParent();
+    llvm::errs() << "VISIT REF ELEMENT ADDR ORIG\n";
+    reai->getType().dump();
+    llvm::errs() << "VISIT REF ELEMENT ADDR ORIG OPERAND\n";
+    reai->getOperand()->getType().dump();
+    llvm::errs() << "VISIT REF ELEMENT ADDR\n";
+    auto av = getAdjointBuffer(bb, reai);
+    av.getValue()->dump();
+    auto av2 = getAdjointValue(bb, reai->getOperand());
+    av2.print(llvm::errs());
+  }
+#endif
+
   /// Handle `tuple` instruction.
   ///   Original: y = tuple (x0, x1, x2, ...)
   ///    Adjoint: adj[x0] += tuple_extract adj[y], 0
@@ -5283,10 +5386,11 @@ public:
 #define NOT_DIFFERENTIABLE(INST, DIAG) \
   void visit##INST##Inst(INST##Inst *inst) { \
     getContext().emitNondifferentiabilityError( \
-        inst, getInvoker(), DIAG); \
+        inst, getInvoker(), diag::DIAG); \
     errorOccurred = true; \
     return; \
   }
+  NOT_DIFFERENTIABLE(RefElementAddr, autodiff_class_member_not_supported)
 #undef NOT_DIFFERENTIABLE
 
 #define NO_ADJOINT(INST) \
@@ -5760,6 +5864,17 @@ void PullbackEmitter::accumulateIndirect(
 
 void PullbackEmitter::accumulateIndirect(SILValue lhsDestAccess,
                                          SILValue rhsAccess) {
+#if 0
+  if (!(lhsDestAccess->getType().isAddress() &&
+        rhsAccess->getType().isAddress())) {
+    llvm::errs() << "VIOLATED!\n";
+    lhsDestAccess->dumpInContext();
+    lhsDestAccess->getType().dump();
+    rhsAccess->dumpInContext();
+    rhsAccess->getType().dump();
+    getAdjoint().dump();
+  }
+#endif
   assert(lhsDestAccess->getType().isAddress() &&
          rhsAccess->getType().isAddress());
   assert(lhsDestAccess->getFunction() == &getPullback());
@@ -6389,6 +6504,14 @@ ADContext::getOrCreateSubsetParametersThunkForAssociatedFunction(
         loc, assocMethodInst->getLookupType(),
         assocMethodInst->getConformance(), assocMethodInst->getMember(),
         thunk->mapTypeIntoContext(assocMethodInst->getType()));
+  } else if (auto *assocMethodInst =
+                 peerThroughFunctionConversions<ClassMethodInst>(assocFn)) {
+    auto classOperand = thunk->getArgumentsWithoutIndirectResults().back();
+    auto classOperandType = assocMethodInst->getOperand()->getType();
+    assert(classOperand->getType() == classOperandType);
+    assocRef = builder.createClassMethod(
+        loc, classOperand, assocMethodInst->getMember(),
+        thunk->mapTypeIntoContext(assocMethodInst->getType()));
   }
   assert(assocRef && "Expected associated function to be resolved");
 
@@ -6429,6 +6552,12 @@ ADContext::getOrCreateSubsetParametersThunkForAssociatedFunction(
   } else {
     builder.createReturn(loc, newDerivative);
   }
+
+      if (auto *assocMethodInst =
+          peerThroughFunctionConversions<ClassMethodInst>(assocFn)) {
+        llvm::errs() << "CLASS METHOD THUNK!\n";
+        thunk->dump();
+      }
 
   getGeneratedFunctions().push_back(thunk);
   return {thunk, interfaceSubs};

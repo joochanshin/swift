@@ -46,6 +46,18 @@ static ValueDecl *getProtocolRequirement(ProtocolDecl *proto, Identifier name) {
   return lookup.front();
 }
 
+/// Get the requirement kind of given declaration, for use in diagnostics.
+static diag::RequirementKind getRequirementKind(ValueDecl *decl) {
+  if (isa<ConstructorDecl>(decl))
+    return diag::RequirementKind::Constructor;
+  if (isa<FuncDecl>(decl))
+    return diag::RequirementKind::Func;
+  if (isa<VarDecl>(decl))
+    return diag::RequirementKind::Var;
+  assert(isa<SubscriptDecl>(decl) && "Unhandled requirement kind");
+  return diag::RequirementKind::Subscript;
+}
+
 // Get the stored properties of a nominal type that are relevant for
 // differentiation, except the ones tagged `@noDerivative`.
 static void
@@ -1030,6 +1042,16 @@ ValueDecl *DerivedConformance::deriveDifferentiable(ValueDecl *requirement) {
   // Diagnose conformances in disallowed contexts.
   if (checkAndDiagnoseDisallowedContext(requirement))
     return nullptr;
+  auto diagnosticTransaction = DiagnosticTransaction(TC.Context.Diags);
+  TC.diagnose(ConformanceDecl->getLoc(), diag::type_does_not_conform,
+              Nominal->getDeclaredType(), getProtocolType());
+  TC.diagnose(requirement, diag::no_witnesses,
+              getRequirementKind(requirement), requirement->getFullName(),
+              getProtocolType(), /*addFixIt*/ false);
+  if (canDeriveDifferentiable(Nominal, getConformanceContext())) {
+    diagnosticTransaction.abort();
+  }
+
   if (requirement->getBaseName() == TC.Context.Id_move)
     return deriveDifferentiable_move(*this);
   if (requirement->getBaseName() == TC.Context.Id_allDifferentiableVariables)
@@ -1042,6 +1064,14 @@ Type DerivedConformance::deriveDifferentiable(AssociatedTypeDecl *requirement) {
   // Diagnose conformances in disallowed contexts.
   if (checkAndDiagnoseDisallowedContext(requirement))
     return nullptr;
+  auto diagnosticTransaction = DiagnosticTransaction(TC.Context.Diags);
+  TC.diagnose(ConformanceDecl->getLoc(), diag::type_does_not_conform,
+              Nominal->getDeclaredType(), getProtocolType());
+  TC.diagnose(requirement, diag::no_witnesses_type, requirement->getFullName().getBaseIdentifier());
+  if (canDeriveDifferentiable(Nominal, getConformanceContext())) {
+    diagnosticTransaction.abort();
+  }
+
   if (requirement->getBaseName() == TC.Context.Id_TangentVector)
     return deriveDifferentiable_AssociatedStruct(
         *this, TC.Context.Id_TangentVector);

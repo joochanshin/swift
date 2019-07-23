@@ -353,6 +353,7 @@ private:
     case Node::Kind::Destructor:
     case Node::Kind::DidSet:
     // SWIFT_ENABLE_TENSORFLOW
+    case Node::Kind::DerivativeFunction:
     case Node::Kind::DifferentiableFunctionType:
     case Node::Kind::EscapingDifferentiableFunctionType:
     case Node::Kind::LinearFunctionType:
@@ -1425,6 +1426,10 @@ NodePointer NodePrinter::print(NodePointer Node, bool asPrefixContext) {
   }
   case Node::Kind::SpecializationPassID:
     Printer << Node->getIndex();
+    return nullptr;
+  // SWIFT_ENABLE_TENSORFLOW
+  case Node::Kind::DerivativeFunction:
+    Printer << " vjp";
     return nullptr;
   case Node::Kind::BuiltinTypeName:
     Printer << Node->getText();

@@ -455,6 +455,10 @@ void Remangler::mangleDependentProtocolConformanceAssociated(Node *node) {
   unreachable("Dependent conformances aren't in the old mangling");
 }
 
+void Remangler::mangleDerivativeFunction(Node *node) {
+  unreachable("unsupported");
+}
+
 void Remangler::mangleProtocolConformance(Node *node) {
   // type, protocol name, context
   assert(node->getNumChildren() == 3);

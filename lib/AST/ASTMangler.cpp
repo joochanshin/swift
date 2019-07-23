@@ -27,9 +27,13 @@
 #include "swift/AST/ProtocolConformance.h"
 #include "swift/AST/ProtocolConformanceRef.h"
 #include "swift/Basic/Defer.h"
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/Demangling/ManglingMacros.h"
 #include "swift/Demangling/ManglingUtils.h"
 #include "swift/Demangling/Demangler.h"
 #include "swift/Strings.h"
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/SIL/SILFunction.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
@@ -368,6 +372,106 @@ std::string ASTMangler::mangleReabstractionThunkHelper(
 
   return finalize();
 }
+
+class AttributeDemangler : public Demangle::Demangler {
+public:
+  void demangleAndAddAsChildren(StringRef MangledSpecialization, NodePointer Parent) {
+    init(MangledSpecialization);
+    if (!parseAndPushNodes()) {
+      llvm::errs() << "Can't demangle: " << MangledSpecialization << '\n';
+      abort();
+    }
+    for (Node *Nd : NodeStack) {
+      addChild(Parent, Nd);
+    }
+  }
+};
+
+std::string ASTMangler::mangleDerivativeHelper(
+    StringRef name, AutoDiffAssociatedFunctionKind kind,
+    SILAutoDiffIndices &indices, ArrayRef<Requirement> requirements,
+    bool isLinearMap) {
+  // Mod = module;
+  // beginMangling();
+  beginManglingWithoutPrefix();
+
+  // llvm::errs() << "MANGLING! '" << name << "'\n";
+  // llvm::errs() << "MANGLING! '" << indices.mangle() << "'\n";
+  Buffer << "AD__";
+  Buffer << name;
+  Buffer << '_';
+  switch (kind) {
+  case AutoDiffAssociatedFunctionKind::JVP:
+    if (isLinearMap)
+      Buffer << "_differential_";
+    else
+      Buffer << "_jvp_";
+    break;
+  case AutoDiffAssociatedFunctionKind::VJP:
+    if (isLinearMap)
+      Buffer << "_pullback_";
+    else
+      Buffer << "_vjp_";
+    break;
+  }
+  Buffer << indices.mangle();
+  if (!requirements.empty()) {
+    Buffer << '_';
+    for (const auto &req : requirements)
+      appendRequirement(req);
+  }
+
+  /*
+  GenericSignature *GenSig = ThunkType->getGenericSignature();
+  if (GenSig)
+    CurGenericSignature = GenSig->getCanonicalSignature();
+
+  beginMangling();
+  appendType(FromType);
+  appendType(ToType);
+  if (SelfType)
+    appendType(SelfType);
+
+  if (GenSig)
+    appendGenericSignature(GenSig);
+
+  if (SelfType)
+    appendOperator("Ty");
+  else
+    appendOperator("TR");
+
+   */
+
+  // return finalize();
+  auto result = Storage.str().str();
+  Storage.clear();
+  return result;
+
+  /*
+  StringRef mangledDerivative(Storage.data(), Storage.size());
+  AttributeDemangler D;
+  // Demangler D;
+  NodePointer TopLevel = D.createNode(Node::Kind::Global);
+  D.demangleAndAddAsChildren(mangledDerivative, TopLevel);
+
+  NodePointer FuncTopLevel = nullptr;
+  if (name.startswith(MANGLING_PREFIX_STR)) {
+    FuncTopLevel = D.demangleSymbol(name);
+    assert(FuncTopLevel);
+  }
+  if (!FuncTopLevel) {
+    FuncTopLevel = D.createNode(Node::Kind::Global);
+    FuncTopLevel->addChild(D.createNode(Node::Kind::Identifier, name), D);
+  }
+  for (NodePointer FuncChild : *FuncTopLevel) {
+    TopLevel->addChild(FuncChild, D);
+  }
+  std::string mangledName = Demangle::mangleNode(TopLevel);
+  verify(mangledName);
+  return mangledName;
+  */
+}
+
 
 std::string ASTMangler::mangleTypeForDebugger(Type Ty, const DeclContext *DC) {
   PrettyStackTraceType prettyStackTrace(Ty->getASTContext(),

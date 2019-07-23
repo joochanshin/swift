@@ -1193,6 +1193,58 @@ void Remangler::mangleFunctionSignatureSpecializationParamPayload(Node *node) {
   unreachable("handled inline");
 }
 
+void Remangler::mangleDerivativeFunction(Node *node) {
+#if 0
+  for (NodePointer Param : *node) {
+    if (Param->getKind() == Node::Kind::FunctionSignatureSpecializationParam &&
+        Param->getNumChildren() > 0) {
+      Node *KindNd = Param->getChild(0);
+      switch (FunctionSigSpecializationParamKind(KindNd->getIndex())) {
+        case FunctionSigSpecializationParamKind::ConstantPropFunction:
+        case FunctionSigSpecializationParamKind::ConstantPropGlobal:
+          mangleIdentifier(Param->getChild(1));
+          break;
+        case FunctionSigSpecializationParamKind::ConstantPropString: {
+          NodePointer TextNd = Param->getChild(2);
+          StringRef Text = TextNd->getText();
+          if (!Text.empty() && (isDigit(Text[0]) || Text[0] == '_')) {
+            std::string Buffer = "_";
+            Buffer.append(Text.data(), Text.size());
+            TextNd = Factory.createNode(Node::Kind::Identifier, Buffer);
+          }
+          mangleIdentifier(TextNd);
+          break;
+        }
+        case FunctionSigSpecializationParamKind::ClosureProp:
+          mangleIdentifier(Param->getChild(1));
+          for (unsigned i = 2, e = Param->getNumChildren(); i != e; ++i) {
+            mangleType(Param->getChild(i));
+          }
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  Buffer << "Tf";
+  bool returnValMangled = false;
+  for (NodePointer Child : *node) {
+    if (Child->getKind() == Node::Kind::FunctionSignatureSpecializationReturn) {
+      Buffer << '_';
+      returnValMangled = true;
+    }
+    mangle(Child);
+
+    if (Child->getKind() == Node::Kind::SpecializationPassID &&
+        node->hasIndex()) {
+      Buffer << node->getIndex();
+    }
+  }
+  if (!returnValMangled)
+    Buffer << "_n";
+#endif
+}
+
 void Remangler::mangleFunctionType(Node *node) {
   mangleFunctionSignature(node);
   Buffer << 'c';

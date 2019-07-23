@@ -239,11 +239,90 @@ getAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
   // Add where clause requirements.
   auto source =
       GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+  // NOTE: ADD LOGIC HERE OR AT ATTR CREATIONO TIME? PROBABLY ATTR CREATION TIME
+  // Constrain all differentiation parameters to `@differentiable`.
+  auto &ctx = original->getASTContext();
+  auto *diffableProto = ctx.getProtocol(KnownProtocolKind::Differentiable);
+#if 0
+  llvm::errs() << "ORIGINAL FUNC TYPE\n";
+  original->getLoweredFunctionType()->dump();
+#endif
+  for (unsigned i : attr->getIndices().parameters->getIndices()) {
+    // llvm::errs() << "INDEX: " << i << "\n";
+    if (attr->getIndices().parameters->contains(i)) {
+      // auto typeToConstrain = original->getConventions().getParamInfoForSILArg(i).getType();
+      auto typeToConstrain = original->getConventions().getSILArgumentType(i).getASTType();
+      // llvm::errs() << "TYPE TO CONSTRAIN: " << typeToConstrain << "\n";
+      Requirement req(RequirementKind::Conformance, typeToConstrain,
+                      diffableProto->getDeclaredType());
+      llvm::errs() << "ADDING REQUIREMENT\n";
+      req.dump();
+      llvm::errs() << "\n";
+      builder.addRequirement(req, source, original->getModule().getSwiftModule());
+    }
+  }
   for (auto &req : attr->getRequirements())
     builder.addRequirement(req, source, original->getModule().getSwiftModule());
+  auto result = std::move(builder)
+      .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams=*/true)
+      ->getCanonicalSignature();
+  llvm::errs() << "RESULT:\n"; result->dump(); llvm::errs() << "\n";
+  return result;
+#if 0
   return std::move(builder)
       .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams=*/true)
       ->getCanonicalSignature();
+#endif
+}
+
+// Return the expected generic signature for autodiff associated functions given
+// a SILDifferentiableAttr. The expected generic signature is built from the
+// original generic signature and the attribute's requirements.
+static ArrayRef<Requirement>
+getAssociatedFunctionRequirements(AutoDiffIndexSubset *indices,
+                                  SILFunction *original) {
+  auto originalGenSig =
+      original->getLoweredFunctionType()->getGenericSignature();
+  if (!originalGenSig)
+    return {};
+  GenericSignatureBuilder builder(original->getASTContext());
+  // Add original generic signature.
+  builder.addGenericSignature(originalGenSig);
+  // Add where clause requirements.
+  auto source =
+      GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+  // NOTE: ADD LOGIC HERE OR AT ATTR CREATIONO TIME? PROBABLY ATTR CREATION TIME
+  // Constrain all differentiation parameters to `@differentiable`.
+  auto &ctx = original->getASTContext();
+  auto *diffableProto = ctx.getProtocol(KnownProtocolKind::Differentiable);
+#if 0
+  llvm::errs() << "ORIGINAL FUNC TYPE\n";
+  original->getLoweredFunctionType()->dump();
+#endif
+  for (unsigned i : indices->getIndices()) {
+    // llvm::errs() << "INDEX: " << i << "\n";
+    if (indices->contains(i)) {
+      // auto typeToConstrain = original->getConventions().getParamInfoForSILArg(i).getType();
+      auto typeToConstrain = original->getConventions().getSILArgumentType(i).getASTType();
+      // llvm::errs() << "TYPE TO CONSTRAIN: " << typeToConstrain << "\n";
+      Requirement req(RequirementKind::Conformance, typeToConstrain,
+                      diffableProto->getDeclaredType());
+      llvm::errs() << "ADDING REQUIREMENT WOW\n";
+      req.dump();
+      llvm::errs() << "\n";
+      builder.addRequirement(req, source, original->getModule().getSwiftModule());
+    }
+  }
+  auto result = std::move(builder)
+      .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams=*/true)
+      ->getCanonicalSignature();
+  llvm::errs() << "RESULT WOW:\n"; result->dump(); llvm::errs() << "\n";
+  return result->getRequirements();
+#if 0
+  return std::move(builder)
+      .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams=*/true)
+      ->getCanonicalSignature();
+#endif
 }
 
 // Clone the generic parameters of the given generic signature and return a new
@@ -737,7 +816,7 @@ void DifferentiationInvoker::print(llvm::raw_ostream &os) const {
 // substitution map and in the given module.
 static bool checkRequirementsSatisfied(
     ArrayRef<Requirement> requirements, SubstitutionMap substMap,
-    SILFunction *original, ModuleDecl *swiftModule) {
+    ModuleDecl *swiftModule) {
   if (requirements.empty())
     return true;
   // Iterate through all requirements and check whether they are satisfied.
@@ -957,10 +1036,16 @@ public:
   /// with the exact specified parameter indices. Returns nullptr if no such
   /// attribute exists.
   SILDifferentiableAttr *lookUpDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices) const {
-    for (auto *attr : original->getDifferentiableAttrs())
-      if (attr->getIndices() == indices)
-        return attr;
+      SILFunction *original, const SILAutoDiffIndices &indices,
+      SubstitutionMap substMap = SubstitutionMap()) const {
+    for (auto *attr : original->getDifferentiableAttrs()) {
+      if (attr->getIndices() != indices)
+        continue;
+      if (!checkRequirementsSatisfied(attr->getRequirements(), substMap,
+                                      getModule().getSwiftModule()))
+        continue;
+      return attr;
+    }
     return nullptr;
   }
 
@@ -968,16 +1053,20 @@ public:
   /// whose parameter indices are a minimal superset of the specified parameter
   /// indices. Returns nullptr if no such attribute exists.
   SILDifferentiableAttr *lookUpMinimalDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices) const {
+      SILFunction *original, const SILAutoDiffIndices &indices,
+      SubstitutionMap substMap = SubstitutionMap()) const {
     auto *minimalIndexSet = AutoDiffIndexSubset::getDefault(
         getASTContext(),
         original->getLoweredFunctionType()->getNumParameters(), false);
     auto *indexSet = indices.parameters;
-    if (auto *exactAttr = lookUpDifferentiableAttr(original, indices))
+    if (auto *exactAttr = lookUpDifferentiableAttr(original, indices, substMap))
       return exactAttr;
     SILDifferentiableAttr *minimalAttr = nullptr;
     for (auto *da : original->getDifferentiableAttrs()) {
       if (da->getIndices().source != indices.source)
+        continue;
+      if (!checkRequirementsSatisfied(rda->getRequirements(), substMap,
+                                      getModule().getSwiftModule()))
         continue;
       auto *daIndexSet = da->getIndices().parameters;
       // If all indices in `indexSet` are in `daIndexSet`, and it has fewer
@@ -2057,11 +2146,11 @@ emitAssociatedFunctionReference(
     auto substMap = getSubstitutionMap(original);
     // Attempt to look up a `[differentiable]` attribute that minimally
     // satisfies the specified indices.
-    // TODO(TF-482): Change `lookupMinimalDifferentiableAttr` to additionally
+    // TODO(TF-482): Change `lookUpMinimalDifferentiableAttr` to additionally
     // check whether `[differentiable]` attribute generic requirements are
     // satisfied.
-    auto *minimalAttr =
-        context.lookUpMinimalDifferentiableAttr(originalFn, desiredIndices);
+    auto *minimalAttr = context.lookUpMinimalDifferentiableAttr(
+        originalFn, desiredIndices, substMap);
     if (!minimalAttr) {
       // If the function is intentionally marked as being opaque to
       // differentiation, then we should not create a task for it.
@@ -2099,11 +2188,39 @@ emitAssociatedFunctionReference(
       }
       // Sanity check passed. Create a new `[differentiable]` attribute and
       // process it it.
-      ArrayRef<Requirement> contextualRequirements;
+      SmallVector<Requirement, 4> contextualRequirements;
       if (invoker.getKind() ==
-          DifferentiationInvoker::Kind::IndirectDifferentiation)
-        contextualRequirements =
-            invoker.getIndirectDifferentiation().second->getRequirements();
+          DifferentiationInvoker::Kind::IndirectDifferentiation) {
+        auto indirectRequirements =
+             invoker.getIndirectDifferentiation().second->getRequirements();
+        contextualRequirements.append(indirectRequirements.begin(),
+                                      indirectRequirements.end());
+      }
+#if 0
+      auto *diffableProto = context.getASTContext().getProtocol(KnownProtocolKind::Differentiable);
+/*
+      auto source =
+          GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+*/
+      for (unsigned i : desiredIndices.parameters->getIndices()) {
+        // llvm::errs() << "INDEX: " << i << "\n";
+        if (desiredIndices.parameters->contains(i)) {
+          // auto typeToConstrain = original->getConventions().getParamInfoForSILArg(i).getType();
+          auto typeToConstrain = originalFn->getConventions().getSILArgumentType(i).getASTType();
+          // llvm::errs() << "TYPE TO CONSTRAIN: " << typeToConstrain << "\n";
+          Requirement req(RequirementKind::Conformance, typeToConstrain,
+                          diffableProto->getDeclaredType());
+          llvm::errs() << "ADDING REQUIREMENT TO ATTR\n";
+          req.dump();
+          llvm::errs() << "\n";
+          // builder.addRequirement(req, source, originalFn->getModule().getSwiftModule());
+          contextualRequirements.push_back(req);
+        }
+      }
+#endif
+      auto inferredRequirements = getAssociatedFunctionRequirements(desiredIndices.parameters, originalFn);
+      contextualRequirements.append(inferredRequirements.begin(),
+                                    inferredRequirements.end());
       auto *newAttr = context.getOrCreateDifferentiableAttr(
           originalFn, desiredIndices, contextualRequirements);
       if (context.processDifferentiableAttribute(originalFn, newAttr, invoker))
@@ -2111,15 +2228,20 @@ emitAssociatedFunctionReference(
       minimalAttr = newAttr;
     }
     assert(minimalAttr);
+    assert(checkRequirementsSatisfied(
+               minimalAttr->getRequirements(), substMap,
+               context.getModule().getSwiftModule()));
+#if 0
     // TODO(TF-482): Move generic requirement checking logic to
-    // `lookupMinimalDifferentiableAttr`.
+    // `lookUpMinimalDifferentiableAttr`.
     if (!checkRequirementsSatisfied(
-            minimalAttr->getRequirements(),
-            substMap, originalFn, context.getModule().getSwiftModule())) {
+            minimalAttr->getRequirements(), substMap,
+            context.getModule().getSwiftModule())) {
       context.emitNondifferentiabilityError(original, invoker,
           diag::autodiff_function_assoc_func_requirements_unmet);
       return None;
     }
+#endif
     if (context.processDifferentiableAttribute(
             originalFn, minimalAttr, invoker))
       return None;
@@ -2959,10 +3081,16 @@ public:
               ->getCanonicalType(), origParam.getConvention()));
     }
 
+    Mangle::ASTMangler mangler;
+    auto pbName = original->getASTContext().getIdentifier(
+        mangler.mangleDerivativeHelper(original->getName(), AutoDiffAssociatedFunctionKind::VJP,
+                                       indices, attr->getRequirements(), /*isLinearMap*/ true)).str();
+#if 0
     auto pbName = original->getASTContext()
                        .getIdentifier("AD__" + original->getName().str() +
                                       "__pullback_" + indices.mangle())
                        .str();
+#endif
     auto pbGenericSig = getAssociatedFunctionGenericSignature(attr, original);
     auto *pbGenericEnv = pbGenericSig
         ? pbGenericSig->createGenericEnvironment()
@@ -3550,11 +3678,15 @@ public:
               ->getAutoDiffAssociatedTangentSpace(lookupConformance)
               ->getCanonicalType(), origParam.getConvention()));
     }
-
-    auto diffName = original->getASTContext()
-        .getIdentifier("AD__" + original->getName().str() + "__differential_" +
-                       indices.mangle())
-        .str();
+    Mangle::ASTMangler mangler;
+    StringRef diffName = mangler.mangleDerivativeHelper(original->getName(), AutoDiffAssociatedFunctionKind::JVP,
+                                                        indices, attr->getRequirements(), /*isLinearMap*/ true);
+    diffName = original->getASTContext().getIdentifier(diffName).str();
+#if 0
+    auto diffName = original->getASTContext().getIdentifier(
+        mangler.mangleDerivativeHelper(original->getName(), AutoDiffAssociatedFunctionKind::JVP,
+                                       indices, attr->getRequirements(), /*isLinearMap*/ true)).str();
+#endif
     auto diffGenericSig = getAssociatedFunctionGenericSignature(attr, original);
     auto *diffGenericEnv = diffGenericSig
         ? diffGenericSig->createGenericEnvironment()
@@ -5918,10 +6050,9 @@ static SILFunction *createEmptyVJP(
   auto indices = attr->getIndices();
 
   // === Create an empty VJP. ===
-  auto vjpName = original->getASTContext()
-                     .getIdentifier("AD__" + original->getName().str() +
-                                    "__vjp_" + indices.mangle())
-                     .str();
+  Mangle::ASTMangler mangler;
+  auto vjpName = original->getASTContext().getIdentifier(
+      mangler.mangleDerivativeHelper(original->getName(), AutoDiffAssociatedFunctionKind::VJP, indices, attr->getRequirements())).str();
   auto vjpGenericSig = getAssociatedFunctionGenericSignature(attr, original);
 
   // RAII that pushes the original function's generic signature to
@@ -5968,10 +6099,17 @@ static SILFunction *createEmptyJVP(
   auto indices = attr->getIndices();
 
   // === Create an empty JVP. ===
-  auto jvpName = original->getASTContext()
-      .getIdentifier("AD__" + original->getName().str() +
-                     "__jvp_" + indices.mangle())
-      .str();
+  Mangle::ASTMangler mangler;
+  auto jvpName = original->getASTContext().getIdentifier(
+      mangler.mangleDerivativeHelper(original->getName(), AutoDiffAssociatedFunctionKind::JVP, indices, attr->getRequirements())).str();
+  auto name = original->getASTContext()
+                     .getIdentifier("AD__" + original->getName().str() +
+                                    "__jvp_" + indices.mangle())
+                     .str();
+  // llvm::errs() << "OLD NAME: " << name << "\n";
+  // llvm::errs() << "NEW NAME: " << vjpName << "\n";
+  if (attr->getRequirements().empty())
+    assert(name == jvpName);
   auto jvpGenericSig = getAssociatedFunctionGenericSignature(attr, original);
 
   // RAII that pushes the original function's generic signature to

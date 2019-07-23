@@ -151,6 +151,13 @@ public:
                                              Type FromType, Type ToType,
                                              Type SelfType,
                                              ModuleDecl *Module);
+
+  // SWIFT_ENABLE_TENSORFLOW
+  std::string mangleDerivativeHelper(StringRef name,
+                                     AutoDiffAssociatedFunctionKind kind,
+                                     SILAutoDiffIndices &indices,
+                                     ArrayRef<Requirement> requirements,
+                                     bool isLinearMap = false);
   
   std::string mangleKeyPathGetterThunkHelper(const AbstractStorageDecl *property,
                                              GenericSignature *signature,

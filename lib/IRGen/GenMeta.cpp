@@ -3632,6 +3632,9 @@ void irgen::emitStructMetadata(IRGenModule &IGM, StructDecl *structDecl) {
   bool canBeConstant;
   if (structDecl->isGenericContext()) {
     GenericStructMetadataBuilder builder(IGM, structDecl, init);
+    // llvm::errs() << "struct " << structDecl->getName() << "\n";
+    structDecl->print(llvm::errs());
+    llvm::errs() << "\n";
     builder.layout();
     isPattern = true;
     canBeConstant = true;

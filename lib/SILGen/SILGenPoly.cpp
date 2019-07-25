@@ -3951,7 +3951,15 @@ static SILFunction *getOrCreateReabstractionThunk2(SILGenFunctionBuilder fb,
   auto *fnArg = thunk->getArgumentsWithoutIndirectResults().back();
 
   SmallVector<SILValue, 4> arguments;
-  auto toArgIter = thunk->getArguments().begin();
+  SmallVector<SILArgument *, 4> thunkArguments(thunk->getArguments().begin(),
+                                               thunk->getArguments().end());
+  auto toParameters = toConv.getParameters();
+  if (reorderSelf && assocFnKind == AutoDiffAssociatedFunctionKind::JVP) {
+    auto toArgIdxStart = toConv.getSILArgIndexOfFirstParam();
+    std::rotate(thunkArguments.begin() + toArgIdxStart,
+                thunkArguments.end() - 2, thunkArguments.end() - 1);
+  }
+  auto toArgIter = thunkArguments.begin();
   auto useNextArgument = [&]() {
     arguments.push_back(*toArgIter++);
   };
@@ -3992,7 +4000,21 @@ static SILFunction *getOrCreateReabstractionThunk2(SILGenFunctionBuilder fb,
   assert(toType->getNumParameters() == fromType->getNumParameters());
   for (unsigned paramIdx : range(toType->getNumParameters())) {
     auto fromParam = fromConv.getParameters()[paramIdx];
-    auto toParam = toConv.getParameters()[paramIdx];
+    auto toParam = toParameters[paramIdx];
+#if 0
+    if (reorderSelf && assocFnKind == AutoDiffAssociatedFunctionKind::JVP) {
+      auto numParams = toConv.getNumParameters();
+      auto toParamIdx = (paramIdx + numParams - 1) % numParams;
+      llvm::errs() << "OLD TO PARAM IDX: " << paramIdx << "\n";
+      llvm::errs() << "NEW TO PARAM IDX: " << toParamIdx << "\n";
+      fromType->dump();
+      toType->dump();
+      toParam = toConv.getParameters()[toParamIdx];
+      llvm::errs() << "TO VS FROM PARAM (ROTATED)\n";
+      fromParam.dump();
+      toParam.dump();
+    }
+#endif
     // No abstraction mismatch. Directly use next argument.
     if (fromParam.isFormalIndirect() == toParam.isFormalIndirect()) {
       useNextArgument();
@@ -4034,6 +4056,7 @@ static SILFunction *getOrCreateReabstractionThunk2(SILGenFunctionBuilder fb,
   SmallVector<SILArgument *, 4> thunkIndirectResults(
       thunk->getIndirectResults().begin(),
       thunk->getIndirectResults().end());
+
   if (reorderSelf && assocFnKind == AutoDiffAssociatedFunctionKind::VJP) {
     // TODO: CHECK IF SELF PARAM IS INDIRECT.
     std::rotate(thunkIndirectResults.begin(), thunkIndirectResults.end() - 1,

@@ -376,7 +376,7 @@ std::string ASTMangler::mangleReabstractionThunkHelper(
 class AttributeDemangler : public Demangle::Demangler {
 public:
   void demangleAndAddAsChildren(StringRef MangledSpecialization, NodePointer Parent) {
-    init(MangledSpecialization);
+    // init(MangledSpecialization);
     if (!parseAndPushNodes()) {
       llvm::errs() << "Can't demangle: " << MangledSpecialization << '\n';
       abort();
@@ -389,7 +389,7 @@ public:
 
 std::string ASTMangler::mangleDerivativeHelper(
     StringRef name, AutoDiffAssociatedFunctionKind kind,
-    SILAutoDiffIndices &indices, ArrayRef<Requirement> requirements,
+    const SILAutoDiffIndices &indices, ArrayRef<Requirement> requirements,
     bool isLinearMap) {
   // Mod = module;
   // beginMangling();
@@ -472,6 +472,39 @@ std::string ASTMangler::mangleDerivativeHelper(
   */
 }
 
+std::string ASTMangler::mangleDerivativeDataStructureHelper(
+    StringRef name, AutoDiffAssociatedFunctionKind kind,
+    const SILAutoDiffIndices &indices, ArrayRef<Requirement> requirements,
+    bool isStruct) {
+  beginManglingWithoutPrefix();
+  Buffer << "AD__";
+  Buffer << name;
+  Buffer << '_';
+  switch (kind) {
+    case AutoDiffAssociatedFunctionKind::JVP:
+      if (isStruct)
+        Buffer << "_DF_";
+      else
+        Buffer << "_SUCC_";
+      break;
+    case AutoDiffAssociatedFunctionKind::VJP:
+      if (isStruct)
+        Buffer << "_PB_";
+      else
+        Buffer << "_PRED_";
+      break;
+  }
+  Buffer << indices.mangle();
+  if (!requirements.empty()) {
+    Buffer << '_';
+    for (const auto &req : requirements)
+      appendRequirement(req);
+  }
+
+  auto result = Storage.str().str();
+  Storage.clear();
+  return result;
+}
 
 std::string ASTMangler::mangleTypeForDebugger(Type Ty, const DeclContext *DC) {
   PrettyStackTraceType prettyStackTrace(Ty->getASTContext(),

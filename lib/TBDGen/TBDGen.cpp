@@ -215,8 +215,8 @@ void TBDGenVisitor::visitAbstractFunctionDecl(AbstractFunctionDecl *AFD) {
   }
 
   // SWIFT_ENABLE_TENSORFLOW
-  // The AutoDiff pass creates an order-1 JVP and VJP for every function with a
-  // `@differentiable` attribute.
+  // The Differentiation transform creates an order-1 JVP and VJP for every
+  // function with a `@differentiable` attribute.
   auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
   for (auto *DA : diffAttrs) {
     // If a method-self-reordering thunk is generated for the original function,
@@ -229,13 +229,15 @@ void TBDGenVisitor::visitAbstractFunctionDecl(AbstractFunctionDecl *AFD) {
     if (!DA->getJVPFunction() || isSelfReorderedMethod) {
       auto *id = AutoDiffAssociatedFunctionIdentifier::get(
           AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
-          DA->getParameterIndices(), AFD->getASTContext());
+          DA->getParameterIndices(), DA->getRequirements(),
+          AFD->getASTContext());
       addSymbol(SILDeclRef(AFD).asAutoDiffAssociatedFunction(id));
     }
     if (!DA->getVJPFunction() || isSelfReorderedMethod) {
       auto *id = AutoDiffAssociatedFunctionIdentifier::get(
           AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
-          DA->getParameterIndices(), AFD->getASTContext());
+          DA->getParameterIndices(), DA->getRequirements(),
+          AFD->getASTContext());
       addSymbol(SILDeclRef(AFD).asAutoDiffAssociatedFunction(id));
     }
   }
@@ -305,8 +307,8 @@ void TBDGenVisitor::visitAbstractStorageDecl(AbstractStorageDecl *ASD) {
   }
 
   // SWIFT_ENABLE_TENSORFLOW
-  // The AutoDiff pass creates an order-1 JVP and VJP for every var/subscript
-  // with a `@differentiable` attribute.
+  // The Differentiation transform creates an order-1 JVP and VJP for every
+  // var/subscript with a `@differentiable` attribute.
   auto diffAttrs = ASD->getAttrs().getAttributes<DifferentiableAttr>();
   for (auto *DA : diffAttrs) {
     // If a method-self-reordering thunk is generated for the original function,
@@ -320,13 +322,15 @@ void TBDGenVisitor::visitAbstractStorageDecl(AbstractStorageDecl *ASD) {
     if (!DA->getJVPFunction() || isSelfReorderedMethod) {
       auto *id = AutoDiffAssociatedFunctionIdentifier::get(
           AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
-          DA->getParameterIndices(), ASD->getASTContext());
+          DA->getParameterIndices(), DA->getRequirements(),
+          ASD->getASTContext());
       addSymbol(SILDeclRef(ASD->getGetter()).asAutoDiffAssociatedFunction(id));
     }
     if (!DA->getVJPFunction() || isSelfReorderedMethod) {
       auto *id = AutoDiffAssociatedFunctionIdentifier::get(
           AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
-          DA->getParameterIndices(), ASD->getASTContext());
+          DA->getParameterIndices(), DA->getRequirements(),
+          ASD->getASTContext());
       addSymbol(SILDeclRef(ASD->getGetter()).asAutoDiffAssociatedFunction(id));
     }
   }

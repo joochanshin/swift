@@ -690,6 +690,7 @@ std::string SILDeclRef::mangle(ManglingKind MKind) const {
             functionTy->getASTContext(), functionTy);
     SILAutoDiffIndices indices(/*source*/ 0, silParameterIndices);
     auto assocFnKind = autoDiffAssociatedFunctionIdentifier->getKind();
+    auto requirements = autoDiffAssociatedFunctionIdentifier->getRequirements();
 #if 0
     std::string mangledKind;
     switch (autoDiffAssociatedFunctionIdentifier->getKind()) {
@@ -705,7 +706,7 @@ std::string SILDeclRef::mangle(ManglingKind MKind) const {
 #endif
     // return mangler.mangleDerivativeHelper(originalMangled, kind, indices, <#ArrayRef<Requirement> requirements#>, <#ModuleDecl *Module#>)
     return mangler.mangleDerivativeHelper(
-        originalMangled, assocFnKind, indices, {});
+        originalMangled, assocFnKind, indices, requirements);
   }
 
   // As a special case, Clang functions and globals don't get mangled at all.

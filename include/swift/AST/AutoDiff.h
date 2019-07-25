@@ -21,6 +21,7 @@
 #include "ASTContext.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "swift/Basic/Range.h"
+#include "swift/AST/Requirement.h"
 
 namespace swift {
 
@@ -555,12 +556,14 @@ class AutoDiffAssociatedFunctionIdentifier : public llvm::FoldingSetNode {
   const AutoDiffAssociatedFunctionKind kind;
   const unsigned differentiationOrder;
   AutoDiffParameterIndices *const parameterIndices;
+  ArrayRef<Requirement> requirements;
 
   AutoDiffAssociatedFunctionIdentifier(
       AutoDiffAssociatedFunctionKind kind, unsigned differentiationOrder,
-      AutoDiffParameterIndices *parameterIndices) :
+      AutoDiffParameterIndices *parameterIndices,
+      ArrayRef<Requirement> requirements) :
     kind(kind), differentiationOrder(differentiationOrder),
-    parameterIndices(parameterIndices) {}
+    parameterIndices(parameterIndices), requirements(requirements) {}
 
 public:
   AutoDiffAssociatedFunctionKind getKind() const { return kind; }
@@ -568,15 +571,27 @@ public:
   AutoDiffParameterIndices *getParameterIndices() const {
     return parameterIndices;
   }
+  ArrayRef<Requirement> getRequirements() const {
+    return requirements;
+  }
 
   static AutoDiffAssociatedFunctionIdentifier *get(
       AutoDiffAssociatedFunctionKind kind, unsigned differentiationOrder,
-      AutoDiffParameterIndices *parameterIndices, ASTContext &C);
+      AutoDiffParameterIndices *parameterIndices,
+      ArrayRef<Requirement> requirements, ASTContext &C);
 
   void Profile(llvm::FoldingSetNodeID &ID) {
     ID.AddInteger(kind);
     ID.AddInteger(differentiationOrder);
     ID.AddPointer(parameterIndices);
+    for (auto &req : requirements) {
+      ID.AddPointer(req.getFirstType().getPointer());
+      if (req.getKind() != RequirementKind::Layout)
+        ID.AddPointer(req.getSecondType().getPointer());
+      else
+        ID.AddPointer(req.getLayoutConstraint().getPointer());
+      ID.AddInteger(unsigned(req.getKind()));
+    }
   }
 };
 

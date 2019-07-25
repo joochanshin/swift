@@ -182,11 +182,13 @@ private:
       asDerived().addMethod(funcDeclRef.asAutoDiffAssociatedFunction(
           AutoDiffAssociatedFunctionIdentifier::get(
               AutoDiffAssociatedFunctionKind::JVP, /*differentiationOrder*/ 1,
-              DA->getParameterIndices(), func->getASTContext())));
+              DA->getParameterIndices(), DA->getRequirements(),
+              func->getASTContext())));
       asDerived().addMethod(funcDeclRef.asAutoDiffAssociatedFunction(
           AutoDiffAssociatedFunctionIdentifier::get(
               AutoDiffAssociatedFunctionKind::VJP, /*differentiationOrder*/ 1,
-              DA->getParameterIndices(), func->getASTContext())));
+              DA->getParameterIndices(), DA->getRequirements(),
+              func->getASTContext())));
     }
   }
 };

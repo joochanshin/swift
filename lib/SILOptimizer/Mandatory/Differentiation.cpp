@@ -562,17 +562,25 @@ private:
   EnumDecl *
   createBasicBlockPredecessorEnum(SILBasicBlock *originalBB,
                                   SILAutoDiffIndices indices,
-                                  CanGenericSignature vjpGenericSig) {
+                                  CanGenericSignature vjpGenericSig,
+                                  ArrayRef<Requirement> requirements) {
     assert(originalBB->getParent() == original);
     auto *moduleDecl = original->getModule().getSwiftModule();
     auto &astCtx = original->getASTContext();
     auto &file = getDeclarationFileUnit();
     // Create a `_AD__<fn_name>_bb<bb_id>__Pred__` predecessor enum.
+    Mangle::ASTMangler mangler;
+    auto enumId = original->getASTContext().getIdentifier(
+        mangler.mangleDerivativeDataStructureHelper(
+        original->getName(), AutoDiffAssociatedFunctionKind::VJP,
+        indices, requirements, /*isStruct*/ true));
+#if 0
     std::string predEnumName =
         "_AD__" + original->getName().str() +
         "_bb" + std::to_string(originalBB->getDebugID()) +
          "__Pred__" + indices.mangle();
     auto enumId = astCtx.getIdentifier(predEnumName);
+#endif
     auto loc = original->getLocation().getSourceLoc();
     auto *predecessorEnum = new (astCtx) EnumDecl(
         /*EnumLoc*/ loc, /*Name*/ enumId, /*NameLoc*/ loc, /*Inherited*/ {},
@@ -634,16 +642,32 @@ private:
   /// storing the pullback values and predecessor of the given original block.
   StructDecl *
   createPullbackStruct(SILBasicBlock *originalBB, SILAutoDiffIndices indices,
-                       CanGenericSignature vjpGenericSig) {
+                       CanGenericSignature vjpGenericSig,
+                       ArrayRef<Requirement> requirements) {
     auto *original = originalBB->getParent();
     auto &astCtx = original->getASTContext();
     auto &file = getDeclarationFileUnit();
     // Create a `_AD__<fn_name>_bb<bb_id>__PB__` struct.
+    Mangle::ASTMangler mangler;
+    auto structId = original->getASTContext().getIdentifier(
+        mangler.mangleDerivativeDataStructureHelper(
+        original->getName(), AutoDiffAssociatedFunctionKind::VJP,
+        indices, requirements, /*isStruct*/ true));
+#if 0
     std::string pbStructName =
         "_AD__" + original->getName().str() +
         "_bb" + std::to_string(originalBB->getDebugID()) +
          "__PB__" + indices.mangle();
+    if (!requirements.empty()) {
+      pbStructName += "_req" + std::to_string(requirements.size());
+    }
+#if 0
+    for (auto req : requirements) {
+      pbStructName += req.
+    }
+#endif
     auto structId = astCtx.getIdentifier(pbStructName);
+#endif
     SourceLoc loc = original->getLocation().getSourceLoc();
     auto *pullbackStruct = new (astCtx) StructDecl(
         /*StructLoc*/ loc, /*Name*/ structId, /*NameLoc*/ loc, /*Inherited*/ {},
@@ -676,7 +700,8 @@ public:
   PullbackInfo &operator=(const PullbackInfo &) = delete;
 
   explicit PullbackInfo(ADContext &context, SILFunction *original,
-                        SILFunction *vjp, const SILAutoDiffIndices &indices);
+                        SILFunction *vjp, const SILAutoDiffIndices &indices,
+                        ArrayRef<Requirement> requirements);
 
   /// Returns the pullback struct associated with the given original block.
   StructDecl *getPullbackStruct(SILBasicBlock *origBB) const {
@@ -1357,7 +1382,8 @@ ADContext::emitNondifferentiabilityError(SourceLoc loc,
 }
 
 PullbackInfo::PullbackInfo(ADContext &context, SILFunction *original,
-                           SILFunction *vjp, const SILAutoDiffIndices &indices)
+                           SILFunction *vjp, const SILAutoDiffIndices &indices,
+                           ArrayRef<Requirement> requirements)
     : original(original), typeConverter(context.getTypeConverter()) {
   auto &astCtx = original->getASTContext();
   auto *loopAnalysis = context.getPassManager().getAnalysis<SILLoopAnalysis>();
@@ -1368,13 +1394,14 @@ PullbackInfo::PullbackInfo(ADContext &context, SILFunction *original,
     vjpGenSig = vjpGenEnv->getGenericSignature()->getCanonicalSignature();
   // Create predecessor enum and pullback struct for each original block.
   for (auto &origBB : *original) {
-    auto *pbStruct = createPullbackStruct(&origBB, indices, vjpGenSig);
+    auto *pbStruct =
+        createPullbackStruct(&origBB, indices, vjpGenSig, requirements);
     pullbackStructs.insert({&origBB, pbStruct});
   }
   for (auto &origBB : *original) {
     auto *pbStruct = getPullbackStruct(&origBB);
-    auto *predEnum =
-        createBasicBlockPredecessorEnum(&origBB, indices, vjpGenSig);
+    auto *predEnum = createBasicBlockPredecessorEnum(
+        &origBB, indices, vjpGenSig, requirements);
     // If original block is in a loop, mark predecessor enum as indirect.
     if (loopInfo->getLoopFor(&origBB))
       predEnum->getAttrs().add(new (astCtx) IndirectAttr(/*Implicit*/ true));
@@ -2306,7 +2333,7 @@ emitAssociatedFunctionReference(
         LookUpConformanceInModule(builder.getModule().getSwiftModule()));
     auto *autoDiffFuncId = AutoDiffAssociatedFunctionIdentifier::get(
         kind, /*differentiationOrder*/ 1, minimalAttr->getParameterIndices(),
-        context.getASTContext());
+        diffAttr->getRequirements(), context.getASTContext());
     auto *ref = builder.createWitnessMethod(
         loc, witnessMethod->getLookupType(), witnessMethod->getConformance(),
         requirementDeclRef.asAutoDiffAssociatedFunction(autoDiffFuncId),
@@ -2977,7 +3004,8 @@ public:
                       DifferentiationInvoker invoker)
       : TypeSubstCloner(*vjp, *original, getSubstitutionMap(original, vjp)),
         context(context), original(original), attr(attr), vjp(vjp),
-        pullbackInfo(context, original, vjp, attr->getIndices()),
+        pullbackInfo(context, original, vjp, attr->getIndices(),
+                     attr->getRequirements()),
         invoker(invoker), activityInfo(getActivityInfo(
                               context, original, attr->getIndices(), vjp)) {
     // Create empty pullback function.
@@ -3588,7 +3616,7 @@ public:
   void visitAutoDiffFunctionInst(AutoDiffFunctionInst *adfi) {
     // Clone `autodiff_function` from original to VJP, then add the cloned
     // instruction to the `autodiff_function` worklist.
-    SILClonerWithScopes::visitAutoDiffFunctionInst(adfi);
+    TypeSubstCloner::visitAutoDiffFunctionInst(adfi);
     auto *newADFI = cast<AutoDiffFunctionInst>(getOpValue(adfi));
     context.getAutoDiffFunctionInsts().push_back(newADFI);
   }
@@ -5132,6 +5160,7 @@ public:
     SILValue seed;
     auto *bb = ai->getParent();
     if (origResult->getType().isObject()) {
+#if 0
       // If original result is a `tuple_extract`, materialize adjoint value of
       // `ai` and extract the corresponding element adjoint value.
       if (auto *tupleExtract = dyn_cast<TupleExtractInst>(origResult)) {
@@ -5143,6 +5172,8 @@ public:
       else {
         seed = materializeAdjoint(getAdjointValue(bb, origResult), loc);
       }
+#endif
+      seed = materializeAdjoint(getAdjointValue(bb, origResult), loc);
     } else {
       seed = getAdjointBuffer(bb, origResult);
       if (errorOccurred)
@@ -6155,16 +6186,27 @@ bool ADContext::processDifferentiableAttribute(
   if (attr->hasJVP()) {
     jvpName = attr->getJVPName();
   } else if (original->isExternalDeclaration()) {
+    Mangle::ASTMangler mangler;
+    jvpName = original->getASTContext().getIdentifier(
+        mangler.mangleDerivativeHelper(
+            original->getName(), AutoDiffAssociatedFunctionKind::VJP,
+            attr->getIndices(), attr->getRequirements())).str();
+#if 0
     jvpName = original->getASTContext()
                   .getIdentifier("AD__" + original->getName().str() +
                                  "__jvp_" + attr->getIndices().mangle())
                   .str();
+#endif
   }
   if (!jvpName.empty()) {
+    llvm::errs() << "JVP NAME: " << jvpName << "\n";
     jvp = module.lookUpFunction(jvpName);
-    if (!jvp)
+    llvm::errs() << "JVP LOOKED UP: " << jvp << "\n";
+    if (!jvp) {
       jvp = declareExternalAssociatedFunction(
           original, attr, jvpName, AutoDiffAssociatedFunctionKind::JVP);
+      llvm::errs() << "JVP DECLARED EXTERNAL" << jvp << "\n";
+    }
     attr->setJVPName(jvpName);
   }
 
@@ -6182,16 +6224,27 @@ bool ADContext::processDifferentiableAttribute(
   if (attr->hasVJP()) {
     vjpName = attr->getVJPName();
   } else if (original->isExternalDeclaration()) {
+#if 0
     vjpName = original->getASTContext()
                   .getIdentifier("AD__" + original->getName().str() +
 				                         "__vjp_" + attr->getIndices().mangle())
                   .str();
+#endif
+    Mangle::ASTMangler mangler;
+    vjpName = original->getASTContext().getIdentifier(
+        mangler.mangleDerivativeHelper(
+            original->getName(), AutoDiffAssociatedFunctionKind::VJP,
+            attr->getIndices(), attr->getRequirements())).str();
   }
   if (!vjpName.empty()) {
+    llvm::errs() << "VJP NAME: " << vjpName << "\n";
     vjp = module.lookUpFunction(vjpName);
-    if (!vjp)
+    llvm::errs() << "VJP LOOKED UP: " << vjp << "\n";
+    if (!vjp) {
       vjp = declareExternalAssociatedFunction(
           original, attr, vjpName, AutoDiffAssociatedFunctionKind::VJP);
+      llvm::errs() << "VJP DECLARED EXTERNAL" << vjp << "\n";
+    }
     attr->setVJPName(vjpName);
   }
 

@@ -1058,10 +1058,12 @@ llvm::Constant *irgen::emitValueWitnessTable(IRGenModule &IGM,
 
   auto addr = IGM.getAddrOfValueWitnessTable(abstractType,
                                              witnesses.finishAndCreateFuture());
+#if 0
   llvm::errs() << "ADDR\n";
   addr->dump();
   addr->getType()->dump();
   abstractType->dump();
+#endif
   auto global = cast<llvm::GlobalVariable>(addr);
   global->setConstant(canBeConstant);
 

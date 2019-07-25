@@ -155,10 +155,17 @@ public:
   // SWIFT_ENABLE_TENSORFLOW
   std::string mangleDerivativeHelper(StringRef name,
                                      AutoDiffAssociatedFunctionKind kind,
-                                     SILAutoDiffIndices &indices,
+                                     const SILAutoDiffIndices &indices,
                                      ArrayRef<Requirement> requirements,
                                      bool isLinearMap = false);
-  
+
+  // SWIFT_ENABLE_TENSORFLOW
+  std::string mangleDerivativeDataStructureHelper(StringRef name,
+                                                  AutoDiffAssociatedFunctionKind kind,
+                                                  const SILAutoDiffIndices &indices,
+                                                  ArrayRef<Requirement> requirements,
+                                                  bool isStruct);
+
   std::string mangleKeyPathGetterThunkHelper(const AbstractStorageDecl *property,
                                              GenericSignature *signature,
                                              CanType baseType,

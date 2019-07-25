@@ -1601,6 +1601,7 @@ bool SILParser::parseSILDeclRef(SILDeclRef &Result,
         AutoDiffAssociatedFunctionKind kind;
         unsigned differentiationOrder;
         AutoDiffParameterIndices *parameterIndices = nullptr;
+        ArrayRef<Requirement> requirements;
 
         if (Id.str() == "jvp")
           kind = AutoDiffAssociatedFunctionKind::JVP;
@@ -1630,9 +1631,10 @@ bool SILParser::parseSILDeclRef(SILDeclRef &Result,
           return true;
         }
         P.consumeToken();
+        // TODO: Parse requirements.
 
         autoDiffFuncId = AutoDiffAssociatedFunctionIdentifier::get(
-            kind, differentiationOrder, parameterIndices,
+            kind, differentiationOrder, parameterIndices, requirements,
             SILMod.getASTContext());
 
         break;

@@ -4639,15 +4639,24 @@ AutoDiffIndexSubset::get(ASTContext &ctx, const SmallBitVector &indices) {
 AutoDiffAssociatedFunctionIdentifier *
 AutoDiffAssociatedFunctionIdentifier::get(
     AutoDiffAssociatedFunctionKind kind, unsigned differentiationOrder,
-    AutoDiffParameterIndices *parameterIndices, ASTContext &C) {
+    AutoDiffParameterIndices *parameterIndices,
+    ArrayRef<Requirement> requirements, ASTContext &C) {
   assert(parameterIndices);
 
   auto &foldingSet = C.getImpl().AutoDiffAssociatedFunctionIdentifiers;
 
   llvm::FoldingSetNodeID id;
-  id.AddInteger((unsigned)kind);
+  id.AddInteger(kind);
   id.AddInteger(differentiationOrder);
   id.AddPointer(parameterIndices);
+  for (auto &req : requirements) {
+    id.AddPointer(req.getFirstType().getPointer());
+    if (req.getKind() != RequirementKind::Layout)
+      id.AddPointer(req.getSecondType().getPointer());
+    else
+      id.AddPointer(req.getLayoutConstraint().getPointer());
+    id.AddInteger(unsigned(req.getKind()));
+  }
 
   void *insertPos;
   auto *existing = foldingSet.FindNodeOrInsertPos(id, insertPos);
@@ -4657,7 +4666,7 @@ AutoDiffAssociatedFunctionIdentifier::get(
   void *mem = C.Allocate(sizeof(AutoDiffAssociatedFunctionIdentifier),
                          alignof(AutoDiffAssociatedFunctionIdentifier));
   auto *newNode = ::new (mem) AutoDiffAssociatedFunctionIdentifier(
-      kind, differentiationOrder, parameterIndices);
+      kind, differentiationOrder, parameterIndices, requirements);
   foldingSet.InsertNode(newNode, insertPos);
 
   return newNode;

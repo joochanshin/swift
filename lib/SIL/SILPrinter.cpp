@@ -360,6 +360,8 @@ void SILDeclRef::print(raw_ostream &OS) const {
     }
     OS << autoDiffFuncId->getDifferentiationOrder() << "."
        << autoDiffFuncId->getParameterIndices()->getString();
+    for (auto &req : autoDiffFuncId->getRequirements())
+      req.print(OS, PrintOptions());
   }
 }
 

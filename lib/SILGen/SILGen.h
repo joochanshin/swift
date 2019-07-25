@@ -172,6 +172,21 @@ public:
                                            CanType dynamicSelfType);
 
   // SWIFT_ENABLE_TENSORFLOW
+  /// Get or create a thunk for reabstracting autodiff associated functions that
+  /// do not return a maximally indirect pullback/differential.
+  ///
+  /// If `reorderSelf` is true, reorder self so that it appears as:
+  /// - The last parameter in the returned differential.
+  /// - The last result in the returned pullback.
+  SILFunction *getOrCreateAutoDiffAssociatedFunctionThunk(
+      // AbstractFunctionDecl *originalDecl,
+      AnyFunctionType *expectedAssocFnType,
+      SILFunction *original, SILAutoDiffIndices &indices,
+      SILFunction *assocFn, AutoDiffAssociatedFunctionKind assocFnKind,
+      IsSerialized_t isSerialized);
+
+#if 0
+  // SWIFT_ENABLE_TENSORFLOW
   /// Get or create a thunk for reordering autodiff associated functions with a
   /// self parameter, so that self appears as:
   /// - The last parameter in the returned differential.
@@ -180,6 +195,7 @@ public:
       SILFunction *original, SILAutoDiffIndices &indices,
       SILFunction *assocFn, AutoDiffAssociatedFunctionKind assocFnKind,
       IsSerialized_t isSerialized);
+#endif
 
   /// Determine whether the given class has any instance variables that
   /// need to be destroyed.

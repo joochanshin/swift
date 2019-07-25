@@ -159,60 +159,10 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   //                 (R.TangentVector...) -> (T.TangentVector...))
 
   auto &ctx = getASTContext();
-  auto &typeConverter = module.Types;
   if (!whereClauseGenSig)
     whereClauseGenSig = getGenericSignature();
   Lowering::GenericContextScope genericContextScope(
       module.Types, whereClauseGenSig);
-
-  // Given a type, returns its formal SIL parameter info.
-  auto getTangentParameterInfoForOriginalResult = [&](
-      CanType tanType, ResultConvention origResConv) -> SILParameterInfo {
-    auto &tl = typeConverter.getTypeLowering(tanType,
-                                             ResilienceExpansion::Minimal);
-    ParameterConvention conv;
-    switch (origResConv) {
-    case ResultConvention::Owned:
-    case ResultConvention::Autoreleased:
-      conv = tl.isTrivial()
-          ? ParameterConvention::Direct_Unowned
-          : ParameterConvention::Direct_Guaranteed;
-      break;
-    case ResultConvention::Unowned:
-    case ResultConvention::UnownedInnerPointer:
-      conv = ParameterConvention::Direct_Unowned;
-      break;
-    case ResultConvention::Indirect:
-      conv = ParameterConvention::Indirect_In_Guaranteed;
-      break;
-    }
-    return {tanType, conv};
-  };
-
-  // Given a type, returns its formal SIL result info.
-  auto getTangentResultInfoForOriginalParameter = [&](
-      CanType tanType, ParameterConvention origParamConv) -> SILResultInfo {
-    auto &tl = typeConverter.getTypeLowering(tanType,
-                                             ResilienceExpansion::Minimal);
-    ResultConvention conv;
-    switch (origParamConv) {
-    case ParameterConvention::Direct_Owned:
-    case ParameterConvention::Direct_Guaranteed:
-    case ParameterConvention::Direct_Unowned:
-      conv = tl.isTrivial()
-          ? ResultConvention::Unowned
-          : ResultConvention::Owned;
-      break;
-    case ParameterConvention::Indirect_In:
-    case ParameterConvention::Indirect_Inout:
-    case ParameterConvention::Indirect_In_Constant:
-    case ParameterConvention::Indirect_In_Guaranteed:
-    case ParameterConvention::Indirect_InoutAliasable:
-      conv = ResultConvention::Indirect;
-      break;
-    }
-    return {tanType, conv};
-  };
 
   // Helper function testing if we are differentiating wrt this index.
   auto isWrtIndex = [&](unsigned index) -> bool {
@@ -235,7 +185,8 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
           param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance);
       assert(paramTan && "Parameter type does not have a tangent space?");
       differentialParams.push_back(
-          {paramTan->getCanonicalType(), param.getConvention()});
+          {paramTan->getCanonicalType(),
+           ParameterConvention::Indirect_In_Guaranteed});
     }
     SmallVector<SILResultInfo, 8> differentialResults;
     auto &result = getResults()[resultIndex];
@@ -243,7 +194,7 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
         result.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance);
     assert(resultTan && "Result type does not have a tangent space?");
     differentialResults.push_back(
-        {resultTan->getCanonicalType(), result.getConvention()});
+        {resultTan->getCanonicalType(), ResultConvention::Indirect});
     closureType = SILFunctionType::get(
         /*genericSignature*/ nullptr, ExtInfo(), SILCoroutineKind::None,
         ParameterConvention::Direct_Guaranteed, differentialParams, {},
@@ -256,17 +207,16 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
     auto resultTan =
         origRes.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance);
     assert(resultTan && "Result type does not have a tangent space?");
+    auto resultTanTy = resultTan->getCanonicalType();
+    // TODO: Keep owned/guaranteed when converting conventions?
     pullbackParams.push_back(
-        getTangentParameterInfoForOriginalResult(resultTan->getCanonicalType(),
-                                                 origRes.getConvention()));
+        {resultTanTy, ParameterConvention::Indirect_In_Guaranteed});
     SmallVector<SILResultInfo, 8> pullbackResults;
     for (auto &param : wrtParams) {
-      auto paramTan =
-          param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance);
-      assert(paramTan && "Parameter type does not have a tangent space?");
-      pullbackResults.push_back(
-          getTangentResultInfoForOriginalParameter(paramTan->getCanonicalType(),
-                                                   param.getConvention()));
+      auto paramTangentTy =
+          param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance)
+              ->getCanonicalType();
+      pullbackResults.push_back({paramTangentTy, ResultConvention::Indirect});
     }
     closureType = SILFunctionType::get(
         /*genericSignature*/ nullptr, ExtInfo(), SILCoroutineKind::None,

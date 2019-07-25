@@ -1780,6 +1780,17 @@ public:
   // Differentiation thunks
   //===--------------------------------------------------------------------===//
 
+  /// Get or create a thunk for reabstracting linear maps that are not maximally
+  /// reabstracted.
+  ///
+  /// If `reorderSelf` is true, reorder self so that it appears as:
+  /// - The last parameter, for differentials.
+  /// - The last result, for pullbacks.
+  SILFunction *getOrCreateAutoDiffLinearMapThunk(
+      AutoDiffAssociatedFunctionKind assocFnKind,
+      CanSILFunctionType fromType, CanSILFunctionType toType,
+      bool reorderSelf);
+
   /// Get or create a thunk for reordering linear maps that are differentiable
   /// wrt self, so that self appears as:
   /// - The last parameter in the differential.

@@ -18,6 +18,8 @@
 #include "Scope.h"
 #include "swift/AST/DiagnosticsSIL.h"
 #include "swift/AST/GenericEnvironment.h"
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/AST/GenericSignatureBuilder.h"
 #include "swift/AST/Initializer.h"
 #include "swift/AST/NameLookup.h"
 #include "swift/AST/ParameterList.h"
@@ -773,6 +775,26 @@ void SILGenModule::preEmitFunction(SILDeclRef constant,
              });
 }
 
+static CanGenericSignature
+getAssociatedFunctionGenericSignature(SILDifferentiableAttr *attr,
+SILFunction *original) {
+  auto originalGenSig =
+  original->getLoweredFunctionType()->getGenericSignature();
+  if (!originalGenSig)
+    return nullptr;
+  GenericSignatureBuilder builder(original->getASTContext());
+  // Add original generic signature.
+  builder.addGenericSignature(originalGenSig);
+  // Add where clause requirements.
+  auto source =
+  GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+  for (auto &req : attr->getRequirements())
+    builder.addRequirement(req, source, original->getModule().getSwiftModule());
+  return std::move(builder)
+  .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams=*/true)
+  ->getCanonicalSignature();
+}
+
 void SILGenModule::postEmitFunction(SILDeclRef constant,
                                     SILFunction *F) {
   emitLazyConformancesForFunction(F);
@@ -783,49 +805,93 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
 
   // SWIFT_ENABLE_TENSORFLOW
   // Create self-reordering thunks for JVPs/VJPs of `@differentiable` methods.
-  if (constant.hasDecl()) {
+  if (constant.hasDecl() && constant.getAbstractFunctionDecl()) {
     auto *AFD = constant.getAbstractFunctionDecl();
-    // Continue only if original function is an instance method.
-    if (AFD && AFD->isInstanceMember() &&
-        F->getLoweredFunctionType()->hasSelfParam()) {
-      // Jointly iterate over AST `@differentiable` attributes and SIL
-      // `[differentiable]` attributes.
-      auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
-      auto silDiffAttrs = F->getDifferentiableAttrs();
-      for (auto pair : llvm::zip(diffAttrs, silDiffAttrs)) {
-        auto *diffAttr = const_cast<DifferentiableAttr *>(std::get<0>(pair));
-        auto *silDiffAttr = std::get<1>(pair);
-        // Compute autodiff indices.
-        auto paramIndices = diffAttr->getParameterIndices();
-        auto loweredParamIndices = paramIndices->getLowered(
-            getASTContext(),
-            AFD->getInterfaceType()->castTo<AnyFunctionType>());
-        SILAutoDiffIndices indices(/*source*/ 0, loweredParamIndices);
-        assert(silDiffAttr->getIndices() == indices &&
-               "Expected matching @differentiable and [differentiable]");
+    auto origFnType = AFD->getInterfaceType()->castTo<AnyFunctionType>();
+    auto origSilFnType = F->getLoweredFunctionType();
+    // Jointly iterate over AST `@differentiable` attributes and SIL
+    // `[differentiable]` attributes.
+    auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
+    auto silDiffAttrs = F->getDifferentiableAttrs();
+#if 0
+    llvm::errs() << "CONSIDERING THUNK FOR ORIGINAL:\n";
+    constant.dump();
+    origSilFnType->dump();
+#endif
+    for (auto pair : llvm::zip(diffAttrs, silDiffAttrs)) {
+      auto *diffAttr = const_cast<DifferentiableAttr *>(std::get<0>(pair));
+      auto *silDiffAttr = std::get<1>(pair);
+      // Compute autodiff indices.
+      auto paramIndices = diffAttr->getParameterIndices();
+      auto loweredParamIndices = paramIndices->getLowered(
+          getASTContext(), origFnType);
+      SILAutoDiffIndices indices(/*source*/ 0, loweredParamIndices);
+      assert(silDiffAttr->getIndices() == indices &&
+             "Expected matching @differentiable and [differentiable]");
 
-        // If user-defined JVP/VJP is not differentiable wrt self or is only
-        // differentiable wrt self, reordering is not necessary. Continue.
-        auto selfParamIndex =
-            F->getArgumentsWithoutIndirectResults().size() - 1;
-        bool isWrtSelf = indices.isWrtParameter(selfParamIndex);
-        if (!isWrtSelf || indices.parameters->getNumIndices() == 1)
-          continue;
+      // If user-defined JVP/VJP is not differentiable wrt self or is only
+      // differentiable wrt self, reordering is not necessary. Continue.
+      auto selfParamIndex =
+          F->getArgumentsWithoutIndirectResults().size() - 1;
+      bool isWrtSelf = indices.isWrtParameter(selfParamIndex);
+      bool reorderSelf = isWrtSelf && indices.parameters->getNumIndices() > 1;
+      // if (!isWrtSelf || indices.parameters->getNumIndices() == 1)
+      //   continue;
 
-        // Thunk JVP method, if it is defined.
-        if (auto *jvpDecl = diffAttr->getJVPFunction()) {
-          auto *jvpFn = getFunction(SILDeclRef(jvpDecl), NotForDefinition);
-          auto *thunk = getOrCreateAutoDiffAssociatedFunctionReorderingThunk(
+      auto assocFnGenericSig = getAssociatedFunctionGenericSignature(silDiffAttr, F);
+      if (assocFnGenericSig) {
+        llvm::errs() << "ASSOC FN GEN SIG\n";
+        assocFnGenericSig->dump();
+        silDiffAttr->print(llvm::errs()); llvm::errs() << "\n";
+        diffAttr->print(llvm::errs(), AFD); llvm::errs() << "\n";
+      }
+      auto lookUpConformance = LookUpConformanceInModule(M.getSwiftModule());
+      auto expectedJVPType = origSilFnType->getAutoDiffAssociatedFunctionType(
+          indices.parameters, indices.source, /*differentiationOrder*/ 1,
+          AutoDiffAssociatedFunctionKind::JVP, M, lookUpConformance);
+      expectedJVPType = SILFunctionType::get(
+          assocFnGenericSig, expectedJVPType->getExtInfo(),
+          expectedJVPType->getCoroutineKind(),
+          expectedJVPType->getCalleeConvention(), expectedJVPType->getParameters(),
+          {}, expectedJVPType->getResults(), None, expectedJVPType->getASTContext());
+      auto expectedVJPType = origSilFnType->getAutoDiffAssociatedFunctionType(
+          indices.parameters, indices.source, /*differentiationOrder*/ 1,
+          AutoDiffAssociatedFunctionKind::VJP, M, lookUpConformance);
+      expectedVJPType = SILFunctionType::get(
+          assocFnGenericSig, expectedVJPType->getExtInfo(),
+          expectedVJPType->getCoroutineKind(),
+          expectedVJPType->getCalleeConvention(), expectedVJPType->getParameters(),
+          {}, expectedVJPType->getResults(), None, expectedVJPType->getASTContext());
+
+      // Thunk JVP method, if it is defined.
+      if (auto *jvpDecl = diffAttr->getJVPFunction()) {
+        auto *jvpFn = getFunction(SILDeclRef(jvpDecl), NotForDefinition);
+#if 0
+        llvm::errs() << "EXPECTED JVP TYPE\n";
+        expectedJVPType->dump();
+        llvm::errs() << "ACTUAL JVP TYPE\n";
+        jvpFn->getLoweredFunctionType()->dump();
+#endif
+        if (jvpFn->getLoweredFunctionType() != expectedJVPType) {
+          // llvm::errs() << "THUNKING JVP!\n";
+          auto *thunk = getOrCreateAutoDiffAssociatedFunctionThunk(
               F, indices, jvpFn, AutoDiffAssociatedFunctionKind::JVP,
               jvpFn->isSerialized());
           silDiffAttr->setJVPName(thunk->getName());
           // Unset JVP so that TBDGen triggers.
           diffAttr->setJVPFunction(nullptr);
         }
-        // Thunk VJP method, if it is defined.
-        if (auto *vjpDecl = diffAttr->getVJPFunction()) {
-          auto *vjpFn = getFunction(SILDeclRef(vjpDecl), NotForDefinition);
-          auto *thunk = getOrCreateAutoDiffAssociatedFunctionReorderingThunk(
+      }
+      // Thunk VJP method, if it is defined.
+      if (auto *vjpDecl = diffAttr->getVJPFunction()) {
+        auto *vjpFn = getFunction(SILDeclRef(vjpDecl), NotForDefinition);
+        llvm::errs() << "EXPECTED VJP TYPE\n";
+        expectedVJPType->dump();
+        llvm::errs() << "ACTUAL VJP TYPE\n";
+        vjpFn->getLoweredFunctionType()->dump();
+        if (vjpFn->getLoweredFunctionType() != expectedVJPType) {
+          llvm::errs() << "THUNKING VJP FOR " << constant << "!\n";
+          auto *thunk = getOrCreateAutoDiffAssociatedFunctionThunk(
               F, indices, vjpFn, AutoDiffAssociatedFunctionKind::VJP,
               vjpFn->isSerialized());
           silDiffAttr->setVJPName(thunk->getName());
@@ -835,6 +901,7 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
       }
     }
   }
+
   F->verify();
 }
 

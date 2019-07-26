@@ -208,6 +208,21 @@ LeakCheckingTests.testWithLeakChecking("ClassMethods") {
   expectEqual((3, 3), classValueWithGradient(SubOverrideCustomDerivatives()))
 }
 
+LeakCheckingTests.testWithLeakChecking("ParameterConventionLeakChecking") {
+  struct Foo : Differentiable {
+    var base: [Float]
+    @differentiable(vjp: vjpInit)
+    init(_ base: [Float]) {
+      self.base = base
+    }
+    static func vjpInit(_ base: [Float]) -> (Foo, (Foo.TangentVector) -> Array<Float>.TangentVector) {
+      return (Foo(base), { v in v.base })
+    }
+  }
+  let v = Foo.TangentVector(base: [10])
+  expectEqual([10], pullback(at: [1], in: { x in Foo.init(x) })(v))
+}
+
 LeakCheckingTests.testWithLeakChecking("ClosureCaptureLeakChecking") {
   do {
     var model = ExampleLeakModel()

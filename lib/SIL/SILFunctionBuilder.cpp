@@ -77,7 +77,6 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
   // - Default argument generator functions.
   // - Thunks. Those are currently handled in SILGenThunk.cpp.
   if ((!isa<AccessorDecl>(decl) || cast<AccessorDecl>(decl)->isGetter()) &&
-      constant.kind != SILDeclRef::Kind::DefaultArgGenerator &&
       !constant.autoDiffAssociatedFunctionIdentifier &&
       !constant.isStoredPropertyInitializer() &&
       !constant.isThunk()) {

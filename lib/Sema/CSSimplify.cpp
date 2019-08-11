@@ -6166,8 +6166,40 @@ ConstraintSystem::simplifyApplicableFnConstraint(
   }
 
   // Handle applications of types with `callAsFunction` methods.
+  // TODO(dan-zheng): remove debug dumping.
+  // TODO(dan-zheng): apply suggestions by @xedin:
+  // - Use `desugar2` as base for member constraint with `callAsFunction` name and allocate new type var
+  // - Use new type var in place of `secondType` to re-create applicable fn
+  // - Add new `implicit call` path element
   if (desugar2->mayHaveMembers()) {
     auto &ctx = getASTContext();
+
+    if (llvm::any_of(lookupMember(desugar2, DeclName(ctx.Id_callAsFunction)),
+                     [](LookupResultEntry entry) {
+                       return isa<FuncDecl>(entry.getValueDecl());
+                     })) {
+      // NOTE: Are constraint locator usages (`memberLoc` and `locator`) correct?
+      auto memberLoc = getConstraintLocator(
+          outerLocator.withPathElement(ConstraintLocator::Member));
+      // Add a `callAsFunction` member constraint, binding the member type to a
+      // type variable.
+      auto memberTy = createTypeVariable(memberLoc, TVO_CanBindToLValue |
+                                                    TVO_CanBindToNoEscape |
+                                                    TVO_CanBindToInOut);
+      addValueMemberConstraint(desugar2, DeclName(ctx.Id_callAsFunction),
+                               memberTy, DC, FunctionRefKind::SingleApply,
+                               // NOTE: Is empty `outerAlternatives` corrrect?
+                               /*outerAlternatives*/ {}, locator);
+      llvm::errs() << "TYPE1:\n"; func1->dump();
+      llvm::errs() << "TYPE2:\n"; desugar2->dump();
+      // Add new applicable function constraint based on the member type.
+      addConstraint(ConstraintKind::ApplicableFunction, func1, memberTy, locator);
+      llvm::errs() << "CONSTRAINT SYSTEM:\n";
+      dump();
+      return SolutionKind::Solved;
+    }
+
+#if 0
     // Get all `callAsFunction` methods of the nominal type.
     // Note: Consider caching `callAsFunction` methods.
     SmallVector<FuncDecl *, 4> callMethods;
@@ -6217,6 +6249,7 @@ ConstraintSystem::simplifyApplicableFnConstraint(
 
       return SolutionKind::Solved;
     }
+#endif
   }
 
   // Handle applications of @dynamicCallable types.

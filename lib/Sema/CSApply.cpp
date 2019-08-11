@@ -7042,12 +7042,20 @@ Expr *ExprRewriter::finishApply(ApplyExpr *apply, Type openedType,
       llvm_unreachable("Unhandled DeclTypeCheckingSemantics in switch.");
     };
 
+  // TODO(dan-zheng): remove debug dumping.
+  llvm::errs() << "CSAPPLY!\n";
+  apply->dump();
+  llvm::errs() << "SOLUTION!\n";
+  solution.dump();
+
   // Resolve `callAsFunction` and `@dynamicCallable` applications.
   auto applyFunctionLoc =
       locator.withPathElement(ConstraintLocator::ApplyFunction);
   if (auto selected = solution.getOverloadChoiceIfAvailable(
           cs.getConstraintLocator(applyFunctionLoc))) {
     auto *method = dyn_cast<FuncDecl>(selected->choice.getDecl());
+    llvm::errs() << "FOUND METHOD!\n";
+    method->dump();
     auto methodType =
         simplifyType(selected->openedType)->getAs<AnyFunctionType>();
     if (method && methodType) {

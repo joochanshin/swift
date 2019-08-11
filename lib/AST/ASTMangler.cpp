@@ -372,47 +372,89 @@ std::string ASTMangler::mangleReabstractionThunkHelper(
 std::string ASTMangler::mangleAutoDiffAssociatedFunctionHelper(
     StringRef name, AutoDiffAssociatedFunctionKind kind,
     const SILAutoDiffIndices &indices) {
-  // TODO(TF-20): Make the mangling scheme robust.
   // TODO(TF-680): Mangle `@differentiable` atttribute requirements as well.
   beginManglingWithoutPrefix();
 
-  Buffer << "AD__" << name << '_';
+  Demangler D;
+  auto topLevel = D.createNode(Node::Kind::Global);
+  NodePointer assocFn;
   switch (kind) {
   case AutoDiffAssociatedFunctionKind::JVP:
-    Buffer << "_jvp_";
+    assocFn = D.createNode(Node::Kind::AutoDiffJVP);
     break;
   case AutoDiffAssociatedFunctionKind::VJP:
-    Buffer << "_vjp_";
+    assocFn = D.createNode(Node::Kind::AutoDiffVJP);
     break;
   }
-  Buffer << indices.mangle();
+  topLevel->addChild(assocFn, D);
 
-  auto result = Storage.str().str();
-  Storage.clear();
-  return result;
+  // This logic is copied from `SpecializationMangler::finalize`.
+  auto funcTopLevel = D.demangleSymbol(name);
+  if (!funcTopLevel) {
+    funcTopLevel = D.createNode(Node::Kind::Global);
+    funcTopLevel->addChild(D.createNode(Node::Kind::Identifier, name), D);
+  }
+  assert(funcTopLevel);
+  for (auto funcChild : *funcTopLevel)
+    assocFn->addChild(funcChild, D);
+
+  auto paramIndices =
+      D.createNode(Node::Kind::AutoDiffParameterIndices);
+  for (unsigned i : indices.parameters->getIndices()) {
+    auto paramIdx = D.createNode(Node::Kind::Index, i);
+    paramIndices->addChild(paramIdx, D);
+  }
+  assocFn->addChild(paramIndices, D);
+  auto resultIdx =
+      D.createNode(Node::Kind::AutoDiffResultIndex, indices.source);
+  assocFn->addChild(resultIdx, D);
+  auto mangled = Demangle::mangleNode(topLevel);
+  verify(mangled);
+  return mangled;
 }
 
 std::string ASTMangler::mangleAutoDiffLinearMapHelper(
     StringRef name, AutoDiffLinearMapKind kind,
     const SILAutoDiffIndices &indices) {
-  // TODO(TF-20): Make the mangling scheme robust.
   // TODO(TF-680): Mangle `@differentiable` atttribute requirements as well.
   beginManglingWithoutPrefix();
 
-  Buffer << "AD__" << name << '_';
+  Demangler D;
+  auto topLevel = D.createNode(Node::Kind::Global);
+  NodePointer linearMap;
   switch (kind) {
   case AutoDiffLinearMapKind::Differential:
-    Buffer << "_differential_";
+    linearMap = D.createNode(Node::Kind::AutoDiffDifferential);
     break;
   case AutoDiffLinearMapKind::Pullback:
-    Buffer << "_pullback_";
+    linearMap = D.createNode(Node::Kind::AutoDiffPullback);
     break;
   }
-  Buffer << indices.mangle();
+  topLevel->addChild(linearMap, D);
 
-  auto result = Storage.str().str();
-  Storage.clear();
-  return result;
+  // This logic is copied from `SpecializationMangler::finalize`.
+  auto funcTopLevel = D.demangleSymbol(name);
+  if (!funcTopLevel) {
+    funcTopLevel = D.createNode(Node::Kind::Global);
+    funcTopLevel->addChild(D.createNode(Node::Kind::Identifier, name), D);
+  }
+  assert(funcTopLevel);
+  for (auto funcChild : *funcTopLevel)
+    linearMap->addChild(funcChild, D);
+
+  auto paramIndices =
+      D.createNode(Node::Kind::AutoDiffParameterIndices);
+  for (unsigned i : indices.parameters->getIndices()) {
+    auto paramIdx = D.createNode(Node::Kind::Index, i);
+    paramIndices->addChild(paramIdx, D);
+  }
+  linearMap->addChild(paramIndices, D);
+  auto resultIdx =
+      D.createNode(Node::Kind::AutoDiffResultIndex, indices.source);
+  linearMap->addChild(resultIdx, D);
+  auto mangled = Demangle::mangleNode(topLevel);
+  verify(mangled);
+  return mangled;
 }
 
 std::string ASTMangler::mangleTypeForDebugger(Type Ty, const DeclContext *DC) {

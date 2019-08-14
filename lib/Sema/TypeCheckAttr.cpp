@@ -2773,6 +2773,10 @@ static bool checkFunctionSignature(
   required = dyn_cast<AnyFunctionType>(required->getCanonicalType());
   candidateFnTy = dyn_cast<AnyFunctionType>(candidateFnTy->getCanonicalType());
 
+  llvm::errs() << "REQUIRED VS CANDIDATE!\n";
+  required->dump();
+  candidateFnTy->dump();
+
   // Check that generic signatures match.
   auto requiredGenSig = required.getOptGenericSignature();
   auto candidateGenSig = candidateFnTy.getOptGenericSignature();
@@ -3426,6 +3430,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
             checkedWrtParamIndices, /*resultIndex*/ 0,
             /*differentiationOrder*/ 1, AutoDiffAssociatedFunctionKind::VJP,
             lookupConformance, whereClauseGenSig, /*makeSelfParamFirst*/ true);
+    assert(!expectedVJPFnTy->findUnresolvedDependentMemberType());
 
     auto isValidVJP = [&](FuncDecl *vjpCandidate) {
       TC.validateDeclForNameLookup(vjpCandidate);

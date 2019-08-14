@@ -2270,7 +2270,10 @@ llvm::Value *IRGenFunction::emitTypeMetadataRef(CanType type) {
 MetadataResponse
 IRGenFunction::emitTypeMetadataRef(CanType type,
                                    DynamicMetadataRequest request) {
+  llvm::errs() << "TYPE VS RUNTIME REIFIED TYPE\n";
+  type->dump();
   type = getRuntimeReifiedType(IGM, type);
+  type->dump();
 
   if (type->hasArchetype() ||
       isTypeMetadataAccessTrivial(IGM, type)) {

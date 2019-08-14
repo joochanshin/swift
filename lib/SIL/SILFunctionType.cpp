@@ -289,8 +289,15 @@ CanSILFunctionType SILFunctionType::getAutoDiffAssociatedFunctionType(
   case AutoDiffAssociatedFunctionKind::VJP: {
     SmallVector<SILParameterInfo, 8> pullbackParams;
     auto &origRes = getResults()[resultIndex];
+    auto origResType = origRes.getType();
+    if (assocFnGenSig)
+      origResType = origResType.subst(QuerySubstitutionMap{assocFnGenSig->getIdentitySubstitutionMap()}, lookupConformance)->getCanonicalType();
+    auto resultTan =
+        origResType->getAutoDiffAssociatedTangentSpace(lookupConformance);
+#if 0
     auto resultTan =
         origRes.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance);
+#endif
     assert(resultTan && "Result type does not have a tangent space?");
     pullbackParams.push_back(
         getTangentParameterInfoForOriginalResult(resultTan->getCanonicalType(),

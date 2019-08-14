@@ -664,6 +664,13 @@ void TypeChecker::validateGenericFuncOrSubscriptSignature(
 
   func ? func->computeType() : subscr->computeType();
 
+  /*
+  llvm::errs() << "FUNC DUMP 2\n";
+  func->dump();
+  func->getInterfaceType()->dump();
+  func->getInterfaceType()->getCanonicalType()->dump();
+  */
+
   // Make sure that there are no unresolved dependent types in the
   // generic signature.
   assert(!decl->getInterfaceType()->findUnresolvedDependentMemberType());

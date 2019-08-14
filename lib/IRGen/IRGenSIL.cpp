@@ -2341,6 +2341,8 @@ void IRGenSILFunction::visitFullApplySite(FullApplySite site) {
     }
   }
 
+  llvm::errs() << "IRGenSILFunction::visitFullApplySite\n";
+  site.dump();
   Explosion llArgs;    
   WitnessMetadata witnessMetadata;
   CallEmission emission =

@@ -4574,6 +4574,11 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
   }
 
   Type originalResult = curryLevels.back()->getResult();
+  auto getTangentType = [&](Type ty) {
+    if (whereClauseGenSig)
+      ty = ty.subst(QuerySubstitutionMap{whereClauseGenSig->getIdentitySubstitutionMap()}, lookupConformance);
+    return ty->getAutoDiffAssociatedTangentSpace(lookupConformance)->getType();
+  };
 
   // Build the closure type, which is different depending on whether this is a
   // JVP or VJP.
@@ -4620,10 +4625,20 @@ AnyFunctionType *AnyFunctionType::getAutoDiffAssociatedFunctionType(
                   ->getType()));
     } else {
       assert(resultIndex == 0 && "resultIndex out of bounds");
+      /*
+      llvm::errs() << "ORIGINAL RESULT:\n";
+      originalResult->dump();
+      if (whereClauseGenSig)
+        originalResult = originalResult.subst(QuerySubstitutionMap{whereClauseGenSig->getIdentitySubstitutionMap()}, lookupConformance);
+       */
+#if 0
       pullbackParams.push_back(
           AnyFunctionType::Param(originalResult
               ->getAutoDiffAssociatedTangentSpace(lookupConformance)
                   ->getType()));
+#endif
+      pullbackParams.push_back(
+          AnyFunctionType::Param(getTangentType(originalResult)));
     }
 
     SmallVector<TupleTypeElt, 8> pullbackResults;

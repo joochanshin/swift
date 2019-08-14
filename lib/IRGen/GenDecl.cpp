@@ -3331,6 +3331,11 @@ IRGenModule::getAddrOfObjCResilientClassStub(ClassDecl *classDecl,
 llvm::Function *
 IRGenModule::getAddrOfTypeMetadataAccessFunction(CanType type,
                                               ForDefinition_t forDefinition) {
+  llvm::errs() << "IRGenModule::getAddrOfTypeMetadataAccessFunction\n";
+  type->dump();
+  if (!(!type->hasArchetype() && !type->hasTypeParameter())) {
+    llvm::errs() << "PROBLEMATIC TYPE!\n";
+  }
   assert(!type->hasArchetype() && !type->hasTypeParameter());
   NominalTypeDecl *Nominal = type->getNominalOrBoundGenericNominal();
   IRGen.noteUseOfTypeMetadata(Nominal);

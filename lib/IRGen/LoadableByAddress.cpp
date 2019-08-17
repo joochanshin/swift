@@ -232,6 +232,14 @@ static bool modNonFuncTypeResultType(GenericEnvironment *genEnv,
   if (isLargeLoadableType(genEnv, resultStorageType, Mod)) {
     return true;
   }
+#if 0
+  // SWIFT_ENABLE_TENSORFLOW
+  // Handle multiple results.
+  for (auto result : loweredTy->getResults())
+    if (isLargeLoadableType(genEnv, result.getSILStorageType(), Mod))
+      return true;
+  // SWIFT_ENABLE_TENSORFLOW END
+#endif
   return false;
 }
 
@@ -261,6 +269,15 @@ LargeSILTypeMapper::getNewResults(GenericEnvironment *GenericEnv,
       newResults.push_back(result);
     }
   }
+#if 0
+  llvm::errs() << "ORIG RESULTS\n";
+  for (auto res : origResults)
+    res.dump();
+  llvm::errs() << "NEW RESULTS\n";
+  for (auto res : newResults)
+    res.dump();
+  llvm::errs() << "\n";
+#endif
   return newResults;
 }
 
@@ -316,6 +333,10 @@ bool LargeSILTypeMapper::shouldTransformResults(GenericEnvironment *genEnv,
   if (loweredTy->getNumResults() != 1) {
     auto resultType = loweredTy->getAllResultsType();
     auto newResultType = getNewSILType(genEnv, resultType, Mod);
+    llvm::errs() << "LargeSILTypeMapper::shouldTransformResults, more than one result, transform? " << (resultType != newResultType) << "\n";
+    loweredTy->dump();
+    resultType.dump();
+    newResultType.dump();
     return resultType != newResultType;
   }
 
@@ -381,14 +402,23 @@ SILParameterInfo LargeSILTypeMapper::getNewParameter(GenericEnvironment *env,
   } else if (isLargeLoadableType(env, storageType, IGM)) {
     if (param.getConvention() == ParameterConvention::Direct_Guaranteed)
       return SILParameterInfo(storageType.getASTType(),
-                               ParameterConvention::Indirect_In_Guaranteed);
+      // SWIFT_ENABLE_TENSORFLOW
+                               ParameterConvention::Indirect_In_Guaranteed,
+                              param.getDifferentiability());
+      // SWIFT_ENABLE_TENSORFLOW_END
     else
       return SILParameterInfo(storageType.getASTType(),
-                               ParameterConvention::Indirect_In_Constant);
+      // SWIFT_ENABLE_TENSORFLOW
+                               ParameterConvention::Indirect_In_Constant,
+                              param.getDifferentiability());
+      // SWIFT_ENABLE_TENSORFLOW_END
   } else {
     auto newType = getNewSILType(env, storageType, IGM);
     return SILParameterInfo(newType.getASTType(),
-                            param.getConvention());
+      // SWIFT_ENABLE_TENSORFLOW
+                            param.getConvention(),
+                            param.getDifferentiability());
+      // SWIFT_ENABLE_TENSORFLOW_END
   }
 }
 
@@ -454,6 +484,13 @@ SILType LargeSILTypeMapper::getNewSILType(GenericEnvironment *GenericEnv,
   // See if the type is already in the cache:
   auto typePair = std::make_pair(GenericEnv, storageType);
   if (oldToNewTypeMap.find(typePair) != oldToNewTypeMap.end()) {
+#if 0
+    if (storageType.getAsString() == "$Large") {
+      llvm::errs() << "LargeSILTypeMapper::getNewSILType: FOUND TYPE PAIR\n";
+      storageType.dump();
+      oldToNewTypeMap[typePair].dump();
+    }
+#endif
     return oldToNewTypeMap[typePair];
   }
 
@@ -462,11 +499,15 @@ SILType LargeSILTypeMapper::getNewSILType(GenericEnvironment *GenericEnv,
     nonOptionalType = optType;
   }
   if (nonOptionalType.getAs<TupleType>()) {
+    llvm::errs() << "GETTING NEW TUPLE TYPE: ORIG\n";
+    nonOptionalType.dump();
     SILType newSILType =
         getNewTupleType(GenericEnv, Mod, nonOptionalType, storageType);
     auto typeToRet = isLargeLoadableType(GenericEnv, newSILType, Mod)
                          ? newSILType.getAddressType()
                          : newSILType;
+    llvm::errs() << "GETTING NEW TUPLE TYPE: NEW\n";
+    typeToRet.dump();
     oldToNewTypeMap[typePair] = typeToRet;
     return typeToRet;
   }
@@ -484,6 +525,10 @@ SILType LargeSILTypeMapper::getNewSILType(GenericEnvironment *GenericEnv,
   } else if (isLargeLoadableType(GenericEnv, storageType, Mod)) {
     newSILType = storageType.getAddressType();
   }
+#if 0
+  llvm::errs() << "LargeSILTypeMapper::getNewSILType: IS LARGE LOADABLE? " << isLargeLoadableType(GenericEnv, storageType, Mod) << "\n";
+  storageType.dump();
+#endif
   oldToNewTypeMap[typePair] = newSILType;
   return newSILType;
 }
@@ -711,6 +756,16 @@ void LargeValueVisitor::mapValueStorage() {
         visitDeallocInst(DI);
         break;
       }
+#if 0
+      // SWIFT_ENABLE_TENSORFLOW
+      case SILInstructionKind::AutoDiffFunctionExtractInst: {
+        auto *ADFEI = cast<AutoDiffFunctionExtractInst>(currIns);
+        // visitDeallocInst(DI);
+        ADFEI->dump();
+        assert(false);
+        break;
+      }
+#endif
       default: {
         assert(!ApplySite::isa(currIns) && "Did not expect an ApplySite");
         assert(!isa<MethodInst>(currIns) && "Unhandled Method Inst");
@@ -727,6 +782,14 @@ static bool modifiableApply(ApplySite applySite, irgen::IRGenModule &Mod) {
   if (applySite.getSubstCalleeType()->getLanguage() == SILFunctionLanguage::C) {
     return false;
   }
+#if 0
+  for (auto result : applySite.getInstruction()->getResults()) {
+    for (auto use : result->getUses()) {
+      if (isa<AutoDiffFunctionInst>(use->getUser()))
+        return false;
+    }
+  }
+#endif
   SILValue callee = applySite.getCallee();
   if (auto site = ApplySite::isa(callee)) {
     return modifiableApply(site, Mod);
@@ -1603,6 +1666,10 @@ void LoadableStorageAllocation::allocateForArg(SILValue value) {
 AllocStackInst *
 LoadableStorageAllocation::allocateForApply(SILInstruction *apply,
                                             SILType type) {
+  if (apply->getFunction()->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+    llvm::errs() << "LoadableStorageAllocation::allocateForApply\n";
+    apply->dump();
+  }
   SILBuilderWithScope allocBuilder(&*pass.F->begin());
   auto *allocInstr = allocBuilder.createAllocStack(apply->getLoc(), type);
 
@@ -2306,6 +2373,13 @@ static bool rewriteFunctionReturn(StructLoweringState &pass) {
 }
 
 void LoadableByAddress::runOnFunction(SILFunction *F) {
+#if 0
+  if (F->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+    llvm::errs() << "HELLO SKIPPING THIS FUNCTION!\n";
+    return;
+  }
+#endif
+
   CanSILFunctionType funcType = F->getLoweredFunctionType();
   IRGenModule *currIRMod = getIRGenModule()->IRGen.getGenModule(F);
 
@@ -2321,6 +2395,7 @@ void LoadableByAddress::runOnFunction(SILFunction *F) {
     }
     if (MapperCache.shouldTransformFunctionType(genEnv, loweredTy,
                                                 *currIRMod)) {
+      llvm::errs() << "MODFUNCS INSERT: SHOULD TRANSFORM FUNCTION: " << F->getName() << "\n";
       modFuncs.insert(F);
     }
     return;
@@ -2338,9 +2413,17 @@ void LoadableByAddress::runOnFunction(SILFunction *F) {
   }
 
   LLVM_DEBUG(llvm::dbgs() << "\nREWRITING: " << F->getName(); F->dump());
+  if (F->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+    llvm::errs() << "WOAH, ABOUT TO REWRITE FUNCTION\n";
+    F->dump();
+  }
 
   // Rewrite instructions relating to the loadable struct.
   rewriteFunction(pass, allocator);
+  if (F->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+    llvm::errs() << "WOAH, REWROTE FUNCTION\n";
+    F->dump();
+  }
 
   invalidateAnalysis(F, SILAnalysis::InvalidationKind::Instructions);
 
@@ -2350,6 +2433,15 @@ void LoadableByAddress::runOnFunction(SILFunction *F) {
        !pass.largeLoadableArgs.empty() ||
        !pass.funcSigArgs.empty() ||
        pass.hasLargeLoadableYields())) {
+    llvm::errs() << "MODFUNCS INSERT: MODIFIED FUNC ARGS: " << F->getName() << "\n";
+    llvm::errs() << "LOADABLE ARGS: " << pass.largeLoadableArgs.size() << "\n";
+    for (auto loadableArg : pass.largeLoadableArgs) {
+      loadableArg->dump();
+    }
+    llvm::errs() << "FUNC SIG ARGS: " << pass.funcSigArgs.size() << "\n";
+    for (auto arg : pass.funcSigArgs) {
+      arg->dump();
+    }
     modFuncs.insert(F);
   }
   // If we modified any applies - add them to the global list for recreation
@@ -2441,6 +2533,29 @@ void LoadableByAddress::recreateSingleApply(
            allApplyRetToAllocMap.end());
     auto newAlloc = allApplyRetToAllocMap.find(applyInst)->second;
     callArgs.push_back(newAlloc);
+    if (applyInst->getFunction()->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+      llvm::errs() << "LoadableByAddress::recreateSingleApply FOUND CALL ARG!\n\n";
+      newAlloc->dump();
+    }
+  }
+
+  if (dyn_cast<AutoDiffFunctionExtractInst>(callee)) {
+    // TODO: Special handling here to prevent crashes?
+  }
+
+  if (applyInst->getFunction()->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+    auto cond1 = (isa<ApplyInst>(applyInst) || isa<TryApplyInst>(applyInst));
+    auto cond2 = modNonFuncTypeResultType(genEnv, origSILFunctionType, *currIRMod);
+    auto cond3 = modifiableApply(applySite, *getIRGenModule());
+    if (!((isa<ApplyInst>(applyInst) || isa<TryApplyInst>(applyInst)) &&
+        modNonFuncTypeResultType(genEnv, origSILFunctionType, *currIRMod) &&
+        modifiableApply(applySite, *getIRGenModule()))) {
+      llvm::errs() << "LoadableByAddress::recreateSingleApply DID NOT FIND CALL ARG!\n\n";
+      applyInst->dump();
+      llvm::errs() << "cond1: " << cond1 << "\n";
+      llvm::errs() << "cond2: " << cond2 << "\n";
+      llvm::errs() << "cond3: " << cond3 << "\n";
+    }
   }
 
   // Collect arg operands
@@ -2536,6 +2651,10 @@ bool LoadableByAddress::recreateApply(
     SILInstruction &I, SmallVectorImpl<SILInstruction *> &Delete) {
   if (!modApplies.count(&I))
     return false;
+  if (I.getFunction()->getName() == "AD__$s4lstm8LSTMCellVyxG10TensorFlow6ModuleAaeFP14callAsFunctiony6OutputQz5InputQzFTW_vjp_US") {
+    llvm::errs() << "LoadableByAddress::recreateApply\n";
+    I.dump();
+  }
   recreateSingleApply(&I, Delete);
   modApplies.remove(&I);
   return true;
@@ -2689,7 +2808,8 @@ bool LoadableByAddress::recreateConvInstr(SILInstruction &I,
       genEnv, currSILFunctionType, *currIRMod);
   SILType newType = SILType::getPrimitiveObjectType(newFnType);
   SILBuilderWithScope convBuilder(convInstr);
-  SingleValueInstruction *newInstr = nullptr;
+  // SingleValueInstruction *newInstr = nullptr;
+  SILValue newInstr = nullptr;
   switch (convInstr->getKind()) {
   case SILInstructionKind::ThinToThickFunctionInst: {
     auto instr = cast<ThinToThickFunctionInst>(convInstr);
@@ -2742,8 +2862,26 @@ bool LoadableByAddress::recreateConvInstr(SILInstruction &I,
     newInstr = convBuilder.createAutoDiffFunctionExtract(
         instr->getLoc(), instr->getExtractee(),
         instr->getDifferentiationOrder(), instr->getFunctionOperand());
+    auto diffFuncOperand = instr->getFunctionOperand();
+    llvm::errs() << "\n\nDIFF FUNC VS NEW EXTRACT FUNC TYPE vs OLD EXTRACT TYPE\n";
+    diffFuncOperand->getType().dump();
+    newInstr->getType().dump();
+    convInstr->getType().dump();
+    llvm::errs() << "\nOLD EXTRACT USERS:\n";
+    for (auto use : instr->getUses()) {
+      auto *user = use->getUser();
+      auto *apply = dyn_cast<ApplyInst>(user);
+      if (!apply)
+        continue;
+      llvm::errs() << "FOUND APPLY!\n";
+      apply->dump();
+      // allocateAndSetForInstResult(<#StructLoweringState &pass#>, <#SILValue instResult#>, <#SILInstruction *inst#>)
+    }
+    // CHECK WHETHER ASSOC FN ORIG RESULT IS LARGE, IF IT IS, THEN THUNK
+    // newInstr = SILUndef::get(newInstr->getType(), convBuilder.getFunction());
     break;
   }
+  // SWIFT_ENABLE_TENSORFLOW END
   default:
     llvm_unreachable("Unexpected conversion instruction");
   }
@@ -2787,6 +2925,10 @@ void LoadableByAddress::updateLoweredTypes(SILFunction *F) {
   }
   auto newFuncTy =
       MapperCache.getNewSILFunctionType(genEnv, funcType, *currIRMod);
+  llvm::errs() << "\n" << F->getName() << ": old vs new lowered type\n";
+  funcType->dump();
+  newFuncTy->dump();
+  llvm::errs() << "\n";
   F->rewriteLoweredTypeUnsafe(newFuncTy);
 }
 
@@ -2802,6 +2944,13 @@ void LoadableByAddress::run() {
   if (modFuncs.empty() && modApplies.empty()) {
     return;
   }
+
+#if 0
+  llvm::errs() << "MODIFIED FUNCTIONS:\n";
+  for (auto modFunc : modFuncs) {
+    llvm::errs() << "MOD FUNC: " << modFunc->getName() << "\n";
+  }
+#endif
 
   // Scan the module for all references of the modified functions:
   llvm::SetVector<FunctionRefBaseInst *> funcRefs;
@@ -2836,6 +2985,15 @@ void LoadableByAddress::run() {
               case SILInstructionKind::ThinToThickFunctionInst:
               case SILInstructionKind::AutoDiffFunctionInst:
               case SILInstructionKind::AutoDiffFunctionExtractInst: {
+              // SWIFT_ENABLE_TENSORFLOW END
+                if (currInstr->getKind() == SILInstructionKind::AutoDiffFunctionExtractInst ||
+                    currInstr->getKind() == SILInstructionKind::AutoDiffFunctionInst
+                    ) {
+                  llvm::errs() << "FOUND ADFI OR ADFEI!\n";
+                  currInstr->dump();
+                  llvm::errs() << "ORIGINAL FRI!\n";
+                  FRI->dump();
+                }
                 conversionInstrs.insert(
                               cast<SingleValueInstruction>(currInstr));
                 break;
@@ -2902,10 +3060,12 @@ void LoadableByAddress::run() {
           if (modApplies.count(PAI) == 0) {
             modApplies.insert(PAI);
           }
+        // SWIFT_ENABLE_TENSORFLOW
         } else if (auto *ADFI = dyn_cast<AutoDiffFunctionInst>(&I)) {
           conversionInstrs.insert(ADFI);
         } else if (auto *ADFEI = dyn_cast<AutoDiffFunctionExtractInst>(&I)) {
           conversionInstrs.insert(ADFEI);
+        // SWIFT_ENABLE_TENSORFLOW END
         }
       }
     }

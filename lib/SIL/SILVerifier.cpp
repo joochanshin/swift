@@ -5213,6 +5213,15 @@ void SILVTable::verify(const SILModule &M) const {
     }
 
     if (M.getStage() != SILStage::Lowered) {
+#if 0
+      llvm::errs() << "ENTRY METHOD: " << entry.Method << "\n";
+      decl->getInterfaceType()->dump();
+      entry.Implementation->getLoweredFunctionType()->dump();
+#endif
+      if (!baseInfo.getSILType().castTo<SILFunctionType>()->isABICompatibleWith(entry.Implementation->getLoweredFunctionType()).isCompatible()) {
+        llvm::errs() << "WE HAVE A PROBLEM!\n";
+        entry.Implementation->dump();
+      }
       SILVerifier(*entry.Implementation)
           .requireABICompatibleFunctionTypes(
               baseInfo.getSILType().castTo<SILFunctionType>(),

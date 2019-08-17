@@ -90,9 +90,11 @@ deriveBodyKeyPathIterable_allKeyPaths(AbstractFunctionDecl *funcDecl, void *) {
     // FIXME(TF-123): Skip generating keypaths to `@differentiable` functions
     // because of SILGen crash. Robust fix involves changing
     // `createAutoDiffThunk`.
+    /*
     if (auto fnType = member->getType()->getAs<AnyFunctionType>())
       if (fnType->getExtInfo().isDifferentiable())
         continue;
+    */
 
     auto *dotExpr = new (C)
         UnresolvedDotExpr(nominalTypeExpr, SourceLoc(), member->getFullName(),
@@ -136,7 +138,7 @@ deriveKeyPathIterable_allKeyPaths(DerivedConformance &derived) {
   // Maybe add `@inlinable` to the `allKeyPaths` declaration.
   if (llvm::all_of(nominal->getStoredProperties(), [](VarDecl *vd) {
     return vd->getFormalAccessScope(
-        nullptr, /*treatUsableFromInlineAsPublic*/ true).isPublic();
+        nullptr, /*treatUsableFromInlineAsPublic*/ false).isPublic();
   })) {
     maybeMarkAsInlinable(derived, allKeyPathsDecl);
   }

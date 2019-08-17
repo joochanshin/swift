@@ -2109,6 +2109,11 @@ static void emitApplyArgument(IRGenSILFunction &IGF,
 
   // Otherwise, it's an explosion, which we may need to translate,
   // both in terms of explosion level and substitution levels.
+  if (!arg->getType().isObject()) {
+    llvm::errs() << "FAILED ASSERTION: !arg->getType().isObject()\n";
+    arg->dump();
+    arg->getFunction()->dump();
+  }
   assert(arg->getType().isObject());
 
   // Fast path: avoid an unnecessary temporary explosion.
@@ -2326,6 +2331,18 @@ void IRGenSILFunction::visitFullApplySite(FullApplySite site) {
 
   auto args = site.getArguments();
   SILFunctionConventions origConv(origCalleeType, getSILModule());
+  if (origConv.getNumSILArguments() != args.size()) {
+    llvm::errs() << "\nIRGenSIL FAILURE!!\n";
+    llvm::errs() << "origConv.getNumSILArguments(): " << origConv.getNumSILArguments() << "\n";
+    for (unsigned i : range(origConv.getNumSILArguments())) {
+      origConv.getSILArgumentType(i).dump();
+    }
+    llvm::errs() << "args.size(): " << args.size() << "\n";
+    for (auto arg : args) {
+      arg->dump();
+    }
+    site.getFunction()->dump();
+  }
   assert(origConv.getNumSILArguments() == args.size());
 
   // Extract 'self' if it needs to be passed as the context parameter.

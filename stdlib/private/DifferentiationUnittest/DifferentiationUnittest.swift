@@ -65,12 +65,20 @@ public struct Tracked<T> {
   }
   private var handle: Box
 
-  @differentiable(vjp: _vjpInit where T : Differentiable, T == T.TangentVector)
+  @differentiable(
+    vjp: _vjpInit
+    where T : Differentiable, T == T.AllDifferentiableVariables,
+          T == T.TangentVector
+  )
   public init(_ value: T) {
     self.handle = Box(value)
   }
 
-  @differentiable(vjp: _vjpValue where T : Differentiable, T == T.TangentVector)
+  @differentiable(
+    vjp: _vjpValue
+    where T : Differentiable, T == T.AllDifferentiableVariables,
+          T == T.TangentVector
+  )
   public var value: T {
     get { handle.value }
     set { handle.value = newValue }
@@ -166,11 +174,17 @@ extension Tracked : Strideable where T : Strideable, T.Stride == T.Stride.Magnit
 }
 
 // For now, `T` must be restricted to trivial types (like `Float` or `Tensor`).
-extension Tracked : Differentiable where T : Differentiable, T == T.TangentVector {
+extension Tracked : Differentiable
+  where T : Differentiable, T == T.AllDifferentiableVariables,
+        T == T.TangentVector
+{
+  public typealias AllDifferentiableVariables = Tracked<T.AllDifferentiableVariables>
   public typealias TangentVector = Tracked<T.TangentVector>
 }
 
-extension Tracked where T : Differentiable, T == T.TangentVector {
+extension Tracked where T : Differentiable, T == T.AllDifferentiableVariables,
+                        T == T.TangentVector
+{
   @usableFromInline
   internal static func _vjpInit(_ value: T)
       -> (value: Self, pullback: (Self.TangentVector) -> (T.TangentVector)) {
@@ -183,7 +197,9 @@ extension Tracked where T : Differentiable, T == T.TangentVector {
   }
 }
 
-extension Tracked where T : Differentiable, T == T.TangentVector {
+extension Tracked where T : Differentiable, T == T.AllDifferentiableVariables,
+                        T == T.TangentVector
+{
   @usableFromInline
   @differentiating(+)
   internal static func _vjpAdd(lhs: Self, rhs: Self)
@@ -200,7 +216,7 @@ extension Tracked where T : Differentiable, T == T.TangentVector {
 }
 
 extension Tracked where T : Differentiable & SignedNumeric, T == T.Magnitude,
-                        T == T.TangentVector {
+                        T == T.AllDifferentiableVariables, T == T.TangentVector {
   @usableFromInline
   @differentiating(*)
   internal static func _vjpMultiply(lhs: Self, rhs: Self)
@@ -209,7 +225,8 @@ extension Tracked where T : Differentiable & SignedNumeric, T == T.Magnitude,
   }
 }
 
-extension Tracked where T : Differentiable & FloatingPoint, T == T.TangentVector {
+extension Tracked where T : Differentiable & FloatingPoint,
+                        T == T.AllDifferentiableVariables, T == T.TangentVector {
   @usableFromInline
   @differentiating(/)
   internal static func _vjpDivide(lhs: Self, rhs: Self)

@@ -12,8 +12,10 @@ public struct Foo : Differentiable {
 // CHECK-AST:   @differentiable
 // CHECK-AST:   public var a: Float
 // CHECK-AST:   internal init(a: Float)
-// CHECK-AST:   public struct TangentVector
-// CHECK-AST:     public typealias TangentVector = Foo.TangentVector
+// CHECK-AST:   public struct AllDifferentiableVariables
+// CHECK-AST:     public typealias AllDifferentiableVariables = Foo.AllDifferentiableVariables
+// CHECK-AST:     public typealias TangentVector = Foo.AllDifferentiableVariables
+// CHECK-AST:   public typealias TangentVector = Foo.AllDifferentiableVariables
 
 // CHECK-SILGEN-LABEL: // Foo.a.getter
 // CHECK-SILGEN-NEXT: sil [transparent] [serialized] [differentiable source 0 wrt 0] [ossa] @$s22derived_differentiable3FooV1aSfvg : $@convention(method) (Foo) -> Float
@@ -31,6 +33,7 @@ let _: @differentiable (AdditiveTangentIsSelf) -> Float = { x in
 // CHECK-AST:         internal var dummy: PointwiseMultiplicativeDummy
 // CHECK-AST:         internal init(a: Float, dummy: PointwiseMultiplicativeDummy)
 // CHECK-AST:         internal typealias TangentVector = AdditiveTangentIsSelf
+// CHECK-AST:         internal typealias AllDifferentiableVariables = AdditiveTangentIsSelf
 
 struct TestNoDerivative : Differentiable {
   var w: Float
@@ -41,8 +44,10 @@ struct TestNoDerivative : Differentiable {
 // CHECK-AST:         var w: Float
 // CHECK-AST:         @noDerivative internal var technicallyDifferentiable: Float
 // CHECK-AST:         internal init(w: Float, technicallyDifferentiable: Float)
-// CHECK-AST:         internal struct TangentVector : Differentiable, AdditiveArithmetic, ElementaryFunctions, VectorProtocol
-// CHECK-AST:           internal typealias TangentVector = TestNoDerivative.TangentVector
+// CHECK-AST:         internal struct AllDifferentiableVariables : Differentiable, AdditiveArithmetic, ElementaryFunctions, VectorProtocol
+// CHECK-AST:           internal typealias AllDifferentiableVariables = TestNoDerivative.AllDifferentiableVariables
+// CHECK-AST:           internal typealias TangentVector = TestNoDerivative.AllDifferentiableVariables
+// CHECK-AST:         internal typealias TangentVector = TestNoDerivative.AllDifferentiableVariables
 
 struct TestPointwiseMultiplicative : Differentiable {
   var w: PointwiseMultiplicativeDummy
@@ -53,8 +58,10 @@ struct TestPointwiseMultiplicative : Differentiable {
 // CHECK-AST:         var w: PointwiseMultiplicativeDummy
 // CHECK-AST:         @noDerivative internal var technicallyDifferentiable: PointwiseMultiplicativeDummy
 // CHECK-AST:         internal init(w: PointwiseMultiplicativeDummy, technicallyDifferentiable: PointwiseMultiplicativeDummy)
-// CHECK-AST:         internal struct TangentVector : Differentiable, AdditiveArithmetic, PointwiseMultiplicative
-// CHECK-AST:           internal typealias TangentVector = TestPointwiseMultiplicative.TangentVector
+// CHECK-AST:         internal struct AllDifferentiableVariables : Differentiable, AdditiveArithmetic, PointwiseMultiplicative
+// CHECK-AST:           internal typealias AllDifferentiableVariables = TestPointwiseMultiplicative.AllDifferentiableVariables
+// CHECK-AST:           internal typealias TangentVector = TestPointwiseMultiplicative.AllDifferentiableVariables
+// CHECK-AST:         internal typealias TangentVector = TestPointwiseMultiplicative.AllDifferentiableVariables
 
 
 struct TestKeyPathIterable : Differentiable, KeyPathIterable {
@@ -66,8 +73,10 @@ struct TestKeyPathIterable : Differentiable, KeyPathIterable {
 // CHECK-AST:         var w: Float
 // CHECK-AST:         @noDerivative internal var technicallyDifferentiable: Float
 // CHECK-AST:         internal init(w: Float, technicallyDifferentiable: Float)
-// CHECK-AST:         internal struct TangentVector : Differentiable, AdditiveArithmetic, ElementaryFunctions, VectorProtocol, KeyPathIterable
-// CHECK-AST:           internal typealias TangentVector = TestKeyPathIterable.TangentVector
+// CHECK-AST:         internal struct AllDifferentiableVariables : Differentiable, AdditiveArithmetic, KeyPathIterable, ElementaryFunctions, VectorProtocol
+// CHECK-AST:           internal typealias AllDifferentiableVariables = TestKeyPathIterable.AllDifferentiableVariables
+// CHECK-AST:           internal typealias TangentVector = TestKeyPathIterable.AllDifferentiableVariables
+// CHECK-AST:         internal typealias TangentVector = TestKeyPathIterable.AllDifferentiableVariables
 
 struct GenericTanMember<T : Differentiable> : Differentiable, AdditiveArithmetic {
   var x: T.TangentVector
@@ -77,6 +86,7 @@ struct GenericTanMember<T : Differentiable> : Differentiable, AdditiveArithmetic
 // CHECK-AST:   internal var x: T.TangentVector
 // CHECK-AST:   internal init(x: T.TangentVector)
 // CHECK-AST:   internal typealias TangentVector = GenericTanMember<T>
+// CHECK-AST:   internal typealias AllDifferentiableVariables = GenericTanMember<T>
 // CHECK-AST:   internal static var zero: GenericTanMember<T> { get }
 // CHECK-AST:   internal static func + (lhs: GenericTanMember<T>, rhs: GenericTanMember<T>) -> GenericTanMember<T>
 // CHECK-AST:   internal static func - (lhs: GenericTanMember<T>, rhs: GenericTanMember<T>) -> GenericTanMember<T>

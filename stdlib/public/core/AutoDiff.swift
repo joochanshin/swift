@@ -153,24 +153,26 @@ public extension VectorProtocol where VectorSpaceScalar : SignedNumeric {
 /// tangent spaces are finite-dimensional.
 public protocol Differentiable {
   associatedtype TangentVector: Differentiable & AdditiveArithmetic
-    where TangentVector.TangentVector == TangentVector
+    where TangentVector.TangentVector == TangentVector,
+          AllDifferentiableVariables.AllDifferentiableVariables ==
+            AllDifferentiableVariables,
+          AllDifferentiableVariables.TangentVector == TangentVector
+  /// The type of all differentiable variables in this type.
+  associatedtype AllDifferentiableVariables : Differentiable
+
+  /// All differentiable variables of this value.
+  var allDifferentiableVariables: AllDifferentiableVariables { get set }
 
   /// Moves `self` along the value space towards the given tangent vector. In
   /// Riemannian geometry (mathematics), this represents an exponential map.
   mutating func move(along direction: TangentVector)
 
   @available(*, deprecated,
-             message: "'AllDifferentiableVariables' is now equal to 'Self' and will be removed")
-  typealias AllDifferentiableVariables = Self
-
-  @available(*, deprecated,
              message: "'CotangentVector' is now equal to 'TangentVector' and will be removed")
   typealias CotangentVector = TangentVector
 }
 
-public extension Differentiable {
-  @available(*, deprecated,
-             message: "'allDifferentiableVariables' is now equal to 'self' and will be removed")
+public extension Differentiable where AllDifferentiableVariables == Self {
   var allDifferentiableVariables: AllDifferentiableVariables {
     get { return self }
     set { self = newValue }
@@ -721,6 +723,7 @@ internal protocol _AnyDerivativeBox {
   func _subtracting(_ x: _AnyDerivativeBox) -> _AnyDerivativeBox
 
   // `Differentiable` requirements.
+  var _allDifferentiableVariables: _AnyDerivativeBox { get }
   mutating func _move(along direction: _AnyDerivativeBox)
 
   /// The underlying base value, type-erased to `Any`.
@@ -728,7 +731,8 @@ internal protocol _AnyDerivativeBox {
 
   /// Returns the underlying value unboxed to the given type, if possible.
   func _unboxed<U>(to type: U.Type) -> U?
-    where U : Differentiable, U.TangentVector == U
+    where U : Differentiable, U.TangentVector == U,
+          U.AllDifferentiableVariables == U
 }
 
 extension _AnyDerivativeBox {
@@ -750,7 +754,8 @@ internal func _derivativeTypeMismatch(
 }
 
 internal struct _ConcreteDerivativeBox<T> : _AnyDerivativeBox
-  where T : Differentiable, T.TangentVector == T
+  where T : Differentiable, T.TangentVector == T,
+        T.AllDifferentiableVariables == T
 {
   /// The underlying base value.
   var _base: T
@@ -765,7 +770,8 @@ internal struct _ConcreteDerivativeBox<T> : _AnyDerivativeBox
   }
 
   func _unboxed<U>(to type: U.Type) -> U?
-    where U : Differentiable, U.TangentVector == U
+    where U : Differentiable, U.TangentVector == U,
+          U.AllDifferentiableVariables == U
   {
     return (self as? _ConcreteDerivativeBox<U>)?._base
   }
@@ -818,6 +824,10 @@ internal struct _ConcreteDerivativeBox<T> : _AnyDerivativeBox
 
   // `Differentiable` requirements.
 
+  var _allDifferentiableVariables: _AnyDerivativeBox {
+    return _ConcreteDerivativeBox(_base.allDifferentiableVariables)
+  }
+
   mutating func _move(along direction: _AnyDerivativeBox) {
     if direction._isOpaqueZero() {
       return
@@ -851,19 +861,24 @@ public struct AnyDerivative : Differentiable & AdditiveArithmetic {
 
   /// Creates a type-erased derivative from the given derivative.
   @differentiable(vjp: _vjpInit(_:))
-  public init<T>(_ base: T) where T : Differentiable, T.TangentVector == T {
+  public init<T>(_ base: T)
+    where T : Differentiable, T.TangentVector == T,
+          T.AllDifferentiableVariables == T
+  {
     self._box = _ConcreteDerivativeBox<T>(base)
   }
 
   @usableFromInline internal static func _vjpInit<T>(
     _ base: T
   ) -> (AnyDerivative, (AnyDerivative) -> T.TangentVector)
-    where T : Differentiable, T.TangentVector == T
+    where T : Differentiable, T.TangentVector == T,
+          T.AllDifferentiableVariables == T
   {
     return (AnyDerivative(base), { v in v.base as! T.TangentVector })
   }
 
   public typealias TangentVector = AnyDerivative
+  public typealias AllDifferentiableVariables = AnyDerivative
 
   // `Equatable` requirements (implied by `AdditiveArithmetic`).
   public static func == (lhs: AnyDerivative, rhs: AnyDerivative) -> Bool {
@@ -914,6 +929,10 @@ public struct AnyDerivative : Differentiable & AdditiveArithmetic {
   }
 
   // `Differentiable` requirements.
+  public var allDifferentiableVariables: AllDifferentiableVariables {
+    get { return AnyDerivative(_box: _box._allDifferentiableVariables) }
+    // set { _box._allDifferentiableVariables = newValue._box }
+  }
   public mutating func move(along direction: TangentVector) {
     if _box._isOpaqueZero() {
       _box = direction._box

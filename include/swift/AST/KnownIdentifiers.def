@@ -155,7 +155,9 @@ IDENTIFIER(by)
 IDENTIFIER(scale)
 IDENTIFIER(x)
 // Differentiable
+IDENTIFIER(AllDifferentiableVariables)
 IDENTIFIER(TangentVector)
+IDENTIFIER(allDifferentiableVariables)
 IDENTIFIER(move)
 
 // Kinds of layout constraints

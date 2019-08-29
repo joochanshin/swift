@@ -5971,7 +5971,7 @@ public:
 
   AllocStackInst *
   emitArrayTangentSubscript(ApplyInst *ai, SILType eltType,
-                            SILValue adjointArray, SILValue fnRef,
+                            SILValue arrayAdjBuf, SILValue fnRef,
                             CanGenericSignature genericSig, int index) {
     auto &ctx = builder.getASTContext();
     auto astType = eltType.getASTType();
@@ -5991,8 +5991,8 @@ public:
            "Missing conformance to `AdditiveArithmetic`");
     auto subMap =
         SubstitutionMap::get(genericSig, {astType}, {*addArithConf, *diffConf});
-    auto arrayAdjBufLoad = builder.createLoad(
-        ai->getLoc(), arrayAdjBuf, LoadOwnershipQualifier::Unqualified);
+    auto arrayAdjBufLoad = builder.emitLoadValueOperation(
+        ai->getLoc(), arrayAdjBuf, LoadOwnershipQualifier::Take);
     builder.createApply(ai->getLoc(), fnRef, subMap,
                         // {subscriptBuffer, intStruct, arrayAdjBuf});
                         {subscriptBuffer, intStruct, arrayAdjBufLoad});
@@ -6032,16 +6032,13 @@ public:
   void visitArrayInitialization(ApplyInst *ai) {
     LLVM_DEBUG(getADDebugStream() << "Visiting array initialization:\n" << *ai);
     SILValue arrayAdjBuf;
-#if 0
-    SILValue adjointArray;
-#endif
     SILValue fnRef;
     CanGenericSignature genericSig;
     for (auto use : ai->getUses()) {
       auto dti = dyn_cast<DestructureTupleInst>(use->getUser());
       if (!dti) continue;
       // The first tuple field of the return value is the `Array`.
-      arrayAdjBuf = getAdjointBuffer(ai->getParent(), tei);
+      arrayAdjBuf = getAdjointBuffer(ai->getParent(), dti->getResult(0));
       assert(arrayAdjBuf && "Array does not have adjoint buffer");
       auto astType = arrayAdjBuf->getType().getASTType();
       auto typeDecl = astType->getStructOrBoundGenericStruct();
@@ -6055,7 +6052,7 @@ public:
       genericSig = fn->getLoweredFunctionType()->getGenericSignature();
       fnRef = builder.createFunctionRef(ai->getLoc(), fn);
     }
-    assert(adjointArray && "Array does not have adjoint value");
+    assert(arrayAdjBuf && "Array does not have adjoint value");
     assert(genericSig && "No generic signature");
     assert(fnRef && "cannot create function_ref");
     // Two loops because the tuple_extract instructions can be reached in
@@ -6081,7 +6078,7 @@ public:
           } else if (auto cai = dyn_cast<CopyAddrInst>(inst)) {
             auto tanType = getRemappedTangentType(cai->getSrc()->getType());
             auto subscriptBuffer = emitArrayTangentSubscript(
-                ai, tanType, adjointArray, fnRef, genericSig, 0);
+                ai, tanType, arrayAdjBuf, fnRef, genericSig, 0);
             accumulateArrayTangentSubscriptIndirect(
                 ai, cai, subscriptBuffer);
           } else if (auto iai = dyn_cast<IndexAddrInst>(inst)) {
@@ -6489,7 +6486,17 @@ public:
   ///             adj[x].n += adj[yn]
   void visitDestructureTupleInst(DestructureTupleInst *dti) {
     auto *bb = dti->getParent();
+    auto loc = dti->getLoc();
     auto tupleTanTy = getRemappedTangentType(dti->getOperand()->getType());
+    // Accumulate adjoint for the `tuple_extract` operand.
+    auto tmp = builder.createAllocStack(loc, tupleTanTy);
+    auto tupleTanTupleTy = tupleTanTy.getAs<TupleType>();
+    for (auto origElt : dti->getResults()) {
+      if (!getTangentSpace(origElt->getType().getASTType()))
+        continue;
+      auto adjEltBuf = getAdjointBuffer(bb, origElt);
+    }
+#if 0
     SmallVector<AdjointValue, 8> adjValues;
     for (auto origElt : dti->getResults()) {
       if (!getTangentSpace(origElt->getType().getASTType()))
@@ -6499,6 +6506,7 @@ public:
     addAdjointValue(bb, dti->getOperand(),
                     makeAggregateAdjointValue(tupleTanTy, adjValues),
                     dti->getLoc());
+#endif
   }
 
   /// Handle `load` or `load_borrow` instruction
@@ -6507,8 +6515,8 @@ public:
   void visitLoadOperation(SingleValueInstruction *inst) {
     assert(isa<LoadInst>(inst) || isa<LoadBorrowInst>(inst));
     auto *bb = inst->getParent();
-    auto &adjBuf = getAdjointBuffer(bb, li);
-    addToAdjointBuffer(bb, li->getOperand(), adjBuf, li->getLoc());
+    auto &adjBuf = getAdjointBuffer(bb, inst);
+    addToAdjointBuffer(bb, inst->getOperand(0), adjBuf, inst->getLoc());
     if (errorOccurred)
       return;
 #if 0
@@ -6540,10 +6548,10 @@ public:
     if (errorOccurred)
       return;
     auto bufType = remapType(adjBuf->getType());
-    addToAdjointBuffer(bb, si->getSrc(), adjBuf, si->getLoc());
+    addToAdjointBuffer(bb, origSrc, adjBuf, loc);
     if (errorOccurred)
       return;
-    emitZeroIndirect(bufType.getASTType(), adjBuf, si->getLoc());
+    emitZeroIndirect(bufType.getASTType(), adjBuf, loc);
 #if 0
     auto adjVal = builder.emitLoadValueOperation(
         loc, adjBuf, LoadOwnershipQualifier::Take);
@@ -6806,8 +6814,8 @@ SILValue PullbackEmitter::emitZeroDirect(CanType type, SILLocation loc) {
 }
 
 AdjointValue
-PullbackEmitter::accumulateAdjoints(AdjointValue lhs, AdjointValue rhs,
-                                    SILLocation loc) {
+PullbackEmitter::accumulateAdjointsDirect(AdjointValue lhs, AdjointValue rhs,
+                                          SILLocation loc) {
   LLVM_DEBUG(getADDebugStream()
              << "Materializing adjoint directly.\nLHS: " << lhs
              << "\nRHS: " << rhs << '\n');
@@ -6884,7 +6892,7 @@ PullbackEmitter::accumulateAdjoints(AdjointValue lhs, AdjointValue rhs,
     case AdjointValueKind::Aggregate: {
       SmallVector<AdjointValue, 8> newElements;
       for (auto i : range(lhs.getNumAggregateElements()))
-        newElements.push_back(accumulateAdjoints(
+        newElements.push_back(accumulateAdjointsDirect(
             lhs.getAggregateElement(i), rhs.getAggregateElement(i), loc));
       return makeAggregateAdjointValue(lhs.getType(), newElements);
     }

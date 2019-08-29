@@ -4746,6 +4746,11 @@ public:
           SILValue op = i.getOperand(0);
           require(!state.Stack.empty(),
                   "stack dealloc with empty stack");
+          if (op != state.Stack.back()) {
+            llvm::errs() << "MISMATCH\n";
+            op->dump();
+            state.Stack.back()->dump();
+          }
           require(op == state.Stack.back(),
                   "stack dealloc does not match most recent stack alloc");
           state.Stack.pop_back();

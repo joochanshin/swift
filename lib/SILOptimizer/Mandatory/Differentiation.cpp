@@ -84,11 +84,15 @@ template <typename T> static inline void debugDump(T &v) {
                           << v << "\n==== END DEBUG DUMP ====\n");
 }
 
-static bool isWithoutDerivative(SILValue v) {
-  if (auto *fnRef = dyn_cast<FunctionRefInst>(v))
-    return fnRef->getReferencedFunctionOrNull()->hasSemanticsAttr(
-        "autodiff.nonvarying");
-  return false;
+static bool isResultOfNonvaryingApply(SILValue v) {
+  auto *definingInst = v->getDefiningInstruction();
+  auto *applyInst = dyn_cast<ApplyInst>(v);
+  if (!applyInst)
+    return false;
+  auto *fnRef = applyInst->getReferencedFunctionOrNull();
+  if (!fnRef)
+    return false;
+  return fnRef->hasSemanticsAttr("autodiff.nonvarying");
 }
 
 static ApplyInst *getAllocateUninitializedArrayIntrinsic(SILValue v) {
@@ -1352,12 +1356,15 @@ private:
   /// by the `return` instruction.
   SmallVector<SILValue, 4> outputValues;
 
+  /// The set of varied variables, indexed by the corresponding independent
+  /// value (input) index.
+  SmallVector<SmallDenseSet<SILValue>, 4> variedValueSets;
+  /// The set of explicitly non-varied variables, indexed by the corresponding
+  /// independent value (input) index.
+  SmallVector<SmallDenseSet<SILValue>, 4> nonVariedValueSets;
   /// The set of useful variables, indexed by the corresponding dependent value
   /// (output) index.
   SmallVector<SmallDenseSet<SILValue>, 4> usefulValueSets;
-  /// The set of useful variables, indexed by the corresponding independent
-  /// value (input) index.
-  SmallVector<SmallDenseSet<SILValue>, 4> variedValueSets;
 
   /// The original function.
   SILFunction &getFunction();
@@ -1365,13 +1372,23 @@ private:
   /// Perform analysis and populate sets.
   void analyze(DominanceInfo *di, PostDominanceInfo *pdi);
 
+  void propagateVariedness(
+      DominanceInfo *di,
+      std::function<bool(SILValue, unsigned)> isVaried,
+      std::function<void(SILValue, unsigned)> setVaried,
+      std::function<void(SILValue, unsigned)> recursivelySetVaried);
+
   void setVaried(SILValue value, unsigned independentVariableIndex);
   void setVariedAcrossArrayInitialization(SILValue value,
                                           unsigned independentVariableIndex);
+  void recursivelySetVaried(SILValue value, unsigned independentVariableIndex);
+  void setNonVaried(SILValue value, unsigned independentVariableIndex);
+  void setNonVariedAcrossArrayInitialization(SILValue value,
+                                             unsigned independentVariableIndex);
+  void recursivelySetNonVaried(SILValue value, unsigned independentVariableIndex);
   void setUseful(SILValue value, unsigned dependentVariableIndex);
   void setUsefulAcrossArrayInitialization(SILValue value,
                                           unsigned dependentVariableIndex);
-  void recursivelySetVaried(SILValue value, unsigned independentVariableIndex);
   void propagateUsefulThroughBuffer(SILValue value,
                                     unsigned dependentVariableIndex);
 
@@ -1759,34 +1776,12 @@ DifferentiableActivityInfo::DifferentiableActivityInfo(
   analyze(parent.domInfo, parent.postDomInfo);
 }
 
-void DifferentiableActivityInfo::analyze(DominanceInfo *di,
-                                         PostDominanceInfo *pdi) {
+void DifferentiableActivityInfo::propagateVariedness(
+    DominanceInfo *di,
+    std::function<bool(SILValue, unsigned)> isVaried,
+    std::function<void(SILValue, unsigned)> setVaried,
+    std::function<void(SILValue, unsigned)> recursivelySetVaried) {
   auto &function = parent.function;
-  LLVM_DEBUG(getADDebugStream()
-             << "Running activity analysis on @" << function.getName() << '\n');
-  // Inputs are just function's arguments, count `n`.
-  auto paramArgs = function.getArgumentsWithoutIndirectResults();
-  for (auto value : paramArgs)
-    inputValues.push_back(value);
-  LLVM_DEBUG({
-    auto &s = getADDebugStream();
-    s << "Inputs in @" << function.getName() << ":\n";
-    for (auto val : inputValues)
-      s << val << '\n';
-  });
-  // Outputs are indirect result buffers and return values, count `m`.
-  collectAllFormalResultsInTypeOrder(function, outputValues);
-  LLVM_DEBUG({
-    auto &s = getADDebugStream();
-    s << "Outputs in @" << function.getName() << ":\n";
-    for (auto val : outputValues)
-      s << val << '\n';
-  });
-
-  // Mark inputs as varied.
-  assert(variedValueSets.empty());
-  for (auto input : inputValues)
-    variedValueSets.push_back({input});
   // Propagate varied-ness through the function in dominance order.
   DominanceOrder domOrder(function.getEntryBlock(), di);
   while (auto *bb = domOrder.getNext()) {
@@ -1794,7 +1789,7 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
       for (auto i : indices(inputValues)) {
         // Handle `apply`.
         if (auto *ai = dyn_cast<ApplyInst>(&inst)) {
-          if (isWithoutDerivative(ai->getCallee()))
+          if (isResultOfNonvaryingApply(ai))
             continue;
           for (auto arg : ai->getArgumentsWithoutIndirectResults()) {
             if (isVaried(arg, i)) {
@@ -1889,6 +1884,143 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
     }
     domOrder.pushChildren(bb);
   }
+}
+
+void DifferentiableActivityInfo::analyze(DominanceInfo *di,
+                                         PostDominanceInfo *pdi) {
+  auto &function = parent.function;
+  LLVM_DEBUG(getADDebugStream()
+             << "Running activity analysis on @" << function.getName() << '\n');
+  // Inputs are just function's arguments, count `n`.
+  auto paramArgs = function.getArgumentsWithoutIndirectResults();
+  for (auto value : paramArgs)
+    inputValues.push_back(value);
+  LLVM_DEBUG({
+    auto &s = getADDebugStream();
+    s << "Inputs in @" << function.getName() << ":\n";
+    for (auto val : inputValues)
+      s << val << '\n';
+  });
+  // Outputs are indirect result buffers and return values, count `m`.
+  collectAllFormalResultsInTypeOrder(function, outputValues);
+  LLVM_DEBUG({
+    auto &s = getADDebugStream();
+    s << "Outputs in @" << function.getName() << ":\n";
+    for (auto val : outputValues)
+      s << val << '\n';
+  });
+
+  // Mark inputs as varied.
+  assert(variedValueSets.empty());
+  for (auto input : inputValues)
+    variedValueSets.push_back({input});
+
+  propagateVariedness(di, isNonVaried, setNonVaried, recursivelySetNonVaried);
+  propagateVariedness(di, isVaried, setVaried, recursivelySetVaried);
+#if 0
+  // Propagate varied-ness through the function in dominance order.
+  DominanceOrder domOrder(function.getEntryBlock(), di);
+  while (auto *bb = domOrder.getNext()) {
+    for (auto &inst : *bb) {
+      for (auto i : indices(inputValues)) {
+        // Handle `apply`.
+        if (auto *ai = dyn_cast<ApplyInst>(&inst)) {
+          if (isResultOfNonvaryingApply(ai))
+            continue;
+          for (auto arg : ai->getArgumentsWithoutIndirectResults()) {
+            if (isVaried(arg, i)) {
+              for (auto indRes : ai->getIndirectSILResults())
+                setVaried(indRes, i);
+              for (auto dirRes : ai->getResults())
+                setVaried(dirRes, i);
+            }
+          }
+        }
+        // Handle `store`.
+        else if (auto *si = dyn_cast<StoreInst>(&inst)) {
+          if (isVaried(si->getSrc(), i))
+            recursivelySetVaried(si->getDest(), i);
+        }
+        // Handle `store_borrow`.
+        else if (auto *si = dyn_cast<StoreBorrowInst>(&inst)) {
+          if (isVaried(si->getSrc(), i))
+            recursivelySetVaried(si->getDest(), i);
+        }
+        // Handle `copy_addr`.
+        else if (auto *cai = dyn_cast<CopyAddrInst>(&inst)) {
+          if (isVaried(cai->getSrc(), i))
+            recursivelySetVaried(cai->getDest(), i);
+        }
+        // Handle `tuple_element_addr`.
+        else if (auto *teai = dyn_cast<TupleElementAddrInst>(&inst)) {
+          if (isVaried(teai->getOperand(), i)) {
+            auto projType = teai->getType().getASTType();
+            if (assocGenSig && projType->hasArchetype())
+              projType = assocGenSig->getCanonicalTypeInContext(
+                  projType->mapTypeOutOfContext());
+            if (projType->getAutoDiffAssociatedTangentSpace(
+                LookUpConformanceInSignature(*assocGenSig)))
+              setVaried(teai, i);
+          }
+        }
+
+// Handle `struct_extract` and `struct_element_addr` instructions.
+// - If the field is marked `@noDerivative`, do not set the result as varied
+//   because it is not in the set of differentiable variables.
+// - Otherwise, propagate variedness from operand to result as usual.
+#define PROPAGATE_VARIED_FOR_STRUCT_EXTRACTION(INST) \
+  else if (auto *sei = dyn_cast<INST##Inst>(&inst)) { \
+    if (isVaried(sei->getOperand(), i)) { \
+      auto hasNoDeriv = sei->getField()->getAttrs() \
+          .hasAttribute<NoDerivativeAttr>(); \
+      if (!hasNoDeriv) \
+        setVaried(sei, i); \
+    } \
+  }
+  PROPAGATE_VARIED_FOR_STRUCT_EXTRACTION(StructExtract)
+  PROPAGATE_VARIED_FOR_STRUCT_EXTRACTION(StructElementAddr)
+#undef VISIT_STRUCT_ELEMENT_INNS
+
+        // Handle `br`.
+        else if (auto *bi = dyn_cast<BranchInst>(&inst)) {
+          for (auto &op : bi->getAllOperands())
+            if (isVaried(op.get(), i))
+              setVaried(bi->getArgForOperand(&op), i);
+        }
+        // Handle `cond_br`.
+        else if (auto *cbi = dyn_cast<CondBranchInst>(&inst)) {
+          for (unsigned opIdx : indices(cbi->getTrueOperands())) {
+            auto &op = cbi->getTrueOperands()[opIdx];
+            if (isVaried(op.get(), i))
+              setVaried(cbi->getTrueBB()->getArgument(opIdx), i);
+          }
+          for (unsigned opIdx : indices(cbi->getFalseOperands())) {
+            auto &op = cbi->getFalseOperands()[opIdx];
+            if (isVaried(op.get(), i))
+              setVaried(cbi->getFalseBB()->getArgument(opIdx), i);
+          }
+        }
+        // Handle `switch_enum`.
+        else if (auto *sei = dyn_cast<SwitchEnumInst>(&inst)) {
+          if (isVaried(sei->getOperand(), i)) {
+            for (auto *succBB : sei->getSuccessorBlocks())
+              for (auto *arg : succBB->getArguments())
+                setVaried(arg, i);
+            // Default block cannot have arguments.
+          }
+        }
+        // Handle everything else.
+        else {
+          for (auto &op : inst.getAllOperands())
+            if (isVaried(op.get(), i))
+              for (auto result : inst.getResults())
+                setVaried(result, i);
+        }
+      }
+    }
+    domOrder.pushChildren(bb);
+  }
+#endif
 
   // Mark differentiable outputs as useful.
   assert(usefulValueSets.empty());
@@ -1910,7 +2042,7 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
       for (auto i : indices(outputValues)) {
         // Handle indirect results in `apply`.
         if (auto *ai = dyn_cast<ApplyInst>(&inst)) {
-          if (isWithoutDerivative(ai->getCallee()))
+          if (isResultOfNonvaryingApply(ai))
             continue;
           auto checkAndSetUseful = [&](SILValue res) {
             if (isUseful(res, i))
@@ -1968,6 +2100,40 @@ void DifferentiableActivityInfo::analyze(DominanceInfo *di,
   }
 }
 
+void DifferentiableActivityInfo::setVaried(SILValue value,
+                                           unsigned independentVariableIndex) {
+  variedValueSets[independentVariableIndex].insert(value);
+  setVariedAcrossArrayInitialization(value, independentVariableIndex);
+}
+
+void DifferentiableActivityInfo::setNonVaried(
+    SILValue value, unsigned independentVariableIndex) {
+  nonVariedValueSets[independentVariableIndex].insert(value);
+  setNonVariedAcrossArrayInitialization(value, independentVariableIndex);
+}
+
+void DifferentiableActivityInfo::recursivelySetVaried(
+    SILValue value, unsigned independentVariableIndex) {
+  setVaried(value, independentVariableIndex);
+  if (auto *inst = value->getDefiningInstruction()) {
+    if (auto *ai = dyn_cast<ApplyInst>(inst))
+      return;
+    for (auto &op : inst->getAllOperands())
+      recursivelySetVaried(op.get(), independentVariableIndex);
+  }
+}
+
+void DifferentiableActivityInfo::recursivelySetNonVaried(
+    SILValue value, unsigned independentVariableIndex) {
+  setNonVaried(value, independentVariableIndex);
+  if (auto *inst = value->getDefiningInstruction()) {
+    if (auto *ai = dyn_cast<ApplyInst>(inst))
+      return;
+    for (auto &op : inst->getAllOperands())
+      recursivelySetNonVaried(op.get(), independentVariableIndex);
+  }
+}
+
 void DifferentiableActivityInfo::setVariedAcrossArrayInitialization(
     SILValue value, unsigned independentVariableIndex) {
   auto uai = getAllocateUninitializedArrayIntrinsic(value);
@@ -1976,6 +2142,22 @@ void DifferentiableActivityInfo::setVariedAcrossArrayInitialization(
     if (auto *dti = dyn_cast<DestructureTupleInst>(use->getUser()))
       // The first tuple field of the intrinsic's return value is the array.
       setVaried(dti->getResult(0), independentVariableIndex);
+}
+
+void DifferentiableActivityInfo::setNonVariedAcrossArrayInitialization(
+    SILValue value, unsigned independentVariableIndex) {
+  auto uai = getAllocateUninitializedArrayIntrinsic(value);
+  if (!uai) return;
+  for (auto use : value->getUses())
+    if (auto *dti = dyn_cast<DestructureTupleInst>(use->getUser()))
+      // The first tuple field of the intrinsic's return value is the array.
+      setNonVaried(dti->getResult(0), independentVariableIndex);
+}
+
+void DifferentiableActivityInfo::setUseful(SILValue value,
+                                           unsigned dependentVariableIndex) {
+  usefulValueSets[dependentVariableIndex].insert(value);
+  setUsefulAcrossArrayInitialization(value, dependentVariableIndex);
 }
 
 void DifferentiableActivityInfo::setUsefulAcrossArrayInitialization(
@@ -2003,29 +2185,6 @@ void DifferentiableActivityInfo::setUsefulAcrossArrayInitialization(
         }
       }
     }
-  }
-}
-
-void DifferentiableActivityInfo::setVaried(SILValue value,
-                                           unsigned independentVariableIndex) {
-  variedValueSets[independentVariableIndex].insert(value);
-  setVariedAcrossArrayInitialization(value, independentVariableIndex);
-}
-
-void DifferentiableActivityInfo::setUseful(SILValue value,
-                                           unsigned dependentVariableIndex) {
-  usefulValueSets[dependentVariableIndex].insert(value);
-  setUsefulAcrossArrayInitialization(value, dependentVariableIndex);
-}
-
-void DifferentiableActivityInfo::recursivelySetVaried(
-    SILValue value, unsigned independentVariableIndex) {
-  setVaried(value, independentVariableIndex);
-  if (auto *inst = value->getDefiningInstruction()) {
-    if (auto *ai = dyn_cast<ApplyInst>(inst))
-      return;
-    for (auto &op : inst->getAllOperands())
-      recursivelySetVaried(op.get(), independentVariableIndex);
   }
 }
 
@@ -4600,11 +4759,13 @@ public:
     auto origResult = origFormalResults[getIndices().source];
     // Emit warning if original result is not varied, because it will always
     // have a zero derivative.
-    if (!activityInfo.isVaried(origResult, getIndices().parameters)) {
+    if (!activityInfo.isVaried(origResult, getIndices().parameters) &&
+        !isResultOfNonvaryingApply(origResult)) {
       // Emit fixit if original result has a valid source location.
       auto startLoc = origResult.getLoc().getStartSourceLoc();
       auto endLoc = origResult.getLoc().getEndSourceLoc();
       if (startLoc.isValid() && endLoc.isValid()) {
+        llvm::errs() << "HI DIFFERENTIAL!\n";
         context.diagnose(startLoc, diag::autodiff_nonvaried_result_fixit)
             .fixItInsert(startLoc, "withoutDerivative(at:")
             .fixItInsertAfter(endLoc, ")");
@@ -5626,11 +5787,16 @@ public:
     auto origResult = origFormalResults[getIndices().source];
     // Emit warning if original result is not varied, because it will always
     // have a zero derivative.
-    if (!getActivityInfo().isVaried(origResult, getIndices().parameters)) {
+    if (!getActivityInfo().isVaried(origResult, getIndices().parameters) &&
+        !isResultOfNonvaryingApply(origResult)) {
       // Emit fixit if original result has a valid source location.
       auto startLoc = origResult.getLoc().getStartSourceLoc();
       auto endLoc = origResult.getLoc().getEndSourceLoc();
       if (startLoc.isValid() && endLoc.isValid()) {
+        llvm::errs() << "HI PULLBACK!\n";
+        original.dump();
+        origResult->dump();
+        dumpActivityInfo(original, getIndices(), getActivityInfo());
         getContext().diagnose(startLoc, diag::autodiff_nonvaried_result_fixit)
             .fixItInsert(startLoc, "withoutDerivative(at:")
             .fixItInsertAfter(endLoc, ")");

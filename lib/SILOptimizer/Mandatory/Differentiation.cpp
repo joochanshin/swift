@@ -5458,6 +5458,100 @@ private:
     return pullbackTrampolineBBMap.lookup({originalBlock, successorBlock});
   }
 
+  //--------------------------------------------------------------------------//
+  // Debugging utilities
+  //--------------------------------------------------------------------------//
+
+  void dumpAdjointBufferMap(llvm::raw_ostream &s = getADDebugStream()) {
+    s << "Adjoint buffer mapping for '" << getPullback().getName()
+      << "' (size " << bufferMap.size() << "):\n";
+    DenseMap<SILBasicBlock *, DenseMap<SILValue, SILValue>> tmpBufferMap;
+    for (auto pair : bufferMap) {
+      auto origPair = pair.first;
+      auto *origBB = origPair.first;
+      auto origValue = origPair.second;
+      auto adjBuf = pair.second;
+      tmpBufferMap[origBB][origValue] = adjBuf;
+    }
+    for (auto pair : tmpBufferMap) {
+      auto *origBB = pair.first;
+      auto bbValueMap = pair.second;
+      s << "bb" << origBB->getDebugID() << " (size " << bbValueMap.size()
+        << "):\n";
+      for (auto valuePair : bbValueMap) {
+        auto origValue = valuePair.first;
+        auto adjBuf = valuePair.second;
+        s << "[ORIG] " << origValue;
+        s << "[ADJ] " << adjBuf;
+      }
+    }
+  }
+  
+  std::pair<SILInstruction *, SILDebugVariable>
+  findDebugValueUser(SILValue value) {
+    for (auto use : value->getUses()) {
+      auto *user = use->getUser();
+      Optional<SILDebugVariable> debugVar;
+      if (auto *dvi = dyn_cast<DebugValueInst>(user)) {
+        debugVar = dvi->getVarInfo();
+      } else if (auto *dvai = dyn_cast<DebugValueAddrInst>(user)) {
+        debugVar = dvi->getVarInfo();
+      } else {
+        continue;
+      }
+      return {user, debugVar.getValueOr(SILDebugVariable())};
+    }
+    return {nullptr, SILDebugVariable()};
+  }
+
+  void insertDebugValueInstruction(
+      SILBuilder &builder, SILLocation loc, SILValue adjointValue,
+      SILDebugVariable debugVar) {
+    if (adjointValue->getType().isObject())
+      builder.createDebugValue(loc, adjointValue, debugVar);
+    else
+      builder.createDebugValueAddr(loc, adjointValue, debugVar);
+  }
+
+  void insertDebugValueInstructions() {
+    // Add debug instructions for adjoints values.
+    // TODO: Also add debug instructions when updating adjoint values.
+    for (auto pair : valueMap) {
+      auto origValue = pair.first.second;
+      auto adjValue = pair.second;
+      // Only debug adjoint values whose original values have debug information.
+      SILInstruction *debugInst;
+      SILDebugVariable debugVar;
+      std::tie(debugInst, debugVar) = findDebugValueUser(origValue);
+      if (!debugInst)
+        continue;
+      // Only materialized adjoint values can have debug information.
+      if (!adjValue.isConcrete())
+        continue;
+      auto concreteAdjValue = adjValue.getConcreteValue();
+      auto loc = concreteAdjValue.getLoc();
+      if (auto *arg = dyn_cast<SILArgument>(concreteAdjValue)) {
+        SILBuilder builder(arg->getParent()->begin());
+        insertDebugValueInstruction(builder, loc, arg, debugVar);
+        continue; 
+      }
+      auto concreteAdjValueInst = concreteAdjValue->getDefiningInstruction();
+      llvm::errs() << "CONCRETE ADJ VALUE:\n";
+      concreteAdjValue->dump();
+      assert(concreteAdjValueInst &&
+             "Concrete adjoint value must have defining instruction");
+      SILBuilder builder(std::next(concreteAdjValueInst));
+      insertDebugValueInstruction(builder, loc, concreteAdjValue, debugVar);
+#if 0
+      SILBuilder builder(std::next(concreteAdjValueInst));
+      if (concreteAdjValue->getType().isObject())
+        builder.createDebugValue(loc, concreteAdjValue, debugVar);
+      else
+        builder.createDebugValueAddr(loc, concreteAdjValue, debugVar);
+#endif
+    }
+  }
+
 public:
   //--------------------------------------------------------------------------//
   // Entry point
@@ -5759,6 +5853,9 @@ public:
 
     LLVM_DEBUG(getADDebugStream() << "Generated pullback for "
                                   << original.getName() << ":\n" << pullback);
+    // pullback.viewCFG();
+    // dumpAdjointBufferMap();
+    insertDebugValueInstructions();
     return errorOccurred;
   }
 

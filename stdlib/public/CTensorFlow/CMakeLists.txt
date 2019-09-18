@@ -98,17 +98,6 @@ foreach(sdk ${TARGET_SDKS})
       COMPONENT stdlib
       )
   endforeach()
-
-  # Install TensorFlow libraries in each SDK subdirectory.
-  # FIXME: Currently, this installs the same version of TensorFlow libraries
-  # everywhere.
-  # To properly support multiple targets, TF library/include variables should be
-  # SDK/architecture-specific, just like the ones for ICU.
-  swift_install_in_component(
-    FILES "${TF_LIBRARIES}"
-    DESTINATION "lib/swift/${SWIFT_SDK_${sdk}_LIB_SUBDIR}"
-    COMPONENT stdlib
-    )
 endforeach()
 add_custom_target(ctensorflow_modulemap DEPENDS ${ctensorflow_modulemap_target_list})
 
@@ -118,5 +107,6 @@ add_swift_target_library(swiftCTensorFlow OBJECT_LIBRARY TARGET_LIBRARY
   TARGET_SDKS OSX LINUX
   C_COMPILE_FLAGS "${SWIFT_RUNTIME_CXX_FLAGS}"
   LINK_FLAGS "${SWIFT_RUNTIME_LINK_FLAGS}"
-  INTERFACE_LINK_LIBRARIES "${TF_LIBRARIES}"
+  # INTERFACE_LINK_LIBRARIES "${TF_LIBRARIES}"
+  INTERFACE_LINK_LIBRARIES "${SWIFT_TENSORFLOW_TARGET_LIB_DIR}/libtensorflow.so"
   INSTALL_IN_COMPONENT never_install)

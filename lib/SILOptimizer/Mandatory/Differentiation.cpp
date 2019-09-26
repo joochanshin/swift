@@ -1122,6 +1122,17 @@ public:
   /// Calls `getOrCreateSubsetParametersThunkForLinearMap` to thunk the linear
   /// map returned by the associated function.
   std::pair<SILFunction *, SubstitutionMap>
+  getOrCreateSubsetParametersThunkForDifferentiableFunction(
+      SILValue origFnOperand, SILValue diffFn,
+      AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
+      SILAutoDiffIndices actualIndices);
+
+  /// Get or create an associated function index subset thunk from
+  /// `actualIndices` to `desiredIndices` for the given associated function
+  /// value and original function operand.
+  /// Calls `getOrCreateSubsetParametersThunkForLinearMap` to thunk the linear
+  /// map returned by the associated function.
+  std::pair<SILFunction *, SubstitutionMap>
   getOrCreateSubsetParametersThunkForAssociatedFunction(
       SILValue origFnOperand, SILValue assocFn,
       AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
@@ -8275,6 +8286,165 @@ ADContext::getOrCreateSubsetParametersThunkForAssociatedFunction(
   LLVM_DEBUG(getADDebugStream()
              << "Getting a subset parameters thunk for associated function "
              << assocFn << " of the original function " << origFnOperand
+             << " from " << actualIndices << " to " << desiredIndices << '\n');
+
+  auto origFnType = origFnOperand->getType().castTo<SILFunctionType>();
+  auto &module = getModule();
+  auto lookupConformance = LookUpConformanceInModule(module.getSwiftModule());
+
+  // Compute target type for thunking.
+  auto assocFnType = assocFn->getType().castTo<SILFunctionType>();
+  auto targetType = origFnType->getAutoDiffAssociatedFunctionType(
+      desiredIndices.parameters, desiredIndices.source,
+      /*differentiationOrder*/ 1, kind, module.Types, lookupConformance);
+  auto *caller = assocFn->getFunction();
+  if (targetType->hasArchetype()) {
+    auto substTargetType = caller->mapTypeIntoContext(
+        targetType->mapTypeOutOfContext())->getCanonicalType();
+    targetType = SILType::getPrimitiveObjectType(substTargetType)
+        .castTo<SILFunctionType>();
+  }
+  assert(assocFnType->getNumParameters() == targetType->getNumParameters());
+  assert(assocFnType->getNumResults() == targetType->getNumResults());
+
+  // Build thunk type.
+  SubstitutionMap interfaceSubs;
+  GenericEnvironment *genericEnv = nullptr;
+  auto thunkType = buildThunkType(
+      assocFn->getFunction(), assocFnType, targetType, genericEnv,
+      interfaceSubs, /*withoutActuallyEscaping*/ false,
+      DifferentiationThunkKind::IndexSubset);
+
+  // FIXME: The logic for resolving `assocRef` does not reapply function
+  // conversions, which is problematic if `assocFn` is a `partial_apply`
+  // instruction.
+  StringRef origName;
+  if (auto *origFnRef =
+          peerThroughFunctionConversions<FunctionRefInst>(origFnOperand)) {
+    origName = origFnRef->getInitiallyReferencedFunction()->getName();
+  } else if (auto *origMethodInst =
+                 peerThroughFunctionConversions<MethodInst>(origFnOperand)) {
+    origName = origMethodInst->getMember().getAnyFunctionRef()
+        ->getAbstractFunctionDecl()->getNameStr();
+  }
+  assert(!origName.empty() && "Original function name could not be resolved");
+  // TODO(TF-685): Use more principled mangling for thunks.
+  std::string thunkName;
+  switch (kind) {
+    case AutoDiffAssociatedFunctionKind::JVP:
+      thunkName = "jvp";
+      break;
+    case AutoDiffAssociatedFunctionKind::VJP:
+      thunkName = "vjp";
+  }
+  Mangle::ASTMangler mangler;
+  auto fromInterfaceType =
+      assocFnType->mapTypeOutOfContext()->getCanonicalType();
+  auto toInterfaceType = targetType->mapTypeOutOfContext()->getCanonicalType();
+  CanType dynamicSelfType;
+  thunkName = "AD__orig_" + origName.str() + "_" +
+      mangler.mangleReabstractionThunkHelper(
+          thunkType, fromInterfaceType, toInterfaceType, dynamicSelfType,
+          module.getSwiftModule()) + "_" + desiredIndices.mangle() + "_" +
+          thunkName;
+  thunkName += "_subset_parameters_thunk";
+
+  auto loc = origFnOperand.getLoc();
+  SILOptFunctionBuilder fb(getTransform());
+  auto *thunk = fb.getOrCreateSharedFunction(
+      loc, thunkName, thunkType, IsBare, IsTransparent, caller->isSerialized(),
+      ProfileCounter(), IsThunk, IsNotDynamic);
+
+  if (!thunk->empty())
+    return {thunk, interfaceSubs};
+
+  thunk->setOwnershipEliminated();
+  thunk->setGenericEnvironment(genericEnv);
+  auto *entry = thunk->createBasicBlock();
+  SILBuilder builder(entry);
+  createEntryArguments(thunk);
+
+  SubstitutionMap assocSubstMap;
+  if (auto *partialApply = dyn_cast<PartialApplyInst>(assocFn))
+    assocSubstMap = partialApply->getSubstitutionMap();
+
+  // FIXME: The logic for resolving `assocRef` does not reapply function
+  // conversions, which is problematic if `assocFn` is a `partial_apply`
+  // instruction.
+  SILValue assocRef;
+  if (auto *assocFnRef =
+          peerThroughFunctionConversions<FunctionRefInst>(assocFn)) {
+    auto *assoc = assocFnRef->getReferencedFunctionOrNull();
+    assocRef = builder.createFunctionRef(loc, assoc);
+  } else if (auto *assocMethodInst =
+                 peerThroughFunctionConversions<WitnessMethodInst>(assocFn)) {
+    assocRef = builder.createWitnessMethod(
+        loc, assocMethodInst->getLookupType(),
+        assocMethodInst->getConformance(), assocMethodInst->getMember(),
+        thunk->mapTypeIntoContext(assocMethodInst->getType()));
+  } else if (auto *assocMethodInst =
+                 peerThroughFunctionConversions<ClassMethodInst>(assocFn)) {
+    auto classOperand = thunk->getArgumentsWithoutIndirectResults().back();
+    auto classOperandType = assocMethodInst->getOperand()->getType();
+    assert(classOperand->getType() == classOperandType);
+    assocRef = builder.createClassMethod(
+        loc, classOperand, assocMethodInst->getMember(),
+        thunk->mapTypeIntoContext(assocMethodInst->getType()));
+  }
+  assert(assocRef && "Expected associated function to be resolved");
+
+  assocSubstMap = assocSubstMap.subst(thunk->getForwardingSubstitutionMap());
+  assocFnType = assocRef->getType().castTo<SILFunctionType>();
+
+  SmallVector<SILValue, 4> arguments;
+  arguments.append(thunk->getArguments().begin(), thunk->getArguments().end());
+  assert(arguments.size() == assocFnType->getNumParameters() +
+                                 assocFnType->getNumIndirectFormalResults());
+  auto *apply = builder.createApply(
+      loc, assocRef, assocSubstMap, arguments, /*isNonThrowing*/ false);
+
+  // Extract all direct results.
+  SmallVector<SILValue, 8> directResults;
+  extractAllElements(apply, builder, directResults);
+  auto originalDirectResults = ArrayRef<SILValue>(directResults).drop_back(1);
+  auto originalDirectResult =
+      joinElements(originalDirectResults, builder, apply->getLoc());
+  auto linearMap = directResults.back();
+
+  auto linearMapType = linearMap->getType().castTo<SILFunctionType>();
+  auto linearMapTargetType = targetType->getResults().back().getSILStorageType()
+      .castTo<SILFunctionType>();
+
+  auto *innerThunk = getOrCreateSubsetParametersThunkForLinearMap(
+      thunk, linearMapType, linearMapTargetType, kind,
+      desiredIndices, actualIndices);
+
+  auto *innerThunkFRI = builder.createFunctionRef(loc, innerThunk);
+  auto *newDerivative = builder.createPartialApply(
+      loc, innerThunkFRI, thunk->getForwardingSubstitutionMap(), {linearMap},
+      ParameterConvention::Direct_Guaranteed);
+
+  assert(origFnType->getResults().size() == 1);
+  if (origFnType->getResults().front().isFormalDirect()) {
+    auto result = joinElements(
+        {originalDirectResult, newDerivative}, builder, loc);
+    builder.createReturn(loc, result);
+  } else {
+    builder.createReturn(loc, newDerivative);
+  }
+
+  getGeneratedFunctions().push_back(thunk);
+  return {thunk, interfaceSubs};
+}
+
+std::pair<SILFunction *, SubstitutionMap>
+ADContext::getOrCreateSubsetParametersThunkForDifferentiableFunction(
+    SILValue origFnOperand, SILValue diffFn,
+    AutoDiffAssociatedFunctionKind kind, SILAutoDiffIndices desiredIndices,
+    SILAutoDiffIndices actualIndices) {
+  LLVM_DEBUG(getADDebugStream()
+             << "Getting a subset parameters thunk for differentiable function "
+             << diffFn << " of the original function " << origFnOperand
              << " from " << actualIndices << " to " << desiredIndices << '\n');
 
   auto origFnType = origFnOperand->getType().castTo<SILFunctionType>();

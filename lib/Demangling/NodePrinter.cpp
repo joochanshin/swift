@@ -1218,6 +1218,7 @@ NodePointer NodePrinter::print(NodePointer Node, bool asPrefixContext) {
     return nullptr;
   // SWIFT_ENABLE_TENSORFLOW
   case Node::Kind::EscapingDifferentiableFunctionType:
+    Printer << "WTF Node::Kind::EscapingDifferentiableFunctionType!\n";
     Printer << "@escaping @differentiable ";
     printFunctionType(nullptr, Node);
     return nullptr;
@@ -2515,6 +2516,7 @@ void NodePrinter::printEntityType(NodePointer Entity, NodePointer type,
       type = dependentType->getFirstChild();
     }
     // SWIFT_ENABLE_TENSORFLOW
+    Printer << "NodePrinter::printEntityType " << "\n";
     if (type->getKind() == Node::Kind::DifferentiableFunctionType)
       Printer << "@differentiable ";
     else if (type->getKind() == Node::Kind::EscapingDifferentiableFunctionType)

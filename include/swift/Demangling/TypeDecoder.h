@@ -24,6 +24,7 @@
 #include "swift/Runtime/Unreachable.h"
 #include "swift/Strings.h"
 #include <vector>
+#include <iostream>
 
 namespace swift {
 namespace Demangle {
@@ -185,29 +186,46 @@ class ImplFunctionTypeFlags {
   unsigned Rep : 3;
   unsigned Pseudogeneric : 1;
   unsigned Escaping : 1;
+  // SWIFT_ENABLE_TENSORFLOW
+  unsigned Differentiable : 1;
 
 public:
-  ImplFunctionTypeFlags() : Rep(0), Pseudogeneric(0), Escaping(0) {}
+  // SWIFT_ENABLE_TENSORFLOW
+  ImplFunctionTypeFlags() : Rep(0), Pseudogeneric(0), Escaping(0),
+                            Differentiable(0) {}
 
+  // SWIFT_ENABLE_TENSORFLOW
   ImplFunctionTypeFlags(ImplFunctionRepresentation rep,
-                        bool pseudogeneric, bool noescape)
-      : Rep(unsigned(rep)), Pseudogeneric(pseudogeneric), Escaping(noescape) {}
+                        bool pseudogeneric, bool noescape, bool differentiable)
+      : Rep(unsigned(rep)), Pseudogeneric(pseudogeneric), Escaping(noescape),
+        Differentiable(differentiable) {}
 
   ImplFunctionTypeFlags
   withRepresentation(ImplFunctionRepresentation rep) const {
-    return ImplFunctionTypeFlags(rep, Pseudogeneric, Escaping);
+    // SWIFT_ENABLE_TENSORFLOW
+    return ImplFunctionTypeFlags(rep, Pseudogeneric, Escaping, Differentiable);
   }
 
   ImplFunctionTypeFlags
   withEscaping() const {
     return ImplFunctionTypeFlags(ImplFunctionRepresentation(Rep),
-                                 Pseudogeneric, true);
+                                 // SWIFT_ENABLE_TENSORFLOW
+                                 Pseudogeneric, true, Differentiable);
   }
   
   ImplFunctionTypeFlags
   withPseudogeneric() const {
     return ImplFunctionTypeFlags(ImplFunctionRepresentation(Rep),
-                                 true, Escaping);
+                                 // SWIFT_ENABLE_TENSORFLOW
+                                 true, Escaping, Differentiable);
+  }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  ImplFunctionTypeFlags
+  withDifferentiable() const {
+    return ImplFunctionTypeFlags(ImplFunctionRepresentation(Rep),
+                                 // SWIFT_ENABLE_TENSORFLOW
+                                 Pseudogeneric, Escaping, true);
   }
 
   ImplFunctionRepresentation getRepresentation() const {
@@ -217,6 +235,9 @@ public:
   bool isEscaping() const { return Escaping; }
 
   bool isPseudogeneric() const { return Pseudogeneric; }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  bool isDifferentiable() const { return Differentiable; }
 };
 
 #if SWIFT_OBJC_INTEROP
@@ -263,6 +284,8 @@ class TypeDecoder {
 
   /// Given a demangle tree, attempt to turn it into a type.
   BuiltType decodeMangledType(NodePointer Node) {
+    std::cerr << "decodeMangledType\n";
+    Node->dump();
     if (!Node) return BuiltType();
 
     using NodeKind = Demangle::Node::Kind;
@@ -561,6 +584,7 @@ class TypeDecoder {
       SmallVector<ImplFunctionResult<BuiltType>, 8> results;
       SmallVector<ImplFunctionResult<BuiltType>, 8> errorResults;
       ImplFunctionTypeFlags flags;
+      std::cerr << "NodeKind::ImplFunctionType!\n";
 
       for (unsigned i = 0; i < Node->getNumChildren(); i++) {
         auto child = Node->getChild(i);
@@ -589,6 +613,12 @@ class TypeDecoder {
           }
         } else if (child->getKind() == NodeKind::ImplEscaping) {
           flags = flags.withEscaping();
+        // SWIFT_ENABLE_TENSORFLOW
+        } else if (child->getKind() == NodeKind::ImplDifferentiable) {
+          flags = flags.withDifferentiable();
+        } else if (child->getKind() == NodeKind::ImplDifferentiable) {
+          flags = flags.withDifferentiable();
+        // SWIFT_ENABLE_TENSORFLOW END
         } else if (child->getKind() == NodeKind::ImplParameter) {
           if (decodeImplFunctionPart(child, parameters))
             return BuiltType();

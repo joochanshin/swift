@@ -56,6 +56,15 @@ SILGenFunction::~SILGenFunction() {
   // If we didn't clean up the rethrow destination, we screwed up somewhere.
   assert(!ThrowDest.isValid() &&
          "SILGenFunction did not emit throw destination");
+  for (auto &bb : F) {
+    for (auto &i : bb) {
+      if (isa<TupleExtractInst>(i) && !F.getName().contains("AD__")) {
+        llvm::errs() << "tuple_extract found\n";
+        F.dump();
+        assert(false);
+      }
+    }
+  }
 }
 
 //===----------------------------------------------------------------------===//

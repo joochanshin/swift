@@ -3212,6 +3212,7 @@ static void emitBorrowedLValueRecursive(SILGenFunction &SGF,
         eltValue = SGF.B.createTupleElementAddr(loc, value, i);
       } else {
         eltValue = SGF.B.createTupleExtract(loc, value, i);
+        assert(false);
       }
 
       // Recurse.

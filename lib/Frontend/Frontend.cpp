@@ -660,6 +660,13 @@ void CompilerInstance::performSemaUpTo(SourceFile::ASTStage_t LimitStage) {
     Invocation.getFrontendOptions().ImplicitImportModuleNames.push_back(
         SWIFT_ONONE_SUPPORT);
   }
+  // SWIFT_ENABLE_TENSORFLOW
+  // Implicitly import the `_Differentiation` module.
+  if (Invocation.getImplicitModuleImportKind() !=
+          SourceFile::ImplicitModuleImportKind::Stdlib) {
+    // Invocation.getFrontendOptions().ImplicitImportModuleNames.push_back(
+    //     "_Differentiation");
+  }
 
   const ImplicitImports implicitImports(*this);
 

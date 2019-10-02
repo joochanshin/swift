@@ -19,6 +19,7 @@
 #include "swift/Demangling/ManglingMacros.h"
 #include "swift/Demangling/Punycode.h"
 #include "swift/Strings.h"
+#include <iostream>
 
 using namespace swift;
 using namespace Mangle;
@@ -2122,6 +2123,7 @@ NodePointer Demangler::popProtocolConformance() {
 }
 
 NodePointer Demangler::demangleThunkOrSpecialization() {
+  std::cerr << "Demangler::demangleThunkOrSpecialization\n";
   switch (char c = nextChar()) {
     case 'c': return createWithChild(Node::Kind::CurryThunk, popNode(isEntity));
     case 'j': return createWithChild(Node::Kind::DispatchThunk, popNode(isEntity));
@@ -2174,6 +2176,7 @@ NodePointer Demangler::demangleThunkOrSpecialization() {
     case 'Z':
     case 'u':
     case 'U': {
+      std::cerr << "AutoDiff\n";
       // Create node for autodiff associated function.
       Node::Kind assocFnKind;
       if (c == 'Z') assocFnKind = Node::Kind::AutoDiffJVP;
@@ -2203,6 +2206,7 @@ NodePointer Demangler::demangleThunkOrSpecialization() {
     }
     // SWIFT_ENABLE_TENSORFLOW END
     case 'g':
+      std::cerr << "demangleGenericSpecialization\n";
       return demangleGenericSpecialization(Node::Kind::GenericSpecialization);
     case 'G':
       return demangleGenericSpecialization(Node::Kind::

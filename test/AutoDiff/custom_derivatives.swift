@@ -35,6 +35,7 @@ CustomDerivativesTests.test("differentiableFunction-unary") {
   expectEqual(40, gradient(at: 10, in: { diffableUnary($0) * 2 }))
 }
 
+/*
 CustomDerivativesTests.test("differentiableFunction-binary") {
   let diffableBinary = differentiableFunction { (x, y) in
     (value: binary(x, y), pullback: { v in (v * y, v * x) })
@@ -94,5 +95,6 @@ CustomDerivativesTests.test("WithoutDerivative") {
     }
   })
 }
+*/
 
 runAllTests()

@@ -32,6 +32,13 @@ namespace clang {
   class ValueDecl;
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+namespace swift {
+  struct AutoDiffAssociatedFunctionKind;
+  struct AutoDiffLinearMapKind;
+}
+// SWIFT_ENABLE_TENSORFLOW END
+
 namespace swift {
 namespace Lowering {
 
@@ -188,6 +195,11 @@ class AbstractionPattern {
     /// The partially-applied curried imported type of a C++ method. OrigType is
     /// valid and is a function type. CXXMethod is valid.
     PartialCurriedCXXMethodType,
+    // SWIFT_ENABLE_TENSORFLOW
+    // TODO: comment
+    AutoDiffAssociatedFunctionType,
+    AutoDiffLinearMapFunctionType,
+    // SWIFT_ENABLE_TENSORFLOW END
   };
 
   class EncodedForeignErrorInfo {
@@ -235,7 +247,7 @@ class AbstractionPattern {
     }
   };
 
-  static constexpr const unsigned NumOtherDataBits = 28;
+  static constexpr const unsigned NumOtherDataBits = 27; // is this breaking?
   static constexpr const unsigned MaxOtherData = (1 << NumOtherDataBits) - 1;
 
   unsigned TheKind : 32 - NumOtherDataBits;
@@ -246,6 +258,12 @@ class AbstractionPattern {
     const clang::ObjCMethodDecl *ObjCMethod;
     const clang::CXXMethodDecl *CXXMethod;
     const AbstractionPattern *OrigTupleElements;
+    // SWIFT_ENABLE_TENSORFLOW
+    // AutoDiffAssociatedFunctionKind AutoDiffAssocFnKind;
+    llvm::PointerIntPair<SILFunctionType *, 1, unsigned> AutoDiffAssocFnType;
+    // std::pair<SILFunctionType *, AutoDiffIndexSubset *> AutoDiffAssocFnType;
+    AutoDiffLinearMapKind AutoDiffLinMapKind;
+    // SWIFT_ENABLE_TENSORFLOW END
   };
   CanGenericSignature GenericSig;
 
@@ -356,6 +374,23 @@ class AbstractionPattern {
     CXXMethod = method;
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  void initAutoDiffAssociatedFunction(
+      CanGenericSignature signature, CanType origType,
+      AutoDiffAssociatedFunctionKind assocFnKind, CanSILFunctionType assocFnType) {
+    initSwiftType(signature, origType, Kind::AutoDiffAssociatedFunctionType);
+    // AutoDiffAssocFnKind = assocFnKind;
+    AutoDiffAssocFnType.setPointerAndInt(assocFnType, (unsigned)assocFnKind);
+    OtherData = (uintptr_t)assocFnType.getPointer();
+  }
+  void initAutoDiffLinearMapFunction(
+      CanGenericSignature signature, CanType origType,
+      AutoDiffLinearMapKind linearMapKind) {
+    initSwiftType(signature, origType, Kind::AutoDiffLinearMapFunctionType);
+    AutoDiffLinMapKind = linearMapKind;
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
+
   AbstractionPattern() {}
   explicit AbstractionPattern(Kind kind) : TheKind(unsigned(kind)) {}
 
@@ -396,6 +431,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
       return true;
     case Kind::Invalid:
     case Kind::Opaque:
@@ -512,6 +551,28 @@ public:
     pattern.initSwiftType(signature, origType, Kind::Discard);
     return pattern;
   }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  // TODO: Rewrite to static functions
+  static AbstractionPattern getAutoDiffAssociatedFunctionType(
+      CanGenericSignature signature, CanType origType,
+      AutoDiffAssociatedFunctionKind assocFnKind, CanSILFunctionType assocFnType) {
+    assert(isa<AnyFunctionType>(origType));
+    AbstractionPattern pattern;
+    pattern.initAutoDiffAssociatedFunction(signature, origType, assocFnKind, assocFnType);
+    return pattern;
+  }
+
+  static AbstractionPattern getAutoDiffLinearMapFunctionType(
+      CanGenericSignature signature, CanType origType,
+      AutoDiffLinearMapKind linearMapKind) {
+    assert(isa<AnyFunctionType>(origType));
+    AbstractionPattern pattern;
+    pattern.initAutoDiffLinearMapFunction(signature, origType, linearMapKind);
+    assert(pattern.getKind() == Kind::AutoDiffLinearMapFunctionType);
+    return pattern;
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
   
 private:
   /// Return an abstraction pattern for the curried type of an
@@ -699,6 +760,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
     case Kind::Type:
     case Kind::Discard:
       return OrigType;
@@ -733,6 +798,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
     case Kind::Type:
     case Kind::Discard:
       assert(signature || !type->hasTypeParameter());
@@ -768,6 +837,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
       return true;
     }
     llvm_unreachable("bad kind");
@@ -835,6 +908,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
       return false;
     case Kind::PartialCurriedObjCMethodType:
     case Kind::CurriedObjCMethodType:
@@ -866,6 +943,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
     case Kind::Type:
     case Kind::Discard:
       return dyn_cast<TYPE>(getType());
@@ -894,6 +975,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
       // We assume that the Clang type might provide additional structure.
       return false;
     case Kind::Type:
@@ -921,6 +1006,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
       return false;
     case Kind::Tuple:
       return true;
@@ -946,6 +1035,10 @@ public:
     case Kind::CXXMethodType:
     case Kind::CurriedCXXMethodType:
     case Kind::PartialCurriedCXXMethodType:
+    // SWIFT_ENABLE_TENSORFLOW
+    case Kind::AutoDiffAssociatedFunctionType:
+    case Kind::AutoDiffLinearMapFunctionType:
+    // SWIFT_ENABLE_TENSORFLOW END
       llvm_unreachable("pattern is not a tuple");      
     case Kind::Tuple:
       return getNumTupleElements_Stored();

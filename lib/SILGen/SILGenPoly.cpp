@@ -1834,6 +1834,10 @@ public:
         SILFunctionConventions(innerFnType, SGF.SGM.M)
             .getNumIndirectSILResults());
 
+    llvm::errs() << "outerFnType\n";
+    outerFnType->dump();
+    llvm::errs() << "innerFnType\n";
+    innerFnType->dump();
     PlanData data = {outerFnType->getResults(), innerFnType->getResults(),
                      innerIndirectResultAddrs, 0};
 
@@ -2138,6 +2142,13 @@ void ResultPlanner::plan(AbstractionPattern innerOrigType,
   }
 
   // Otherwise, the inner pattern is a scalar; claim the next inner result.
+  llvm::errs() << "PLAN DATA\n";
+  llvm::errs() << "INNER RESULTS: " << planData.InnerResults.size() << "\n";
+  for (auto result : planData.InnerResults)
+    result.dump();
+  llvm::errs() << "OUTER RESULTS: " << planData.OuterResults.size() << "\n";
+  for (auto result : planData.OuterResults)
+    result.dump();
   SILResultInfo innerResult = claimNextInnerResult(planData);
 
   assert((!outerOrigType.isTuple() || innerResult.isFormalIndirect()) &&
@@ -2149,6 +2160,21 @@ void ResultPlanner::plan(AbstractionPattern innerOrigType,
     if (SGF.silConv.isSILIndirect(innerResult)) {
       SILValue innerResultAddr =
           addInnerIndirectResultTemporary(planData, innerResult);
+      if (!isa<TupleType>(innerSubstType) || !isa<TupleType>(outerSubstType)) {
+        llvm::errs() << "innerResult.isFormalIndirect() && outerOrigType.isTuple()\n";
+        innerOrigType.dump();
+        innerSubstType->dump();
+        outerOrigType.dump();
+        outerSubstType->dump();
+      }
+      llvm::errs() << "planTupleFromIndirectResult\n";
+      innerOrigType.dump();
+      innerSubstType->dump();
+      outerOrigType.dump();
+      outerSubstType->dump();
+      innerResult.dump();
+      innerResultAddr->dump();
+      // assert(false);
       planTupleFromIndirectResult(
           innerOrigType, cast<TupleType>(innerSubstType), outerOrigType,
           cast<TupleType>(outerSubstType), planData, innerResultAddr);
@@ -3280,6 +3306,36 @@ static ManagedValue createAutoDiffThunk(SILGenFunction &SGF,
       SGF, loc, managedOriginal, inputOrigTypeNotDiff, inputSubstTypeNotDiff,
       outputOrigTypeNotDiff, outputSubstTypeNotDiff, expectedTLNotDiff);
 
+  AutoDiffParameterIndicesBuilder paramIndicesBuilder(inputSubstType);
+  for (auto i : range(inputSubstType->getNumParams()))
+    if (!inputSubstType->getParams()[i].isNonDifferentiable())
+      paramIndicesBuilder.setParameter(i);
+  auto *parameterIndices =
+      paramIndicesBuilder.build(inputSubstType->getASTContext());
+
+  auto getAssocFnTy =
+      [&](CanAnyFunctionType fnTy, AutoDiffAssociatedFunctionKind kind)
+          -> CanAnyFunctionType {
+        auto assocTy = fnTy->getAutoDiffAssociatedFunctionType(
+            parameterIndices, /*resultIndex*/ 0, /*differentiationOrder*/ 1,
+            kind, LookUpConformanceInModule(SGF.SGM.M.getSwiftModule()));
+        // Strip `@noescape` to prevent assertion failure during type lowering:
+        // result with `SILFunctionType` cannot be `@noescape`.
+        auto result = cast<AnyFunctionType>(assocTy->getCanonicalType());
+        return result.withExtInfo(result->getExtInfo().withNoEscape(false));
+      };
+  auto getAssocFnPattern =
+      [&](AbstractionPattern pattern, AutoDiffAssociatedFunctionKind kind)
+          -> AbstractionPattern {
+        // If pattern does not store an `AnyFunctionType`, return original
+        // pattern. This logic handles opaque abstraction patterns.
+        auto patternType = pattern.getAs<AnyFunctionType>();
+        if (!patternType)
+          return pattern;
+        return AbstractionPattern(
+            pattern.getGenericSignature(), getAssocFnTy(patternType, kind));
+      };
+
   auto createAssocFnThunk = [&](AutoDiffAssociatedFunctionKind kind)
       -> ManagedValue {
     // `autodiff_function_extract` is consuming; copy `fn` before passing as
@@ -3295,9 +3351,33 @@ static ManagedValue createAutoDiffThunk(SILGenFunction &SGF,
             sourceType->getDifferentiationParameterIndices(), /*resultIndex*/ 0,
             /*differentiationOrder*/ 1, kind, SGF.SGM.Types,
             LookUpConformanceInModule(SGF.SGM.M.getSwiftModule()));
-    auto actualAssocFnType = managedAssocFn.getType().castTo<SILFunctionType>();
-    return SGF.getThunkedAutoDiffAssociatedFunction(
-        managedAssocFn, actualAssocFnType, expectedAssocFnType);
+
+    auto assocFnInputOrigType = getAssocFnPattern(inputOrigTypeNotDiff, kind);
+    auto assocFnInputSubstType = getAssocFnTy(inputSubstTypeNotDiff, kind);
+    auto assocFnInputGenSig = assocFnInputOrigType.hasGenericSignature()
+        ? assocFnInputOrigType.getGenericSignature() : nullptr;
+    auto assocFnOutputOrigType = AbstractionPattern::getAutoDiffAssociatedFunctionType(
+        assocFnInputGenSig,
+        inputSubstTypeNotDiff.withExtInfo(inputSubstTypeNotDiff->getExtInfo().withNoEscape(false)),
+        kind,
+        expectedAssocFnType);
+    auto assocFnOutputSubstType = getAssocFnTy(outputSubstTypeNotDiff, kind);
+
+    auto &assocFnExpectedTL = SGF.getTypeLowering(assocFnOutputOrigType,
+                                                  assocFnOutputSubstType);
+
+    auto thunkedAssocFn = createThunk(
+        SGF, loc, managedAssocFn, assocFnInputOrigType, assocFnInputSubstType,
+        assocFnOutputOrigType, assocFnOutputSubstType, assocFnExpectedTL);
+    if (sourceType->isNoEscape()) {
+      auto expectedType =
+          assocFnExpectedTL.getLoweredType().castTo<SILFunctionType>();
+      expectedType = expectedType->getWithExtInfo(
+          expectedType->getExtInfo().withNoEscape());
+      thunkedAssocFn = SGF.B.createConvertEscapeToNoEscape(
+          loc, thunkedAssocFn, SILType::getPrimitiveObjectType(expectedType));
+    }
+    return thunkedAssocFn;
   };
 
   auto thunkedJVP = createAssocFnThunk(AutoDiffAssociatedFunctionKind::JVP);
@@ -3806,6 +3886,7 @@ SILGenModule::getOrCreateAutoDiffAssociatedFunctionThunk(
   return thunk;
 }
 
+#if 0
 // SWIFT_ENABLE_TENSORFLOW
 /// Adapted from `SILGenModule::getOrCreateReabstractionThunk`.
 // TODO: Dedupe with `getOrCreateReabstractionThunk` in Differentiation.cpp.
@@ -4008,6 +4089,7 @@ SILGenFunction::getThunkedAutoDiffAssociatedFunction(
   thunkSGF.B.createReturn(loc, retVal);
   return getThunkedValue();
 }
+#endif
 
 static void buildWithoutActuallyEscapingThunkBody(SILGenFunction &SGF,
                                                   CanType dynamicSelfType) {

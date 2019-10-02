@@ -176,6 +176,10 @@ AbstractionPattern::getOptional(AbstractionPattern object) {
   case Kind::CXXMethodType:
   case Kind::CurriedCXXMethodType:
   case Kind::PartialCurriedCXXMethodType:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType:
+  case Kind::AutoDiffLinearMapFunctionType:
+  // SWIFT_ENABLE_TENSORFLOW END
     llvm_unreachable("cannot add optionality to non-type abstraction");
   case Kind::Opaque:
     return AbstractionPattern::getOpaque();
@@ -238,6 +242,10 @@ bool AbstractionPattern::matchesTuple(CanTupleType substType) {
   case Kind::CXXMethodType:
   case Kind::CurriedCXXMethodType:
   case Kind::PartialCurriedCXXMethodType:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType:
+  case Kind::AutoDiffLinearMapFunctionType:
+  // SWIFT_ENABLE_TENSORFLOW END
     return false;
   case Kind::Opaque:
     return true;
@@ -303,6 +311,10 @@ AbstractionPattern::getTupleElementType(unsigned index) const {
   case Kind::CXXMethodType:
   case Kind::CurriedCXXMethodType:
   case Kind::PartialCurriedCXXMethodType:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType:
+  case Kind::AutoDiffLinearMapFunctionType:
+  // SWIFT_ENABLE_TENSORFLOW END
     llvm_unreachable("function types are not tuples");
   case Kind::Opaque:
     return *this;
@@ -430,6 +442,47 @@ AbstractionPattern AbstractionPattern::getFunctionResultType() const {
     return AbstractionPattern(getGenericSignatureForFunctionComponent(),
                               getResultType(getType()),
                               getObjCMethod()->getReturnType().getTypePtr());
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType: {
+    SmallVector<AbstractionPattern, 2> results;
+    results.push_back(AbstractionPattern::getOpaque());
+    AutoDiffAssociatedFunctionKind assocFnKind(
+        static_cast<AutoDiffAssociatedFunctionKind::innerty>(AutoDiffAssocFnType.getInt()));
+    switch (assocFnKind) {
+    case AutoDiffAssociatedFunctionKind::JVP:
+      results.push_back(AbstractionPattern::getAutoDiffLinearMapFunctionType(
+          getGenericSignatureForFunctionComponent(), getType(),
+          AutoDiffLinearMapKind::Differential));
+      break;
+    case AutoDiffAssociatedFunctionKind::VJP:
+      results.push_back(AbstractionPattern::getAutoDiffLinearMapFunctionType(
+          getGenericSignatureForFunctionComponent(), getType(),
+          AutoDiffLinearMapKind::Pullback));
+      break;
+    }
+    llvm::errs() << "AbstractionPattern::getFunctionResultType() Kind::AutoDiffAssociatedFunctionType\n";
+    AbstractionPattern::getTuple(getType()->getASTContext().AllocateCopy(results)).dump();
+    return AbstractionPattern::getTuple(getType()->getASTContext().AllocateCopy(results));
+  }
+  case Kind::AutoDiffLinearMapFunctionType: {
+    auto fnType = cast<AnyFunctionType>(getType());
+    unsigned numResults = 0;
+    switch (AutoDiffLinMapKind) {
+    case AutoDiffLinearMapKind::Differential:
+      numResults = 1;
+      break;
+    case AutoDiffLinearMapKind::Pullback:
+      numResults = fnType->getNumParams(); // TODO: NEED TO USE PARAMETER INDICES COUNT, STORE IN OtherData
+      break;
+    }
+    assert(numResults > 0);
+    if (numResults == 1)
+      return AbstractionPattern::getOpaque();
+    llvm::errs() << "AbstractionPattern::getFunctionResultType() Kind::AutoDiffAssociatedFunctionType\n";
+    SmallVector<AbstractionPattern, 4> results(numResults, AbstractionPattern::getOpaque());
+    return AbstractionPattern::getTuple(fnType->getASTContext().AllocateCopy(results));
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
   }
   llvm_unreachable("bad kind");
 }
@@ -559,6 +612,18 @@ AbstractionPattern::getFunctionParamType(unsigned index) const {
                               params[index].getParameterType(),
                           getClangFunctionParameterType(getClangType(), index));
   }
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType: {
+    auto *silFnType = AutoDiffAssocFnType.getPointer();
+    if (silFnType->getParameters()[index].isFormalIndirect())
+      return AbstractionPattern::getOpaque();
+    auto params = cast<AnyFunctionType>(getType()).getParams();
+    return AbstractionPattern(getGenericSignatureForFunctionComponent(),
+                              params[index].getParameterType());
+  }
+  case Kind::AutoDiffLinearMapFunctionType:
+    return AbstractionPattern::getOpaque();
+  // SWIFT_ENABLE_TENSORFLOW END
   default:
     llvm_unreachable("does not have function parameters");
   }
@@ -588,6 +653,10 @@ AbstractionPattern AbstractionPattern::getOptionalObjectType() const {
   case Kind::CurriedCXXMethodType:
   case Kind::PartialCurriedCXXMethodType:
   case Kind::Tuple:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType:
+  case Kind::AutoDiffLinearMapFunctionType:
+  // SWIFT_ENABLE_TENSORFLOW END
     llvm_unreachable("pattern for function or tuple cannot be for optional");
 
   case Kind::Opaque:
@@ -627,6 +696,10 @@ AbstractionPattern AbstractionPattern::getReferenceStorageReferentType() const {
   case Kind::CurriedCXXMethodType:
   case Kind::PartialCurriedCXXMethodType:
   case Kind::Tuple:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType:
+  case Kind::AutoDiffLinearMapFunctionType:
+  // SWIFT_ENABLE_TENSORFLOW END
     return *this;
   case Kind::Type:
     return AbstractionPattern(getGenericSignature(),
@@ -658,8 +731,15 @@ void AbstractionPattern::print(raw_ostream &out) const {
     return;
   case Kind::Type:
   case Kind::Discard:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffAssociatedFunctionType:
+  // SWIFT_ENABLE_TENSORFLOW END
     out << (getKind() == Kind::Type
               ? "AP::Type" :
+            // SWIFT_ENABLE_TENSORFLOW
+            getKind() == Kind::AutoDiffAssociatedFunctionType
+              ? "AP::AutoDiffAssociatedFunctionType" :
+            // SWIFT_ENABLE_TENSORFLOW END
             getKind() == Kind::Discard
               ? "AP::Discard" : "<<UNHANDLED CASE>>");
     if (auto sig = getGenericSignature()) {
@@ -669,6 +749,16 @@ void AbstractionPattern::print(raw_ostream &out) const {
     getType().dump(out);
     out << ')';
     return;
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::AutoDiffLinearMapFunctionType:
+    out << "AP::AutoDiffLinearMapFunctionType";
+    if (auto sig = getGenericSignature())
+      sig->print(out);
+    out << '(';
+    getType().dump(out);
+    out << ')';
+    return;
+  // SWIFT_ENABLE_TENSORFLOW END
   case Kind::Tuple:
     out << "AP::Tuple(";
     for (unsigned i = 0, e = getNumTupleElements(); i != e; ++i) {

@@ -18,8 +18,22 @@ from . import product
 class TensorFlow(product.Product):
     @classmethod
     def product_source_name(cls):
-        """product_source_name() -> str
-
-        The name of the source code directory of this product.
-        """
         return "tensorflow"
+
+    # @classmethod
+    # def is_build_script_impl_product(cls):
+    #     return False
+
+    def build(self, host_target):
+        indexstoredb.run_build_script_helper(
+            'build', host_target, self, self.args)
+
+    def test(self, host_target):
+        if self.args.test and self.args.test_sourcekitlsp:
+            indexstoredb.run_build_script_helper(
+                'test', host_target, self, self.args)
+
+    def install(self, host_target):
+        if self.args.install_sourcekitlsp:
+            indexstoredb.run_build_script_helper(
+                'install', host_target, self, self.args)

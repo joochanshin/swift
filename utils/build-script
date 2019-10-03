@@ -812,9 +812,6 @@ class BuildScriptInvocation(object):
             product_classes.append(products.LibCXX)
         if self.args.build_libicu:
             product_classes.append(products.LibICU)
-        # SWIFT_ENABLE_TENSORFLOW
-        if self.args.build_tensorflow:
-            product_classes.append(products.TensorFlow)
         product_classes.append(products.Swift)
         if self.args.build_lldb:
             product_classes.append(products.LLDB)
@@ -842,6 +839,9 @@ class BuildScriptInvocation(object):
             product_classes.append(products.Benchmarks)
         if self.args.tsan_libdispatch_test:
             product_classes.append(products.TSanLibDispatch)
+        # SWIFT_ENABLE_TENSORFLOW
+        if self.args.build_tensorflow:
+            product_classes.append(products.TensorFlow)
         return product_classes
 
     def execute(self):

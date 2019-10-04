@@ -6590,6 +6590,61 @@ public:
     auto *predEnum = getPullbackInfo().getBranchingTraceDecl(bb);
     auto *predEnumField =
         getPullbackInfo().lookUpLinearMapStructEnumField(bb);
+    if (!pullbackStructElements.count(predEnumField)) {
+      getOriginal().dump();
+      llvm::errs() << "HELLO bb" << bb->getDebugID() << "!\n";
+#if 0
+      auto hello = llvm::make_filter_range(bb->getPredecessorBlocks(), [&](SILBasicBlock *bb) {
+        return !activeValues[bb].empty();
+      });
+      llvm::errs() << "size: " << hello.empty() << "!\n";
+#endif
+#if 0
+      SILBasicBlock *hello = nullptr;
+      for (auto *predBB : bb->getPredecessorBlocks()) {
+        if (activeValues[predBB].empty())
+          continue;
+        assert(!hello);
+        hello = predBB;
+      }
+#endif
+      // Use dominator API instead
+#if 0
+      SmallDenseSet<SILBasicBlock *> visitedPredecessors;
+      SmallVector<SILBasicBlock *, 4> predecessorWorklist(bb->getPredecessorBlocks());
+      while (!predecessorWorklist.empty()) {
+        auto *predBB = predecessorWorklist.back();
+        predecessorWorklist.pop_back();
+        if (visitedPredecessors.count(predBB))
+          continue;
+        visitedPredecessors.insert(predBB);
+        if (activeValues[predBB].empty()) {
+          predecessorWorklist.append(predBB->getPredecessorBlocks().begin(),
+                                     predBB->getPredecessorBlocks().end());
+          continue;
+        }
+        // bb->getPredecessorBlocks()
+        auto *pbBB = getPullbackBlock(predBB);
+        // builder.setInsertionPoint(pbBB);
+        builder.createBranch(pbLoc, pbBB);
+      }
+#endif
+      domInfo->print(llvm::errs());
+      for (auto pair : activeValues) {
+        llvm::errs() << "ACTIVE VALUES IN BB" << pair.first->getDebugID() << ": " << pair.second.size() << "\n";
+      }
+      auto *domNode = domInfo->getNode(bb)->getIDom();
+      llvm::errs() << "DOM NODE: " << domNode << "\n";
+      llvm::errs() << "DOM bb: " << domNode->getBlock() << "\n";
+      llvm::errs() << "DOM OF bb" << bb->getDebugID() << ": " << domNode->getBlock()->getDebugID() << "\n";
+      while (activeValues[domNode->getBlock()].empty()) {
+        domNode = domNode->getIDom();
+        llvm::errs() << "DOM OF bb" << bb->getDebugID() << ": " << domNode->getBlock()->getDebugID() << "\n";
+      }
+      auto *pbBB = getPullbackBlock(domNode->getBlock());
+      builder.createBranch(pbLoc, pbBB);
+      return;
+    }
     auto predEnumVal = getPullbackStructElement(bb, predEnumField);
 
     // Propagate adjoint values from active basic block arguments to

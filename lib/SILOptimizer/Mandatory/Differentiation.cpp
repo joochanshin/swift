@@ -8015,6 +8015,15 @@ bool ADContext::processDifferentiableAttribute(
         diagnoseUnsupportedControlFlow(*this, original, invoker)))
       return true;
 
+    // JVP and differential generation do not currently support functions with
+    // multiple basic blocks.
+    if (original->getBlocks().size() > 1) {
+      emitNondifferentiabilityError(
+          original->getLocation().getSourceLoc(), invoker,
+          diag::autodiff_jvp_control_flow_not_supported);
+      return true;
+    }
+
     jvp = createEmptyJVP(*this, original, attr, isAssocFnExported);
     getGeneratedFunctions().push_back(jvp);
 

@@ -757,6 +757,88 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
     auto *AFD = constant.getAbstractFunctionDecl();
     auto origFnType = AFD->getInterfaceType()->castTo<AnyFunctionType>();
     auto origSilFnType = F->getLoweredFunctionType();
+
+    auto differentiatingAttrs =
+        AFD->getAttrs().getAttributes<DifferentiatingAttr>();
+    for (auto *diffAttr : differentiatingAttrs) {
+      auto *origAFD = diffAttr->getOriginalFunction();
+      auto *origFn = getFunction(SILDeclRef(origAFD), NotForDefinition);
+      auto *origFnType = origAFD->getInterfaceType()->castTo<AnyFunctionType>();
+      auto origSilFnType = origFn->getLoweredFunctionType();
+      // Compute lowered parameter indices.
+      auto *paramIndices = diffAttr->getParameterIndices();
+      auto *loweredParamIndices = autodiff::getLoweredParameterIndices(
+          paramIndices, origFnType);
+      SILAutoDiffIndices indices(/*source*/ 0, loweredParamIndices);
+
+      SILDifferentiableAttr *silDiffAttr = nullptr;
+      for (auto *tmpAttr : origFn->getDifferentiableAttrs()) {
+        if (paramIndices == tmpAttr->getIndices().parameters) {
+          assert(!silDiffAttr);
+          silDiffAttr = tmpAttr;
+          break;
+        }
+#if 0
+        llvm::errs() << "EXISTING!\n";
+#endif
+      }
+      if (!silDiffAttr) {
+        silDiffAttr = SILDifferentiableAttr::create(
+            M, indices, /*jvpName*/ StringRef(), /*vjpName*/ StringRef(),
+            AFD->getGenericSignature());
+#if 0
+        llvm::errs() << "NEW!\n";
+#endif
+        assert(&origFn->getModule() == &M &&
+               "Original function must be in same module as derivative function");
+        origFn->addDifferentiableAttr(silDiffAttr);
+      }
+
+      // TODO: COPIED
+      auto lookUpConformance = LookUpConformanceInModule(M.getSwiftModule());
+      auto expectedDerivativeType =
+          origSilFnType->getAutoDiffAssociatedFunctionType(
+              indices.parameters, indices.source, diffAttr->getDerivativeKind(),
+              Types, lookUpConformance);
+
+      // Self reordering is necessary if wrt at least two parameters, including
+      // self.
+      auto shouldReorderSelf = [&]() {
+        if (!origFn->hasSelfParam())
+          return false;
+        auto selfParamIndex = origSilFnType->getNumParameters() - 1;
+        if (!indices.isWrtParameter(selfParamIndex))
+          return false;
+        return indices.parameters->getNumIndices() > 1;
+      };
+      bool reorderSelf = shouldReorderSelf();
+
+      // Thunk JVP method, if it is defined.
+      SILFunction *derivativeThunk;
+      if (reorderSelf || F->getLoweredFunctionType() != expectedDerivativeType) {
+        derivativeThunk = getOrCreateAutoDiffAssociatedFunctionThunk(
+            origFn, indices, F, diffAttr->getDerivativeKind(), reorderSelf);
+      } else {
+        auto *id = AutoDiffAssociatedFunctionIdentifier::get(
+            diffAttr->getDerivativeKind(), diffAttr->getParameterIndices(),
+            AFD->getASTContext());
+        derivativeThunk = getOrCreateAutoDiffThunk(
+            SILDeclRef(origAFD).asAutoDiffAssociatedFunction(id), F,
+            expectedDerivativeType);
+      }
+      switch (diffAttr->getDerivativeKind()) {
+      case AutoDiffAssociatedFunctionKind::JVP:
+        silDiffAttr->setJVPName(derivativeThunk->getName());
+        break;
+      case AutoDiffAssociatedFunctionKind::VJP:
+        silDiffAttr->setVJPName(derivativeThunk->getName());
+        break;
+      }
+      llvm::errs() << "SILGEN DIFFERENTIATING!\n";
+      diffAttr->print(llvm::errs(), AFD); llvm::errs() << "\n";
+      silDiffAttr->print(llvm::errs()); llvm::errs() << "\n";
+    }
+
     // Jointly iterate over AST `@differentiable` attributes and SIL
     // `[differentiable]` attributes.
     auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
@@ -831,6 +913,14 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
     }
   }
   F->verify();
+
+#if 0
+  // llvm::errs() << "postEMIT " << F->getName() << "\n";
+  if (F->getName() == "$s39differentiable_attr_silgen_other_module7WrapperV1moiyA2C_ACtFZ") {
+    llvm::errs() << "HELLO FOUND s39differentiable_attr_silgen_other_module7WrapperV1moiyA2C_ACtFZ, " << F->getDifferentiableAttrs().size() << "\n";
+    F->dump();
+  }
+#endif
 }
 
 void SILGenModule::
@@ -875,10 +965,6 @@ void SILGenModule::emitAbstractFuncDecl(AbstractFunctionDecl *AFD) {
     if (!hasFunction(thunk))
       emitNativeToForeignThunk(thunk);
   }
-
-  // TODO: Handle SILGen for `@differentiating` attribute.
-  // Tentative solution: SILGen derivative function normally but also emit
-  // mangled redirection thunk for retroactive differentiation.
 }
 
 void SILGenModule::emitFunction(FuncDecl *fd) {

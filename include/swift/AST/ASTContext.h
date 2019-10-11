@@ -111,7 +111,7 @@ namespace swift {
   class UnifiedStatsReporter;
   class IndexSubset;
   class VectorSpace;
-  class DifferentiableAttr;
+  class DeclAttribute;
 
   enum class KnownProtocolKind : uint8_t;
 
@@ -276,10 +276,11 @@ public:
   /// Cache of autodiff-associated vector spaces.
   llvm::DenseMap<Type, Optional<VectorSpace>> AutoDiffVectorSpaces;
 
-  /// Cache of `@differentiable` attributes keyed by parameter indices. This
-  /// helps us diagnose multiple `@differentiable`s that are with respect to the
-  /// same set of parameters.
-  llvm::DenseMap<std::pair<Decl *, IndexSubset *>, DifferentiableAttr *>
+  /// Cache of `@differentiable` and `@differentiating` attributes keyed by
+  /// original function declaration and parameter indices. This helps us
+  /// diagnose multiple `@differentiable` and `@differentiating` attributes
+  /// for the same original function and parameter indices.
+  llvm::DenseMap<std::pair<Decl *, IndexSubset *>, DeclAttribute *>
       DifferentiableAttrs;
 
 private:

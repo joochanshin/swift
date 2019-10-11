@@ -3610,6 +3610,7 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
     attr->setInvalid();
     return;
   }
+  attr->setDerivativeKind(kind);
   // `value: R` result tuple element must conform to `Differentiable`.
   auto diffableProto = ctx.getProtocol(KnownProtocolKind::Differentiable);
   auto valueResultType = valueResultElt.getType();
@@ -3824,6 +3825,60 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
     if (checkedWrtParamIndices == cda->getParameterIndices())
       da = const_cast<DifferentiableAttr *>(cda);
   // If the original function does not have a `@differentiable` attribute with
+  // the same differentiation parameters, return;
+  if (!da)
+    return;
+  // Valid `@differentiating` attributes are uniqued by their parameter
+  // indices. Reject duplicate attributes for the same decl and parameter
+  // indices pair.
+  auto insertion = ctx.DifferentiableAttrs.try_emplace(
+      {originalFn, checkedWrtParamIndices}, da);
+  if (!insertion.second && insertion.first->getSecond() != da) {
+    diagnoseAndRemoveAttr(da, diag::differentiable_attr_duplicate);
+    TC.diagnose(insertion.first->getSecond()->getLocation(),
+                diag::differentiable_attr_duplicate_note);
+    return;
+  }
+  // Otherwise, if the original function has a `@differentiable` attribute with
+  // the same differentiation parameters, check if the `@differentiable`
+  // attribute already has a different registered derivative. If so, emit an
+  // error on the `@differentiating` attribute. Otherwise, register the
+  // derivative in the `@differentiable` attribute.
+  switch (kind) {
+  case AutoDiffAssociatedFunctionKind::JVP:
+    // If there's a different registered derivative, emit an error.
+    if ((da->getJVP() &&
+         da->getJVP()->Name.getBaseName() != derivative->getBaseName()) ||
+        (da->getJVPFunction() && da->getJVPFunction() != derivative)) {
+      diagnoseAndRemoveAttr(
+          attr, diag::differentiating_attr_original_already_has_derivative,
+          originalFn->getFullName());
+      return;
+    }
+    da->setJVPFunction(derivative);
+    break;
+  case AutoDiffAssociatedFunctionKind::VJP:
+    // If there's a different registered derivative, emit an error.
+    if ((da->getVJP() &&
+         da->getVJP()->Name.getBaseName() != derivative->getBaseName()) ||
+        (da->getVJPFunction() && da->getVJPFunction() != derivative)) {
+      diagnoseAndRemoveAttr(
+          attr, diag::differentiating_attr_original_already_has_derivative,
+          originalFn->getFullName());
+      return;
+    }
+    da->setVJPFunction(derivative);
+    break;
+  }
+
+#if 0
+  // Try to find a `@differentiable` attribute on the original function with the
+  // same differentiation parameters.
+  DifferentiableAttr *da = nullptr;
+  for (auto *cda : originalFn->getAttrs().getAttributes<DifferentiableAttr>())
+    if (checkedWrtParamIndices == cda->getParameterIndices())
+      da = const_cast<DifferentiableAttr *>(cda);
+  // If the original function does not have a `@differentiable` attribute with
   // the same differentiation parameters, create one.
   if (!da) {
     da = DifferentiableAttr::create(ctx, /*implicit*/ true, attr->AtLoc,
@@ -3884,6 +3939,7 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
     da->setVJPFunction(derivative);
     break;
   }
+#endif
 }
 
 /// Pushes the subset's parameter's types to `paramTypes`, in the order in

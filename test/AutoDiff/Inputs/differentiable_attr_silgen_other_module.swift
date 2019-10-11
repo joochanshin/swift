@@ -4,6 +4,7 @@ public struct Wrapper : Differentiable, AdditiveArithmetic {
     self.x = x
   }
 
+  @inlinable
   public static func + (lhs: Wrapper, rhs: Wrapper) -> Wrapper {
     return Wrapper(lhs.x + rhs.x)
   }
@@ -14,6 +15,8 @@ public struct Wrapper : Differentiable, AdditiveArithmetic {
     return (lhs + rhs, { v in (v, v) })
   }
 
+  // @inlinable
+  @_semantics("asdf")
   public static func * (lhs: Wrapper, rhs: Wrapper) -> Wrapper {
     return Wrapper(lhs.x * rhs.x)
   }

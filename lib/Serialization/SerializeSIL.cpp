@@ -468,7 +468,10 @@ void SILSerializer::writeSILFunction(const SILFunction &F, bool DeclOnly) {
             : IdentifierID(),
         S.addGenericSignatureRef(DA->getDerivativeGenericSignature()),
         indices.source, parameters);
+    llvm::errs() << "SERIALIZING SILDIFFATTR for " << F.getName() << "\n";
+    DA->print(llvm::errs()); llvm::errs() << "\n";
   }
+  llvm::errs() << "SERIALIZING SILFN " << F.getName() << "\n";
 
   // Assign a unique ID to each basic block of the SILFunction.
   unsigned BasicID = 0;

@@ -797,7 +797,7 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
       // TODO: COPIED
       auto lookUpConformance = LookUpConformanceInModule(M.getSwiftModule());
       auto expectedDerivativeType =
-          origSilFnType->getAutoDiffAssociatedFunctionType(
+          origSilFnType->getAutoDiffDerivativeFunctionType(
               indices.parameters, indices.source, diffAttr->getDerivativeKind(),
               Types, lookUpConformance);
 
@@ -816,21 +816,21 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
       // Thunk JVP method, if it is defined.
       SILFunction *derivativeThunk;
       if (reorderSelf || F->getLoweredFunctionType() != expectedDerivativeType) {
-        derivativeThunk = getOrCreateAutoDiffAssociatedFunctionThunk(
+        derivativeThunk = getOrCreateAutoDiffDerivativeFunctionThunk(
             origFn, indices, F, diffAttr->getDerivativeKind(), reorderSelf);
       } else {
-        auto *id = AutoDiffAssociatedFunctionIdentifier::get(
+        auto *id = AutoDiffDerivativeFunctionIdentifier::get(
             diffAttr->getDerivativeKind(), diffAttr->getParameterIndices(),
             AFD->getASTContext());
         derivativeThunk = getOrCreateAutoDiffThunk(
-            SILDeclRef(origAFD).asAutoDiffAssociatedFunction(id), F,
+            SILDeclRef(origAFD).asAutoDiffDerivativeFunction(id), F,
             expectedDerivativeType);
       }
       switch (diffAttr->getDerivativeKind()) {
-      case AutoDiffAssociatedFunctionKind::JVP:
+      case AutoDiffDerivativeFunctionKind::JVP:
         silDiffAttr->setJVPName(derivativeThunk->getName());
         break;
-      case AutoDiffAssociatedFunctionKind::VJP:
+      case AutoDiffDerivativeFunctionKind::VJP:
         silDiffAttr->setVJPName(derivativeThunk->getName());
         break;
       }

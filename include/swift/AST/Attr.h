@@ -1683,7 +1683,7 @@ class DifferentiatingAttr final
   /// The differentiation parameters' indices, resolved by the type checker.
   IndexSubset *ParameterIndices = nullptr;
   /// The derivative function kind (JVP or VJP), resolved by the type checker.
-  Optional<AutoDiffAssociatedFunctionKind> Kind = None;
+  Optional<AutoDiffDerivativeFunctionKind> Kind = None;
 
   explicit DifferentiatingAttr(ASTContext &context, bool implicit,
                                SourceLoc atLoc, SourceRange baseRange,
@@ -1714,11 +1714,11 @@ public:
   void setOriginalFunction(FuncDecl *decl) { OriginalFunction = decl; }
 
 
-  AutoDiffAssociatedFunctionKind getDerivativeKind() const {
+  AutoDiffDerivativeFunctionKind getDerivativeKind() const {
     assert(Kind && "Derivative function kind has not yet been resolved");
     return *Kind;
   }
-  void setDerivativeKind(AutoDiffAssociatedFunctionKind kind) { Kind = kind; }
+  void setDerivativeKind(AutoDiffDerivativeFunctionKind kind) { Kind = kind; }
 
   /// The parsed differentiation parameters, i.e. the list of parameters
   /// specified in 'wrt:'.

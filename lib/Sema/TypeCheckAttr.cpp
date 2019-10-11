@@ -3845,7 +3845,7 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
   // error on the `@differentiating` attribute. Otherwise, register the
   // derivative in the `@differentiable` attribute.
   switch (kind) {
-  case AutoDiffAssociatedFunctionKind::JVP:
+  case AutoDiffDerivativeFunctionKind::JVP:
     // If there's a different registered derivative, emit an error.
     if ((da->getJVP() &&
          da->getJVP()->Name.getBaseName() != derivative->getBaseName()) ||
@@ -3857,7 +3857,7 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
     }
     da->setJVPFunction(derivative);
     break;
-  case AutoDiffAssociatedFunctionKind::VJP:
+  case AutoDiffDerivativeFunctionKind::VJP:
     // If there's a different registered derivative, emit an error.
     if ((da->getVJP() &&
          da->getVJP()->Name.getBaseName() != derivative->getBaseName()) ||

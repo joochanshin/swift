@@ -3168,7 +3168,7 @@ void SILDifferentiabilityWitness::print(
       }
     }
     if (!requirements.empty()) {
-      OS << " [where ";
+      OS << "[where ";
       auto subPrinter = PrintOptions::printSIL();
       subPrinter.GenericEnv = origGenEnv;
       interleave(requirements,

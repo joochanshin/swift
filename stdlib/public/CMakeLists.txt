@@ -65,6 +65,11 @@ endif()
 
 # SWIFT_ENABLE_TENSORFLOW
 if(SWIFT_BUILD_STDLIB)
+  add_subdirectory(Differentiation)
+endif()
+
+# SWIFT_ENABLE_TENSORFLOW
+if(SWIFT_BUILD_STDLIB)
   add_subdirectory(Python)
 endif()
 
@@ -76,9 +81,6 @@ if(SWIFT_BUILD_STDLIB AND SWIFT_ENABLE_TENSORFLOW)
   add_subdirectory(CTensorFlow)
   add_subdirectory(TensorFlow)
 endif()
-
-# SWIFT_ENABLE_TENSORFLOW
-add_subdirectory(Differentiation)
 
 if(SWIFT_BUILD_STDLIB OR SWIFT_BUILD_REMOTE_MIRROR)
   add_subdirectory(Reflection)

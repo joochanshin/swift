@@ -205,10 +205,8 @@ set(SWIFTLIB_SOURCES
   Availability.swift
   CollectionDifference.swift
   CollectionOfOne.swift
-  # SWIFT_ENABLE_TENSORFLOW
   Differentiable.swift
   Diffing.swift
-  Differentiable.swift
   # SWIFT_ENABLE_TENSORFLOW
   DifferentiationSupport.swift
   Mirror.swift

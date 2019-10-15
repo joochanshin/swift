@@ -1063,6 +1063,17 @@ void IRGenerator::emitGlobalTopLevel() {
     CurrentIGMPtr IGM = getGenModule(prop.getDecl()->getInnermostDeclContext());
     IGM->emitSILProperty(&prop);
   }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  // Emit differentiability witnesses.
+  for (auto &dw : PrimaryIGM->getSILModule().getDifferentiabilityWitnessList()) {
+    assert(dw.getJVP() && dw.getVJP() &&
+           "JVP and VJP functions should exist after differentiation transform");
+    // TODO: Check that JVP and VJP have same IRGenModules?
+    CurrentIGMPtr IGM = getGenModule(dw.getJVP());
+    IGM->emitSILDifferentiabilityWitness(&dw);
+  }
+  // SWIFT_ENABLE_TENSORFLOW
   
   // Emit code coverage mapping data.
   PrimaryIGM->emitCoverageMapping();
@@ -4384,6 +4395,15 @@ IRGenModule::getAddrOfWitnessTablePattern(const NormalProtocolConformance *conf,
   auto entity = LinkEntity::forProtocolWitnessTablePattern(conf);
   return getAddrOfLLVMVariable(entity, definition, DebugTypeInfo());
 }
+
+// SWIFT_ENABLE_TENSORFLOW
+/// Look up the address of a differentiability witness.
+llvm::Constant *IRGenModule::getAddrOfDifferentiabilityWitness(
+    SILFunction *original, const AutoDiffConfig config, ConstantInit definition) {
+  auto entity = LinkEntity::forDifferentiabilityWitness(original, config);
+  return getAddrOfLLVMVariable(entity, definition, DebugTypeInfo());
+}
+// SWIFT_ENABLE_TENSORFLOW
 
 llvm::Function *
 IRGenModule::getAddrOfAssociatedTypeWitnessTableAccessFunction(

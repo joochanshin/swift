@@ -1970,6 +1970,23 @@ void IRGenerator::ensureRelativeSymbolCollocation(SILDefaultWitnessTable &wt) {
   }
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+void IRGenerator::ensureRelativeSymbolCollocation(
+    SILDifferentiabilityWitness &dw) {
+  if (!CurrentIGM)
+    return;
+
+  if (isAvailableExternally(dw.getLinkage()))
+    return;
+
+  forceLocalEmitOfLazyFunction(dw.getOriginalFunction());
+  if (auto *jvp = dw.getJVP())
+    forceLocalEmitOfLazyFunction(jvp);
+  if (auto *vjp = dw.getJVP())
+    forceLocalEmitOfLazyFunction(vjp);
+}
+// SWIFT_ENABLE_TENSORFLOW END
+
 /// Do a memoized witness-table layout for a protocol.
 const ProtocolInfo &IRGenModule::getProtocolInfo(ProtocolDecl *protocol,
                                                  ProtocolInfoKind kind) {

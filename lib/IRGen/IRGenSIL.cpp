@@ -1926,6 +1926,7 @@ visitLinearFunctionExtractInst(LinearFunctionExtractInst *i) {
   (void)diffFnExp.claimAll();
   setLoweredExplosion(i, e);
 }
+// SWIFT_ENABLE_TENSORFLOW
 
 void IRGenSILFunction::visitFunctionRefBaseInst(FunctionRefBaseInst *i) {
   auto fn = i->getInitiallyReferencedFunction();

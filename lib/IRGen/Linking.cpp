@@ -414,6 +414,11 @@ std::string LinkEntity::mangleAsString() const {
   case Kind::ReflectionAssociatedTypeDescriptor:
     return mangler.mangleReflectionAssociatedTypeDescriptor(
                                                     getProtocolConformance());
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+    return mangler.mangleSILDifferentiabilityWitnessKey(
+        {getSILFunction()->getName(), *getAutoDiffConfig()});
+  // SWIFT_ENABLE_TENSORFLOW END
   }
   llvm_unreachable("bad entity kind!");
 }
@@ -630,6 +635,9 @@ SILLinkage LinkEntity::getLinkage(ForDefinition_t forDefinition) const {
 
   case Kind::DynamicallyReplaceableFunctionImpl:
   case Kind::DynamicallyReplaceableFunctionKeyAST:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+  // SWIFT_ENABLE_TENSORFLOW END
     return getSILLinkage(getDeclLinkage(getDecl()), forDefinition);
 
 
@@ -775,6 +783,9 @@ bool LinkEntity::isAvailableExternally(IRGenModule &IGM) const {
     return true;
 
   case Kind::SILFunction:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+  // SWIFT_ENABLE_TENSORFLOW END
     return ::isAvailableExternally(IGM, getSILFunction());
 
   case Kind::FieldOffset: {
@@ -876,6 +887,10 @@ llvm::Type *LinkEntity::getDefaultDeclarationType(IRGenModule &IGM) const {
   case Kind::ProtocolWitnessTable:
   case Kind::ProtocolWitnessTablePattern:
     return IGM.WitnessTableTy;
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+    return IGM.WitnessTableTy;
+  // SWIFT_ENABLE_TENSORFLOW END
   case Kind::FieldOffset:
     return IGM.SizeTy;
   case Kind::EnumCase:
@@ -952,6 +967,10 @@ Alignment LinkEntity::getAlignment(IRGenModule &IGM) const {
   case Kind::OpaqueTypeDescriptorAccessorVar:
   case Kind::ObjCResilientClassStub:
     return IGM.getPointerAlignment();
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+    return IGM.getPointerAlignment();
+  // SWIFT_ENABLE_TENSORFLOW END
   case Kind::TypeMetadataDemanglingCacheVariable:
     return Alignment(8);
   case Kind::SILFunction:
@@ -1028,6 +1047,11 @@ bool LinkEntity::isWeakImported(ModuleDecl *module) const {
   case Kind::ProtocolConformanceDescriptor:
     return getProtocolConformance()->getRootConformance()
                                    ->isWeakImported(module);
+
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+    return getSILFunction()->isWeakImported();
+  // SWIFT_ENABLE_TENSORFLOW END
 
   // TODO: Revisit some of the below, for weak conformances.
   case Kind::ObjCMetadataUpdateFunction:
@@ -1117,6 +1141,9 @@ const SourceFile *LinkEntity::getSourceFileForEmission() const {
   case Kind::SILFunction:
   case Kind::DynamicallyReplaceableFunctionVariable:
   case Kind::DynamicallyReplaceableFunctionKey:
+  // SWIFT_ENABLE_TENSORFLOW
+  case Kind::DifferentiabilityWitness:
+  // SWIFT_ENABLE_TENSORFLOW END
     sf = getSourceFileForDeclContext(getSILFunction()->getDeclContext());
     if (!sf)
       return nullptr;

@@ -383,6 +383,13 @@ class LinkEntity {
 
     /// A global function pointer for dynamically replaceable functions.
     DynamicallyReplaceableFunctionVariable,
+
+    // SWIFT_ENABLE_TENSORFLOW
+    /// A differentiability witness.
+    /// The pointer is a SILFunction *.
+    /// The secondary pointer is an AutoDiffConfig *.
+    DifferentiabilityWitness,
+    // SWIFT_ENABLE_TENSORFLOW END
   };
   friend struct llvm::DenseMapInfo<LinkEntity>;
 
@@ -467,6 +474,17 @@ class LinkEntity {
                                 getAssociatedConformanceIndex(c, associatedType,
                                                           associatedProtocol));
   }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  void setForDifferentiabilityWitness(
+      Kind kind, SILFunction *original, const AutoDiffConfig config) {
+    Pointer = original;
+    // TODO(!!!): Make this robust. We need to store a pointer to AutoDiffConfig.
+    SecondaryPointer =
+        const_cast<void*>(static_cast<const void*>(config.parameterIndices));
+    Data = LINKENTITY_SET_FIELD(Kind, unsigned(kind));
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
 
   // We store associated types using their index in their parent protocol
   // in order to avoid bloating LinkEntity out to three key pointers.
@@ -1005,6 +1023,16 @@ public:
     return entity;
   }
 
+  // SWIFT_ENABLE_TENSORFLOW
+  static LinkEntity forDifferentiabilityWitness(
+      SILFunction *original, const AutoDiffConfig config) {
+    LinkEntity entity;
+    entity.setForDifferentiabilityWitness(
+        Kind::DifferentiabilityWitness, original, config);
+    return entity;
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
+
   void mangle(llvm::raw_ostream &out) const;
   void mangle(SmallVectorImpl<char> &buffer) const;
   std::string mangleAsString() const;
@@ -1034,7 +1062,9 @@ public:
   SILFunction *getSILFunction() const {
     assert(getKind() == Kind::SILFunction ||
            getKind() == Kind::DynamicallyReplaceableFunctionVariable ||
-           getKind() == Kind::DynamicallyReplaceableFunctionKey);
+           getKind() == Kind::DynamicallyReplaceableFunctionKey ||
+           // SWIFT_ENABLE_TENSORFLOW
+           getKind() == Kind::DifferentiabilityWitness);
     return reinterpret_cast<SILFunction*>(Pointer);
   }
 
@@ -1076,6 +1106,12 @@ public:
     assert(getKind() == Kind::AssociatedTypeWitnessTableAccessFunction);
     return reinterpret_cast<ProtocolDecl*>(Pointer);
   }
+
+  AutoDiffConfig *getAutoDiffConfig() const {
+    assert(getKind() == Kind::DifferentiabilityWitness);
+    return reinterpret_cast<AutoDiffConfig *>(SecondaryPointer);
+  }
+
   bool isDynamicallyReplaceable() const {
     assert(getKind() == Kind::SILFunction);
     return LINKENTITY_GET_FIELD(Data, IsDynamicallyReplaceableImpl);

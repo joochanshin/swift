@@ -222,6 +222,7 @@ set(SWIFTLIB_SOURCES
 
 set(SWIFTLIB_GYB_SOURCES
   ${SWIFTLIB_ESSENTIAL_GYB_SOURCES}
+  DifferentialOperators.swift.gyb
   ExistentialCollection.swift.gyb
   MathFunctions.swift.gyb
   SIMDVectorTypes.swift.gyb

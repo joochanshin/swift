@@ -1,4 +1,4 @@
-//===--- DerivedConformanceRingMathProtocols.cpp --------------------------===//
+//===--- DerivedConformancePointwiseMultiplicative.cpp --------------------===//
 //
 // This source file is part of the Swift.org open source project
 //
@@ -10,8 +10,8 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This file implements explicit derivation of mathematical ring protocols for
-// struct types: AdditiveArithmetic and PointwiseMultiplicative.
+// This file implements explicit derivation of the PointwiseMultiplicative
+// protocol for struct types.
 //
 //===----------------------------------------------------------------------===//
 
@@ -32,20 +32,12 @@ using namespace swift;
 
 // Represents synthesizable math operators.
 enum MathOperator {
-  // `+(Self, Self)`: AdditiveArithmetic
-  Add,
-  // `-(Self, Self)`: AdditiveArithmetic
-  Subtract,
   // `.*(Self, Self)`: PointwiseMultiplicative
   Multiply
 };
 
 static StringRef getMathOperatorName(MathOperator op) {
   switch (op) {
-  case Add:
-    return "+";
-  case Subtract:
-    return "-";
   case Multiply:
     return ".*";
   }
@@ -53,9 +45,6 @@ static StringRef getMathOperatorName(MathOperator op) {
 
 static KnownProtocolKind getKnownProtocolKind(MathOperator op) {
   switch (op) {
-  case Add:
-  case Subtract:
-    return KnownProtocolKind::AdditiveArithmetic;
   case Multiply:
     return KnownProtocolKind::PointwiseMultiplicative;
   }
@@ -109,7 +98,7 @@ static bool canDeriveRingProtocol(KnownProtocolKind knownProtoKind,
   //   value information.
   if (hasLetStoredPropertyWithInitialValue(nominal))
     return false;
-  // All stored properties must conform to `AdditiveArithmetic`.
+  // All stored properties must conform to `PointwiseMultiplicative`.
   auto &C = nominal->getASTContext();
   auto *proto = C.getProtocol(knownProtoKind);
   return llvm::all_of(structDecl->getStoredProperties(), [&](VarDecl *v) {
@@ -122,16 +111,30 @@ static bool canDeriveRingProtocol(KnownProtocolKind knownProtoKind,
   });
 }
 
-bool DerivedConformance::canDeriveAdditiveArithmetic(NominalTypeDecl *nominal,
+bool
+DerivedConformance::canDerivePointwiseMultiplicative(NominalTypeDecl *nominal,
                                                      DeclContext *DC) {
-  return canDeriveRingProtocol(KnownProtocolKind::AdditiveArithmetic,
-                               nominal, DC);
-}
-
-bool DerivedConformance::canDerivePointwiseMultiplicative(NominalTypeDecl *nominal,
-                                                          DeclContext *DC) {
-  return canDeriveRingProtocol(KnownProtocolKind::PointwiseMultiplicative,
-                               nominal, DC);
+  // Nominal type must be a struct. (No stored properties is okay.)
+  auto *structDecl = dyn_cast<StructDecl>(nominal);
+  if (!structDecl)
+    return false;
+  // Must not have any `let` stored properties with an initial value.
+  // - This restriction may be lifted later with support for "true" memberwise
+  //   initializers that initialize all stored properties, including initial
+  //   value information.
+  if (hasLetStoredPropertyWithInitialValue(nominal))
+    return false;
+  // All stored properties must conform to `PointwiseMultiplicative`.
+  auto &C = nominal->getASTContext();
+  auto *proto = C.getProtocol(KnownProtocolKind::PointwiseMultiplicative);
+  return llvm::all_of(structDecl->getStoredProperties(), [&](VarDecl *v) {
+    if (!v->hasInterfaceType())
+      C.getLazyResolver()->resolveDeclSignature(v);
+    if (!v->hasInterfaceType())
+      return false;
+    auto varType = DC->mapTypeIntoContext(v->getValueInterfaceType());
+    return (bool)TypeChecker::conformsToProtocol(varType, proto, DC, None);
+  });
 }
 
 // Synthesize body for ring math operator.
@@ -152,7 +155,7 @@ deriveBodyMathOperator(AbstractFunctionDecl *funcDecl, MathOperator op) {
   auto *initExpr = new (C) ConstructorRefCallExpr(initDRE, nominalTypeExpr);
 
   // Get operator protocol requirement.
-  auto *proto = C.getProtocol(getKnownProtocolKind(op));
+  auto *proto = C.getProtocol(KnownProtocolKind::PointwiseMultiplicative);
   auto operatorId = C.getIdentifier(getMathOperatorName(op));
   auto *operatorReq = getProtocolRequirement(proto, operatorId);
 
@@ -264,9 +267,9 @@ static ValueDecl *deriveMathOperator(DerivedConformance &derived,
   return operatorDecl;
 }
 
-// Synthesize body for a ring property computed property getter.
+// Synthesize body for a computed property getter.
 static std::pair<BraceStmt *, bool>
-deriveBodyRingPropertyGetter(AbstractFunctionDecl *funcDecl,
+deriveComputedPropertyGetter(AbstractFunctionDecl *funcDecl,
                              ProtocolDecl *proto, ValueDecl *reqDecl) {
   auto *parentDC = funcDecl->getParent();
   auto *nominal = parentDC->getSelfNominalTypeDecl();
@@ -333,15 +336,6 @@ deriveBodyRingPropertyGetter(AbstractFunctionDecl *funcDecl,
   return std::pair<BraceStmt *, bool>(braceStmt, false);
 }
 
-// Synthesize body for the `AdditiveArithmetic.zero` computed property getter.
-static std::pair<BraceStmt *, bool>
-deriveBodyAdditiveArithmetic_zero(AbstractFunctionDecl *funcDecl, void *) {
-  auto &C = funcDecl->getASTContext();
-  auto *addArithProto = C.getProtocol(KnownProtocolKind::AdditiveArithmetic);
-  auto *zeroReq = getProtocolRequirement(addArithProto, C.Id_zero);
-  return deriveBodyRingPropertyGetter(funcDecl, addArithProto, zeroReq);
-}
-
 // Synthesize body for the `PointwiseMultiplicative.one` computed property
 // getter.
 static std::pair<BraceStmt *, bool>
@@ -350,7 +344,7 @@ deriveBodyPointwiseMultiplicative_one(AbstractFunctionDecl *funcDecl, void *) {
   auto *pointMulProto =
       C.getProtocol(KnownProtocolKind::PointwiseMultiplicative);
   auto *oneReq = getProtocolRequirement(pointMulProto, C.Id_one);
-  return deriveBodyRingPropertyGetter(funcDecl, pointMulProto, oneReq);
+  return deriveComputedPropertyGetter(funcDecl, pointMulProto, oneReq);
 }
 
 // Synthesize body for the `PointwiseMultiplicative.reciprocal` computed
@@ -362,7 +356,7 @@ deriveBodyPointwiseMultiplicative_reciprocal(AbstractFunctionDecl *funcDecl,
   auto *pointMulProto =
       C.getProtocol(KnownProtocolKind::PointwiseMultiplicative);
   auto *reciprocalReq = getProtocolRequirement(pointMulProto, C.Id_reciprocal);
-  return deriveBodyRingPropertyGetter(funcDecl, pointMulProto, reciprocalReq);
+  return deriveComputedPropertyGetter(funcDecl, pointMulProto, reciprocalReq);
 }
 
 // Synthesize a ring protocol property declaration.
@@ -392,13 +386,6 @@ deriveRingProperty(DerivedConformance &derived, Identifier propertyName,
   return propDecl;
 }
 
-// Synthesize the static property declaration for `AdditiveArithmetic.zero`.
-static ValueDecl *deriveAdditiveArithmetic_zero(DerivedConformance &derived) {
-  auto &C = derived.TC.Context;
-  return deriveRingProperty(derived, C.Id_zero, /*isStatic*/ true,
-                            {deriveBodyAdditiveArithmetic_zero, nullptr});
-}
-
 // Synthesize the static property declaration for
 // `PointwiseMultiplicative.one`.
 static ValueDecl *
@@ -416,24 +403,6 @@ derivePointwiseMultiplicative_reciprocal(DerivedConformance &derived) {
   return deriveRingProperty(
       derived, C.Id_reciprocal, /*isStatic*/ false,
       {deriveBodyPointwiseMultiplicative_reciprocal, nullptr});
-}
-
-ValueDecl *
-DerivedConformance::deriveAdditiveArithmetic(ValueDecl *requirement) {
-  // Diagnose conformances in disallowed contexts.
-  if (checkAndDiagnoseDisallowedContext(requirement))
-    return nullptr;
-  // Create memberwise initializer for nominal type if it doesn't already exist.
-  getOrCreateEffectiveMemberwiseInitializer(TC, Nominal);
-  if (requirement->getBaseName() == TC.Context.getIdentifier("+"))
-    return deriveMathOperator(*this, Add);
-  if (requirement->getBaseName() == TC.Context.getIdentifier("-"))
-    return deriveMathOperator(*this, Subtract);
-  if (requirement->getBaseName() == TC.Context.Id_zero)
-    return deriveAdditiveArithmetic_zero(*this);
-  TC.diagnose(requirement->getLoc(),
-              diag::broken_additive_arithmetic_requirement);
-  return nullptr;
 }
 
 ValueDecl *

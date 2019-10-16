@@ -1222,6 +1222,58 @@ public:
     *this << getIDAndType(lfei->getFunctionOperand());
   }
 
+  void visitDifferentiabilityWitnessFunctionInst(
+      DifferentiabilityWitnessFunctionInst *dwfi) {
+    *this << '[';
+    switch (dwfi->getWitnessKind()) {
+    case DifferentiabilityWitnessFunctionKind::JVP:
+      *this << "jvp";
+      break;
+    case DifferentiabilityWitnessFunctionKind::VJP:
+      *this << "vjp";
+      break;
+    case DifferentiabilityWitnessFunctionKind::Transpose:
+      *this << "transpose";
+      break;
+    }
+    *this << "] [parameters";
+    for (auto i : dwfi->getParameterIndices()->getIndices())
+      *this << ' ' << i;
+    *this << "] [results";
+    for (auto i : dwfi->getResultIndices()->getIndices())
+      *this << ' ' << i;
+    *this << "] ";
+    // ([where ...])?
+    if (auto *witnessGenSig = dwfi->getWitnessGenericSignature()) {
+      ArrayRef<Requirement> requirements;
+      SmallVector<Requirement, 4> requirementsScratch;
+      auto *origGenEnv = dwfi->getOriginalFunction()->getGenericEnvironment();
+      if (witnessGenSig) {
+        if (origGenEnv) {
+          requirementsScratch = witnessGenSig->requirementsNotSatisfiedBy(
+              origGenEnv->getGenericSignature());
+          requirements = requirementsScratch;
+        } else {
+          requirements = witnessGenSig->getRequirements();
+        }
+      }
+      if (!requirements.empty()) {
+        *this << "[where ";
+        auto subPrinter = PrintOptions::printSIL();
+        subPrinter.GenericEnv = origGenEnv;
+        interleave(requirements,
+                   [&](Requirement req) {
+                     req.print(PrintState.OS, subPrinter);
+                   },
+                   [&] { *this << ", "; });
+        *this << "] ";
+      }
+    }
+    dwfi->getOriginalFunction()->printName(PrintState.OS);
+    *this << " : " << dwfi->getOriginalFunction()->getLoweredType();
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
+
   void visitFunctionRefInst(FunctionRefInst *FRI) {
     FRI->getInitiallyReferencedFunction()->printName(PrintState.OS);
     *this << " : " << FRI->getType();

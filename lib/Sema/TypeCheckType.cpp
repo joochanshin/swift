@@ -1121,6 +1121,7 @@ static Type diagnoseUnknownType(TypeResolution resolution,
       return I->second;
     }
 
+    llvm::errs() << "diag::use_undeclared_type 1\n";
     diags.diagnose(L, diag::use_undeclared_type,
                 comp->getIdentifier())
       .highlight(R);
@@ -1363,6 +1364,9 @@ resolveTopLevelIdentTypeComponent(TypeResolution resolution,
     if (options.contains(TypeResolutionFlags::SilenceErrors))
       return ErrorType::get(ctx);
 
+    llvm::errs() << "GLOBALS FOUND: " << globals.size() << "\n";
+    llvm::errs() << "DC:\n";
+    DC->dumpContext();
     return diagnoseUnknownType(resolution, nullptr, SourceRange(), comp,
                                options, lookupOptions);
   }

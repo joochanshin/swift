@@ -253,7 +253,10 @@ namespace {
                                 DeclContext *DC = nullptr);
 
     void convertRequirements(SILFunction *F, ArrayRef<RequirementRepr> From,
-                             SmallVectorImpl<Requirement> &To);
+                             SmallVectorImpl<Requirement> &To,
+                             // SWIFT_ENABLE_TENSORFLOW
+                             GenericEnvironment *GenericEnv = nullptr,
+                             DeclContext *DC = nullptr);
 
     Optional<ProtocolConformanceRef>
     parseProtocolConformanceHelper(ProtocolDecl *&proto,
@@ -929,13 +932,19 @@ namespace {
 /// Remap RequirementReps to Requirements.
 void SILParser::convertRequirements(SILFunction *F,
                                     ArrayRef<RequirementRepr> From,
-                                    SmallVectorImpl<Requirement> &To) {
+                                    SmallVectorImpl<Requirement> &To,
+                                    // SWIFT_ENABLE_TENSORFLOW
+                                    GenericEnvironment *GenericEnv,
+                                    DeclContext *DC) {
   if (From.empty()) {
     To.clear();
     return;
   }
 
-  auto *GenericEnv = F->getGenericEnvironment();
+  // SWIFT_ENABLE_TENSORFLOW
+  if (!GenericEnv)
+    GenericEnv = F->getGenericEnvironment();
+  // SWIFT_ENABLE_TENSORFLOW END
   assert(GenericEnv);
   (void)GenericEnv;
 
@@ -944,7 +953,9 @@ void SILParser::convertRequirements(SILFunction *F,
   // to the generic parameters.
   auto ResolveToInterfaceType = [&](TypeLoc Ty) -> Type {
     Ty.getTypeRepr()->walk(PerformLookup);
-    performTypeLocChecking(Ty, /* IsSIL */ false);
+    // SWIFT_ENABLE_TENSORFLOW
+    performTypeLocChecking(Ty, /* IsSIL */ false, GenericEnv, DC);
+    // SWIFT_ENABLE_TENSORFLOW END
     assert(Ty.getType());
     return Ty.getType()->mapTypeOutOfContext();
   };
@@ -3149,15 +3160,25 @@ bool SILParser::parseSILInstruction(SILBuilder &B) {
       Scope S(&P, ScopeKind::Generics);
       auto *origGenEnv = originalFunction->getGenericEnvironment();
       if (origGenEnv)
-        for (auto pd : origGenEnv->getGenericParams())
-          P.addToScope(pd->getDecl());
+        for (auto genericParamType : origGenEnv->getGenericParams())
+          if (auto *genericParamDecl = genericParamType->getDecl())
+            P.addToScope(genericParamDecl);
       SmallVector<Requirement, 4> requirements;
       auto *whereClause = TrailingWhereClause::create(
           originalFunction->getModule().getASTContext(), whereLoc,
           witnessRequirementReprs);
+#if 0
+      ::convertRequirements(P, originalFunction, whereClause->getRequirements(),
+                            requirements, originalFunction->getDeclContext());
+#endif
       convertRequirements(originalFunction, whereClause->getRequirements(),
-                          requirements);
+                          requirements, origGenEnv, originalFunction->getDeclContext());
+      llvm::errs() << "AFTER CONVERT REQS\n";
       assert(requirements.size() == witnessRequirementReprs.size());
+      llvm::errs() << "REQ REPRS VS REQS: " << witnessRequirementReprs.size() << ", " << requirements.size() << "\n";
+      for (auto req : requirements) {
+        req.getFirstType()->dump();
+      }
       witnessGenSig = evaluateOrDefault(
           P.Context.evaluator,
           AbstractGenericSignatureRequest{
@@ -6907,67 +6928,6 @@ bool SILParserTUState::parseSILDefaultWitnessTable(Parser &P) {
   return false;
 }
 
-// SWIFT_ENABLE_TENSORFLOW
-// TODO(TF-893): Dedupe with `SILParser::convertRequirements` upstream.
-// Currently, this utility is defined on `SILParser`, but SIL differentiability
-// witness is defined on `SILParserTUState` and only has access to `Parser`.
-// Consider redefining `SILParser::convertRequirements`as
-// `Parser::convertRequirements`.
-static void convertRequirements(Parser &P, SILFunction *F,
-                                ArrayRef<RequirementRepr> From,
-                                SmallVectorImpl<Requirement> &To) {
-  if (From.empty()) {
-    To.clear();
-    return;
-  }
-
-  auto *GenericEnv = F->getLoweredFunctionType()
-                         ->getGenericSignature()
-                         ->getGenericEnvironment();
-  assert(GenericEnv);
-  (void)GenericEnv;
-
-  IdentTypeReprLookup PerformLookup(P);
-  // Use parser lexical scopes to resolve references
-  // to the generic parameters.
-  auto ResolveToInterfaceType = [&](TypeLoc Ty) -> Type {
-    Ty.getTypeRepr()->walk(PerformLookup);
-    swift::performTypeLocChecking(P.Context, Ty, /*isSILMode*/ true,
-                                  /*isSILType*/ true, GenericEnv, &P.SF);
-    assert(Ty.getType());
-    return Ty.getType()->mapTypeOutOfContext();
-  };
-
-  for (auto &Req : From) {
-    if (Req.getKind() == RequirementReprKind::SameType) {
-      auto FirstType = ResolveToInterfaceType(Req.getFirstTypeLoc());
-      auto SecondType = ResolveToInterfaceType(Req.getSecondTypeLoc());
-      Requirement ConvertedRequirement(RequirementKind::SameType, FirstType,
-                                       SecondType);
-      To.push_back(ConvertedRequirement);
-      continue;
-    }
-
-    if (Req.getKind() == RequirementReprKind::TypeConstraint) {
-      auto Subject = ResolveToInterfaceType(Req.getSubjectLoc());
-      auto Constraint = ResolveToInterfaceType(Req.getConstraintLoc());
-      Requirement ConvertedRequirement(RequirementKind::Conformance, Subject,
-                                       Constraint);
-      To.push_back(ConvertedRequirement);
-      continue;
-    }
-
-    if (Req.getKind() == RequirementReprKind::LayoutConstraint) {
-      auto Subject = ResolveToInterfaceType(Req.getSubjectLoc());
-      Requirement ConvertedRequirement(RequirementKind::Layout, Subject,
-                                       Req.getLayoutConstraint());
-      To.push_back(ConvertedRequirement);
-      continue;
-    }
-    llvm_unreachable("Unsupported requirement kind");
-  }
-}
-
 /// decl-sil-differentiability-witness ::=
 ///   'sil_differentiability_witness'
 ///   ('[' 'serialized' ']')?
@@ -7092,8 +7052,10 @@ bool SILParserTUState::parseSILDifferentiabilityWitness(Parser &P) {
     auto *whereClause = TrailingWhereClause::create(
         originalFn->getModule().getASTContext(), whereLoc,
         derivativeRequirementReprs);
-    convertRequirements(P, originalFn, whereClause->getRequirements(),
-                        requirements);
+    SILParser SP(P);
+    SP.convertRequirements(originalFn, whereClause->getRequirements(),
+                           requirements);
+
     assert(requirements.size() == derivativeRequirementReprs.size());
     derivativeGenSig = evaluateOrDefault(
         P.Context.evaluator,

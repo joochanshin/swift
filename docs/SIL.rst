@@ -5711,6 +5711,36 @@ Extracts the original function or a transpose function from the given
 ``[original]`` or ``[transpose]``.
 
 
+differentiability_witness_function
+``````````````````````````````````
+
+::
+
+  sil-instruction ::= 'differentiability_witness_function'
+                      sil-differentiability-witness-function-kind
+                      '[' 'parameters' sil-differentiability-witness-indices ']'
+                      '[' 'results' sil-differentiability-witness-indices ']'
+                      ('[' sil-differentiability-witness-where-clause ']')?
+                      sil-function-name ':' sil-type
+
+  sil-differentiability-witness-function-kind ::=
+      '[' sil-linear-function-extractee ']'
+  sil-differentiability-witness-function-kind-name ::=
+      'jvp' | 'vjp' | 'transpose'
+  sil-differentiability-witness-indices ::= [0-9]+ (' ' [0-9]+)*
+  sil-differentiability-witness-where-clause ::=
+      'where' where-clause-requirement (',' where-clause-requirement)*
+  where-clause-requirement ::=
+      type ':' type | type '==' type | type '==' layout-constraint
+
+  differentiability_witness_function [jvp] [parameters 0] [results 0] \
+    [where T: Differentiable] @foo : $(T) -> T
+
+Looks up the differentiability witness function for the referenced function
+using SIL differentiability witnesses. A differentiability witness function
+kind is required: ``[jvp]``, ``[vjp]``, or ``[transpose]``.
+
+
 Assertion configuration
 ~~~~~~~~~~~~~~~~~~~~~~~
 

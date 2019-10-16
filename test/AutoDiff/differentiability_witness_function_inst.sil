@@ -1,0 +1,78 @@
+// RUN: %target-sil-opt %s | %FileCheck %s
+
+// RUN: %empty-directory(%t)
+// RUN: %target-sil-opt %s -emit-sib -o %t/tmp.sib -module-name main
+// RUN: %target-sil-opt %t/tmp.sib -o %t/tmp.2.sib -module-name main
+// RUN: %target-sil-opt %t/tmp.2.sib -module-name main | %FileCheck %s
+
+sil_stage raw
+
+import Swift
+import Builtin
+
+sil [ossa] @foo : $@convention(thin) (Float, Float, Float) -> Float {
+bb0(%0 : $Float, %1 : $Float, %2 : $Float):
+  return %2 : $Float
+}
+
+sil [ossa] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float) {
+bb0(%0 : $Float, %1 : $Float, %2 : $Float):
+  %tuple = tuple (%1 : $Float, %2 : $Float)
+  return %tuple : $(Float, Float)
+}
+
+sil [ossa] @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T {
+bb0(%0 : $*T, %1 : $*T, %2 : $Float):
+  copy_addr %1 to [initialization] %0 : $*T
+  %void = tuple ()
+  return %void : $()
+}
+
+sil @test_derivative_witnesses : $@convention(thin) () -> () {
+bb0:
+  %foo_jvp_wrt_0 = differentiability_witness_function [jvp] [parameters 0] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+  %foo_vjp_wrt_0_1 = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+
+  %bar_jvp_wrt_0_results_0 = differentiability_witness_function [jvp] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+  %bar_vjp_wrt_0_1_results_0_1 = differentiability_witness_function [vjp] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+
+  // TODO: Fix and test `[where ...]` clause.
+  %generic_jvp_wrt_0 = differentiability_witness_function [jvp] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+  %generic_vjp_wrt_0_1 = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+  return undef : $()
+}
+
+sil @test_transpose_witnesses : $@convention(thin) () -> () {
+bb0:
+  %foo_t_wrt_0 = differentiability_witness_function [transpose] [parameters 0] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+  %foo_t_wrt_0_1 = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+
+  %bar_t_wrt_0_results_0 = differentiability_witness_function [transpose] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+  %bar_t_wrt_0_1_results_0_1 = differentiability_witness_function [transpose] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+
+  // TODO: Fix and test `[where ...]` clause.
+  %generic_t_wrt_0 = differentiability_witness_function [transpose] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+  %generic_t_wrt_0_1 = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+  return undef : $()
+}
+
+// CHECK-LABEL: sil @test_derivative_witnesses : $@convention(thin) () -> () {
+// CHECK: bb0:
+// CHECK:   {{%.*}} = differentiability_witness_function [jvp] [parameters 0] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+// CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+// CHECK:   {{%.*}} = differentiability_witness_function [jvp] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+// CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+// CHECK:   {{%.*}} = differentiability_witness_function [jvp] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+// CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+// CHECK: }
+
+// CHECK-LABEL: sil @test_transpose_witnesses : $@convention(thin) () -> () {
+// CHECK: bb0:
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+// CHECK:   return undef : $()
+// CHECK: }

@@ -3134,47 +3134,54 @@ bool SILParser::parseSILInstruction(SILBuilder &B) {
     if (parseIndexSet("results", resultIndices,
                       diag::sil_autodiff_expected_result_index))
       return true;
-    // Parse a trailing 'where' clause (optional).
-    // This represents witness generic signature requirements.
+    // Parse witness generic signature.
     GenericSignature *witnessGenSig = nullptr;
-    SourceLoc whereLoc;
-    SmallVector<RequirementRepr, 4> witnessRequirementReprs;
-    if (P.Tok.is(tok::l_square) && P.peekToken().is(tok::kw_where)) {
-      P.consumeToken(tok::l_square);
-      bool firstTypeInComplete;
-      P.parseGenericWhereClause(whereLoc, witnessRequirementReprs,
-                                firstTypeInComplete,
-                                /*AllowLayoutConstraints*/ false);
-      if (P.parseToken(tok::r_square, diag::sil_autodiff_expected_rsquare,
-                       "where clause"))
-        return true;
+    SourceLoc witnessGenSigStartLoc = P.getEndOfPreviousLoc();
+    {
+      Scope genericsScope(&P, ScopeKind::Generics);
+      auto *genericParams = P.parseSILGenericParams().getPtrOrNull();
+      if (genericParams) {
+        auto *witnessGenEnv =
+            handleSILGenericParams(P.Context, genericParams, &P.SF);
+        witnessGenSig = witnessGenEnv->getGenericSignature();
+      }
     }
-    // Parse original function name.
+    // Parse original function name and type.
     SILFunction *originalFunction;
     if (parseSILFunctionRef(InstLoc, originalFunction))
       return true;
-    // Resolve witness requirements.
-    if (!witnessRequirementReprs.empty()) {
-      // Add original function generic parameters to a local scope so that they
-      // can be found during type resolution for `RequirementRepr`s.
-      Scope S(&P, ScopeKind::Generics);
-      auto *origGenEnv = originalFunction->getGenericEnvironment();
-      if (origGenEnv)
-        for (auto pd : origGenEnv->getGenericParams())
-          P.addToScope(pd->getDecl());
-      SmallVector<Requirement, 4> requirements;
-      auto *whereClause = TrailingWhereClause::create(
-          originalFunction->getModule().getASTContext(), whereLoc,
-          witnessRequirementReprs);
-      convertRequirements(originalFunction, whereClause->getRequirements(),
-                          requirements);
-      assert(requirements.size() == witnessRequirementReprs.size());
+    // Resolve parsed witness generic signature.
+    if (witnessGenSig) {
+      auto origGenSig = originalFunction
+          ->getLoweredFunctionType()->getGenericSignature();
+      // Check whether original generic signature and witness generic signature
+      // have the same generic parameters.
+      auto areGenericParametersConsistent = [&]() {
+        llvm::DenseSet<GenericParamKey> genericParamKeys;
+        for (auto origGP : origGenSig->getGenericParams())
+          genericParamKeys.insert(GenericParamKey(origGP));
+        for (auto witnessGP : witnessGenSig->getGenericParams())
+          if (!genericParamKeys.erase(GenericParamKey(witnessGP)))
+            return false;
+        return genericParamKeys.empty();
+      };
+      if (!areGenericParametersConsistent()) {
+        P.diagnose(witnessGenSigStartLoc,
+                   diag::sil_inst_autodiff_invalid_witness_generic_signature,
+                   witnessGenSig->getAsString(), origGenSig->getAsString());
+        return true;
+      }
+      // Combine parsed witness requirements with original function
+      // requirements.
+      SmallVector<Requirement, 4> witnessRequirements(
+          witnessGenSig->getRequirements().begin(),
+          witnessGenSig->getRequirements().end());
       witnessGenSig = evaluateOrDefault(
           P.Context.evaluator,
           AbstractGenericSignatureRequest{
-              originalFunction->getLoweredFunctionType()->getGenericSignature(),
+              origGenSig,
               /*addedGenericParams=*/{},
-              std::move(requirements)},
+              std::move(witnessRequirements)},
               nullptr);
       witnessGenSig->dump();
     }

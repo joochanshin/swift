@@ -36,9 +36,12 @@ bb0:
   %bar_jvp_wrt_0_results_0 = differentiability_witness_function [jvp] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
   %bar_vjp_wrt_0_1_results_0_1 = differentiability_witness_function [vjp] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
 
-  // TODO: Fix and test `[where ...]` clause.
-  %generic_jvp_wrt_0 = differentiability_witness_function [jvp] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
-  %generic_vjp_wrt_0_1 = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+  %generic_jvp_wrt_0 = differentiability_witness_function [jvp] [parameters 0] [results 0] <T : Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
+  %generic_vjp_wrt_0_1 = differentiability_witness_function [vjp] [parameters 0 1] [results 0] <T : Differentiable & AdditiveArithmetic> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
+
+  // TODO(TF-921): where clause requirement parsing does not support associated
+  // type references that depend on other parsed requirements.
+  // %generic_vjp_wrt_0_1_dependent_req = differentiability_witness_function [vjp] [parameters 0 1] [results 0] [where T: Differentiable, T == T.TangentVector] @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
   return undef : $()
 }
 
@@ -50,9 +53,12 @@ bb0:
   %bar_t_wrt_0_results_0 = differentiability_witness_function [transpose] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
   %bar_t_wrt_0_1_results_0_1 = differentiability_witness_function [transpose] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
 
-  // TODO: Fix and test `[where ...]` clause.
-  %generic_t_wrt_0 = differentiability_witness_function [transpose] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
-  %generic_t_wrt_0_1 = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+  %generic_t_wrt_0 = differentiability_witness_function [transpose] [parameters 0] [results 0] <T : Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
+  %generic_t_wrt_0_1 = differentiability_witness_function [transpose] [parameters 0 1] [results 0] <T : AdditiveArithmetic & Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
+
+  // TODO(TF-921): where clause requirement parsing does not support associated
+  // type references that depend on other parsed requirements.
+  // %generic_t_wrt_0_1_dependent_req = differentiability_witness_function [transpose] [parameters 0 1] [results 0] [where T: Differentiable, T == T.TangentVector] @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
   return undef : $()
 }
 
@@ -62,8 +68,8 @@ bb0:
 // CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
 // CHECK:   {{%.*}} = differentiability_witness_function [jvp] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
 // CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
-// CHECK:   {{%.*}} = differentiability_witness_function [jvp] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
-// CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+// CHECK:   {{%.*}} = differentiability_witness_function [jvp] [parameters 0] [results 0] <T where T : _Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
+// CHECK:   {{%.*}} = differentiability_witness_function [vjp] [parameters 0 1] [results 0] <T where T : AdditiveArithmetic, T : _Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
 // CHECK: }
 
 // CHECK-LABEL: sil @test_transpose_witnesses : $@convention(thin) () -> () {
@@ -72,7 +78,7 @@ bb0:
 // CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @foo : $@convention(thin) (Float, Float, Float) -> Float
 // CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0] [results 0] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
 // CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0 1] @bar : $@convention(thin) (Float, Float, Float) -> (Float, Float)
-// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
-// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0] @generic : $@convention(thin) <τ_0_0> (@in_guaranteed τ_0_0, Float) -> @out τ_0_0
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0] [results 0] <T where T : _Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
+// CHECK:   {{%.*}} = differentiability_witness_function [transpose] [parameters 0 1] [results 0] <T where T : AdditiveArithmetic, T : _Differentiable> @generic : $@convention(thin) <T> (@in_guaranteed T, Float) -> @out T
 // CHECK:   return undef : $()
 // CHECK: }

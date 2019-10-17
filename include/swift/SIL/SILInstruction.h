@@ -8038,8 +8038,8 @@ class DifferentiabilityWitnessFunctionInst
           SingleValueInstruction> {
 private:
   friend SILBuilder;
-  /// The original function.
-  SILFunction *originalFunction;
+  /// The original function name.
+  StringRef originalFunctionName;
   /// The differentiability witness function kind.
   DifferentiabilityWitnessFunctionKind witnessKind;
   /// The autodiff config: parameter indices, result indices, and witness
@@ -8047,20 +8047,20 @@ private:
   AutoDiffConfig config;
 
   static SILType getDifferentiabilityWitnessType(
-      SILModule &module, SILFunction *originalFunction,
+      SILModule &module, StringRef originalFunctionName,
       DifferentiabilityWitnessFunctionKind witnessKind,
       IndexSubset *parameterIndices, IndexSubset *resultIndices,
       GenericSignature *witnessGenericSignature);
 
 public:
   DifferentiabilityWitnessFunctionInst(
-      SILModule &module, SILDebugLocation loc, SILFunction *originalFunction,
+      SILModule &module, SILDebugLocation loc, StringRef originalFunctionName,
       DifferentiabilityWitnessFunctionKind witnessKind,
       IndexSubset *parameterIndices, IndexSubset *resultIndices,
       GenericSignature *witnessGenericSignature);
 
   static DifferentiabilityWitnessFunctionInst *create(
-      SILModule &module, SILDebugLocation loc, SILFunction *originalFunction,
+      SILModule &module, SILDebugLocation loc, StringRef originalFunctionName,
       DifferentiabilityWitnessFunctionKind witnessKind,
       IndexSubset *parameterIndices, IndexSubset *resultIndices,
       GenericSignature *witnessGenericSignature);
@@ -8068,7 +8068,7 @@ public:
   DifferentiabilityWitnessFunctionKind getWitnessKind() const {
     return witnessKind;
   }
-  SILFunction *getOriginalFunction() const { return originalFunction; }
+  StringRef getOriginalFunctionName() const { return originalFunctionName; }
   AutoDiffConfig const &getConfig() const { return config; }
   IndexSubset *getParameterIndices() const { return config.parameterIndices; }
   IndexSubset *getResultIndices() const { return config.resultIndices; }

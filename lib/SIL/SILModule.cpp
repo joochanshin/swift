@@ -272,8 +272,10 @@ bool SILModule::hasDifferentiabilityWitnesses(StringRef originalFunctionName,
     return true;
   if (!deserializeLazily)
     return false;
-  // TODO: SILLoader support for loading just by original function name
-  getSILLoader()->getAllDifferentiabilityWitnesses();
+  // TODO(!!!): THIS IS PROHIBITIVELY SLOW.
+  // We should revert SILModule to storing just a
+  // `DenseMap<SILDifferentiabilityWitnessKey, SILDifferentiabilityWitness *>`.
+  // getSILLoader()->getAllDifferentiabilityWitnesses();
   return DifferentiabilityWitnessMap.count(originalFunctionName);
 }
 

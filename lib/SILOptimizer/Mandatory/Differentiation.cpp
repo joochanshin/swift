@@ -1011,11 +1011,9 @@ public:
       SILFunction *original, const AutoDiffConfig &config) const {
     if (!getModule().hasDifferentiabilityWitnesses(original->getName()))
       return nullptr;
-#if 0
-    llvm::errs() << "FOUND DIFF WITNESSES FOR ORIGINAL " << original->getName() << ": " << getModule().lookUpDifferentiabilityWitnesses(original->getName()).size() << "\n";
-    config.print(llvm::errs());  llvm::errs() << "\n";
-#endif
+    // DO NOT DESERIALIZE
     for (auto &pair : getModule().lookUpDifferentiabilityWitnesses(original->getName())) {
+    // for (auto &pair : getModule().lookUpDifferentiabilityWitnesses(original->getName(), /*deserializeLazily*/ false)) {
       auto *diffWitness = pair.second;
       if (diffWitness->getResultIndices() == config.resultIndices &&
           diffWitness->getParameterIndices() == config.parameterIndices)
@@ -2634,6 +2632,7 @@ emitDerivativeFunctionReference(
           peerThroughFunctionConversions<FunctionRefInst>(original)) {
     auto loc = originalFRI->getLoc();
     auto *originalFn = originalFRI->getReferencedFunctionOrNull();
+    auto originalFnTy = originalFn->getLoweredFunctionType();
     auto substMap = getSubstitutionMap(original);
     // Attempt to look up a `[differentiable]` attribute that minimally
     // satisfies the specified indices.
@@ -2642,6 +2641,70 @@ emitDerivativeFunctionReference(
     // requirements are satisfied.
     auto *minimalWitness = context.lookUpMinimalDifferentiabilityWitness(
         originalFn, desiredConfig);
+    // TODO: Test
+#if 0
+    const DifferentiableAttr *minimalAttr = nullptr;
+    IndexSubset *minimalParamIndexSet = nullptr;
+    if (auto *DC = originalFn->getDeclContext()) {
+      assert(DC && "Assert that original functions have DeclContext. When is "
+                   "this not true?");
+      if (auto *origAFD = cast_or_null<AbstractFunctionDecl>(DC->getAsDecl())) {
+        std::tie(minimalAttr, minimalParamIndexSet) =
+            context.lookUpMinimalASTDifferentiableAttrAndIndexSubset(
+                SILDeclRef(origAFD), originalFnTy, desiredConfig);
+        if (minimalAttr) {
+          llvm::errs() << "FOUND MINIMAL ATTR FOR " << originalFn->getName() << "\n";
+          minimalAttr->print(llvm::errs(), origAFD); llvm::errs() << "\n";
+        }
+      }
+    }
+    // Check if no AST `@differentiable` attribute was found.
+    if (!minimalWitness) {
+      // If the original function is an external declaration, we cannot
+      // differentiate it.
+      if (originalFn->isExternalDeclaration()) {
+        llvm::errs() << "LEGIT EXTERNAL DECLARATION CANNOT DIFF! WOW\n";
+        context.emitNondifferentiabilityError(
+            original, invoker,
+            diag::autodiff_external_nondifferentiable_function);
+        return None;
+      }
+      // Check differentiability conditions.
+      // If the function is intentionally marked as being opaque to
+      // differentiation, then we should not create a task for it.
+      if (originalFn->hasSemanticsAttr("autodiff.opaque")) {
+        context.emitNondifferentiabilityError(original, invoker,
+            diag::autodiff_opaque_function_not_differentiable);
+        return None;
+      }
+      // Check and diagnose non-differentiable arguments.
+      for (unsigned paramIndex : range(originalFnTy->getNumParameters())) {
+        if (paramIndex < desiredConfig.parameterIndices->getCapacity() &&
+            desiredConfig.parameterIndices->contains(paramIndex) &&
+            !originalFnTy->getParameters()[paramIndex]
+                 .getSILStorageType()
+                 .isDifferentiable(context.getModule())) {
+          auto diag = context.emitNondifferentiabilityError(
+              original, invoker, diag::autodiff_nondifferentiable_argument);
+          return None;
+        }
+      }
+      // Check and diagnose non-differentiable results.
+      if (!originalFnTy->getResults()[*desiredConfig.resultIndices->begin()]
+               .getSILStorageType()
+               .isDifferentiable(context.getModule())) {
+        context.emitNondifferentiabilityError(
+            original, invoker, diag::autodiff_nondifferentiable_result);
+        return None;
+      }
+      // Otherwise, we can create a new private differentiability witness.
+      llvm::errs() << "CREATE NEW PRIVATE DIFF WITNESS! WOW\n";
+      minimalWitness = context.getOrCreateDifferentiabilityWitness(
+          originalFn, desiredConfig);
+      if (context.processDifferentiableAttribute(originalFn, minimalWitness, invoker))
+        return None;
+    }
+#endif
     if (!minimalWitness) {
       // If the function is intentionally marked as being opaque to
       // differentiation, then we should not create a task for it.
@@ -2651,7 +2714,6 @@ emitDerivativeFunctionReference(
         return None;
       }
       // Check and diagnose non-differentiable arguments.
-      auto originalFnTy = originalFn->getLoweredFunctionType();
       for (unsigned paramIndex : range(originalFnTy->getNumParameters())) {
         if (paramIndex < desiredConfig.parameterIndices->getCapacity() &&
             desiredConfig.parameterIndices->contains(paramIndex) &&
@@ -2673,6 +2735,28 @@ emitDerivativeFunctionReference(
       }
       // Check and diagnose external declarations.
       if (originalFn->isExternalDeclaration()) {
+        const DifferentiableAttr *minimalAttr = nullptr;
+        IndexSubset *minimalParamIndexSet = nullptr;
+        if (auto *DC = originalFn->getDeclContext()) {
+          assert(DC && "Assert that original functions have DeclContext. When is "
+                       "this not true?");
+          if (auto *origAFD = cast_or_null<AbstractFunctionDecl>(DC->getAsDecl())) {
+            std::tie(minimalAttr, minimalParamIndexSet) =
+                context.lookUpMinimalASTDifferentiableAttrAndIndexSubset(
+                    SILDeclRef(origAFD), originalFnTy, desiredConfig);
+            if (minimalAttr) {
+              llvm::errs() << "FOUND MINIMAL ATTR FOR " << originalFn->getName() << "\n";
+              minimalAttr->print(llvm::errs(), origAFD); llvm::errs() << "\n";
+            }
+          }
+        }
+        if (!minimalAttr) {
+          context.emitNondifferentiabilityError(
+              original, invoker,
+              diag::autodiff_external_nondifferentiable_function);
+          return None;
+        }
+#if 0
         bool found = false;
         if (auto *DC = originalFn->getDeclContext()) {
           auto *origAFD = DC->getAsDecl();
@@ -2690,6 +2774,7 @@ emitDerivativeFunctionReference(
               diag::autodiff_external_nondifferentiable_function);
           return None;
         }
+#endif
       }
       // Sanity check passed. Create a new SIL differentiability witness and
       // process it.

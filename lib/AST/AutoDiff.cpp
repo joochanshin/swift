@@ -51,7 +51,7 @@ void AutoDiffConfig::print(llvm::raw_ostream &s) const {
     s << " where=";
     derivativeGenericSignature->print(s);
   }
-  s << ")";
+  s << ")\n";
 }
 
 // TODO(TF-874): This helper is inefficient and should be removed. Unwrapping at

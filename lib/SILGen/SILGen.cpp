@@ -834,14 +834,20 @@ void SILGenModule::emitDifferentiabilityWitness(
     derivativeCanGenSig = derivativeGenSig->getCanonicalSignature();
   if (jvp) {
     auto jvpCanGenSig = jvp->getLoweredFunctionType()->getGenericSignature();
-    if (!derivativeCanGenSig && jvpCanGenSig)
+    if (!derivativeCanGenSig && jvpCanGenSig) {
       derivativeCanGenSig = jvpCanGenSig;
+      llvm::errs() << "ASSIGNED JVP GEN SIG\n";
+      derivativeCanGenSig->dump();
+    }
     assert(derivativeCanGenSig == jvpCanGenSig);
   }
   if (vjp) {
     auto vjpCanGenSig = vjp->getLoweredFunctionType()->getGenericSignature();
-    if (!derivativeCanGenSig && vjpCanGenSig)
+    if (!derivativeCanGenSig && vjpCanGenSig) {
       derivativeCanGenSig = vjpCanGenSig;
+      llvm::errs() << "ASSIGNED VJP GEN SIG\n";
+      derivativeCanGenSig->dump();
+    }
     assert(derivativeCanGenSig == vjpCanGenSig);
   }
   auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
@@ -862,6 +868,8 @@ void SILGenModule::emitDifferentiabilityWitness(
     diffWitness = SILDifferentiabilityWitness::create(
         M, SILLinkage::Hidden, originalFunction,
         loweredParamIndices, resultIndices, derivativeGenSig, /*jvp*/ nullptr,
+                                                      // MISSING KEY! THIS IS WHY POST MERGE WORKED
+        // loweredParamIndices, resultIndices, derivativeCanGenSig, /*jvp*/ nullptr,
         /*vjp*/ nullptr, /*isSerialized*/ true);
   }
 
@@ -912,6 +920,8 @@ void SILGenModule::emitDifferentiabilityWitness(
                                             vjp);
   if (diffWitnessLinkage)
     diffWitness->setLinkage(*diffWitnessLinkage);
+  llvm::errs() << "SILGEN: CREATE DIFF WITNESS\n";
+  diffWitness->getAutoDiffConfig().print(llvm::errs());
 }
 
 void SILGenModule::

@@ -255,6 +255,7 @@ void TBDGenVisitor::visitAbstractFunctionDecl(AbstractFunctionDecl *AFD) {
     SILDifferentiabilityWitnessKey key(SILDeclRef(AFD).mangle(), config);
     auto mangledName = mangler.mangleSILDifferentiabilityWitnessKey(key);
     addSymbol(mangledName);
+    llvm::errs() << "TBDGEN MANGLED NAME: " << mangledName << "\n";
   }
   // NOTE: This logic is not relevant until `@differentiating` no longer
   // generates implicit `@differentiable` attributes.

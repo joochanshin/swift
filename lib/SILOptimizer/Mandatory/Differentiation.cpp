@@ -1114,8 +1114,10 @@ public:
     auto derivativeConstrainedGenSig = getConstrainedDerivativeGenericSignature(
         original->getLoweredFunctionType(), config.parameterIndices,
         config.derivativeGenericSignature);
+    auto diffWitnessLinkage = autodiff::getAutoDiffDerivativeFunctionLinkage(
+        original->getLinkage(), /*isDerivativeExported*/ true);
     auto *diffWitness = SILDifferentiabilityWitness::create(
-        getModule(), original->getLinkage(), original, config.parameterIndices,
+        getModule(), diffWitnessLinkage, original, config.parameterIndices,
         config.resultIndices, derivativeConstrainedGenSig,
         /*jvp*/ nullptr, /*vjp*/ nullptr, /*isSerialized*/ true);
     return diffWitness;

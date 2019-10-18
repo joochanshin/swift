@@ -2469,6 +2469,8 @@ static bool diagnoseUnsatisfiedRequirements(ADContext &context,
   auto requirements = derivativeGenSig->getRequirements();
   if (requirements.empty())
     return false;
+  llvm::errs() << "SUBST MAP\n";
+  substMap.dump();
   // Iterate through all requirements and check whether they are satisfied.
   auto *swiftModule = context.getModule().getSwiftModule();
   SmallVector<Requirement, 2> unsatisfiedRequirements;
@@ -2545,6 +2547,7 @@ static bool diagnoseUnsatisfiedRequirements(ADContext &context,
   interleave(unsatisfiedRequirements,
              [&](Requirement req) { req.print(stream, PrintOptions()); },
              [&] { stream << ", "; });
+  llvm::errs() << "HELLO! " << stream.str() << "\n";
   context.emitNondifferentiabilityError(
       loc, invoker, diag::autodiff_function_assoc_func_unmet_requirements,
       stream.str());
@@ -2682,25 +2685,6 @@ reapplyFunctionConversion(
   llvm_unreachable("Unhandled function conversion instruction");
 }
 
-static SubstitutionMap getSubstitutionMap(
-    SILValue value, SubstitutionMap substMap = SubstitutionMap()) {
-  if (auto *thinToThick = dyn_cast<ThinToThickFunctionInst>(value))
-    return getSubstitutionMap(thinToThick->getOperand(), substMap);
-  if (auto *convertFn = dyn_cast<ConvertFunctionInst>(value))
-    return getSubstitutionMap(convertFn->getOperand(), substMap);
-  if (auto *partialApply = dyn_cast<PartialApplyInst>(value)) {
-    auto appliedSubstMap = partialApply->getSubstitutionMap();
-    // TODO: Combine argument `substMap` with `appliedSubstMap`.
-    return getSubstitutionMap(partialApply->getCallee(), appliedSubstMap);
-  }
-  if (auto *apply = dyn_cast<ApplyInst>(value)) {
-    auto appliedSubstMap = apply->getSubstitutionMap();
-    // TODO: Combine argument `substMap` with `appliedSubstMap`.
-    return getSubstitutionMap(apply->getCallee(), appliedSubstMap);
-  }
-  return substMap;
-}
-
 /// Emits a reference to a derivative function of `original`, differentiated
 /// with respect to a superset of `desiredIndices`. Returns the `SILValue` for
 /// the derivative function and the actual indices that the derivative function
@@ -2765,7 +2749,13 @@ emitDerivativeFunctionReference(
           peerThroughFunctionConversions<FunctionRefInst>(original)) {
     auto loc = originalFRI->getLoc();
     auto *originalFn = originalFRI->getReferencedFunctionOrNull();
-    auto substMap = getSubstitutionMap(original);
+#if 0
+    auto substMap = getSubstitutionMap(
+        original, original->getFunction()->getForwardingSubstitutionMap());
+#endif
+    llvm::errs() << "FOUND ORIGINAL!\n";
+    original->dumpInContext();
+    original->getFunction()->dump();
     // Attempt to look up a `[differentiable]` attribute that minimally
     // satisfies the specified indices.
     // TODO(TF-482): Change `lookUpMinimalDifferentiabilityWitness` to
@@ -2832,10 +2822,27 @@ emitDerivativeFunctionReference(
       if (context.processDifferentiableAttribute(originalFn, newWitness, invoker))
         return None;
       minimalWitness = newWitness;
+      llvm::errs() << "CREATED NEW WITNESS\n";
+    } else {
+      llvm::errs() << "FOUND EXISTING WITNESS\n";
+      minimalWitness->dump();
+      minimalWitness->getConfig().print(llvm::errs()); llvm::errs() << "\n";
     }
     assert(minimalWitness);
     // TODO(TF-482): Move generic requirement checking logic to
     // `lookUpMinimalDifferentiabilityWitness`.
+    llvm::errs() << "MINIMAL WITNESS GEN SIG\n";
+    minimalWitness->dump();
+    // Get the substitition map for checking unmet generic requirements.
+    // Use the forwarding substitution map of the original function by default.
+    // If the original callee is a `partial_apply` or `apply` instruction, use
+    // its substitution map.
+    auto substMap = original->getFunction()->getForwardingSubstitutionMap();
+    if (auto *pai = dyn_cast<PartialApplyInst>(original)) {
+      substMap = pai->getSubstitutionMap();
+    } else if (auto *ai = dyn_cast<ApplyInst>(original)) {
+      substMap = ai->getSubstitutionMap();
+    }
     if (diagnoseUnsatisfiedRequirements(
             context, minimalWitness->getDerivativeGenericSignature(), originalFn,
             substMap, invoker, original.getLoc().getSourceLoc()))

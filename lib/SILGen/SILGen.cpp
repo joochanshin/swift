@@ -812,6 +812,7 @@ void SILGenModule::emitDifferentiabilityWitness(
   CanGenericSignature derivativeCanGenSig;
   if (auto derivativeGenSig = config.derivativeGenericSignature)
     derivativeCanGenSig = derivativeGenSig->getCanonicalSignature();
+// #if 0
   // TODO(TF-835): Use simpler derivative generic signature logic below when
   // type-checking no longer generates implicit `@differentiable` attributes.
   // See TF-835 for replacement code.
@@ -827,6 +828,7 @@ void SILGenModule::emitDifferentiabilityWitness(
       derivativeCanGenSig = vjpCanGenSig;
     assert(derivativeCanGenSig == vjpCanGenSig);
   }
+// #endif
   assert(originalFunction);
   // Create new SIL differentiability witness.
   // - Witness JVP and VJP are set below.

@@ -1004,119 +1004,6 @@ public:
   // `[differentiable]` attribute lookup and registration
   //--------------------------------------------------------------------------//
 
-#if 0
-  /// Finds the `[differentiable]` attribute on the specified original function
-  /// with the exact specified parameter indices. Returns nullptr if no such
-  /// attribute exists.
-  SILDifferentiableAttr *lookUpDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices) const {
-    for (auto *attr : original->getDifferentiableAttrs())
-      if (attr->getIndices() == indices)
-        return attr;
-    return nullptr;
-  }
-
-  /// Finds the `[differentiable]` attribute on the specified original function
-  /// whose parameter indices are a minimal superset of the specified parameter
-  /// indices. Returns nullptr if no such attribute exists.
-  SILDifferentiableAttr *lookUpMinimalDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices) const {
-    auto *minimalIndexSet = IndexSubset::getDefault(
-        getASTContext(),
-        original->getLoweredFunctionType()->getNumParameters(), false);
-    auto *indexSet = indices.parameters;
-    if (auto *exactAttr = lookUpDifferentiableAttr(original, indices))
-      return exactAttr;
-    SILDifferentiableAttr *minimalAttr = nullptr;
-    for (auto *da : original->getDifferentiableAttrs()) {
-      if (da->getIndices().source != indices.source)
-        continue;
-      auto *daIndexSet = da->getIndices().parameters;
-      // If all indices in `indexSet` are in `daIndexSet`, and it has fewer
-      // indices than our current candidate and a primitive VJP, then `da` is
-      // our new candidate.
-      //
-      // NOTE(TF-642): `da` may come from a un-partial-applied function and
-      // have larger capacity than the desired indices. We expect this logic to
-      // go away when `partial_apply` supports `@differentiable` callees.
-      if (daIndexSet->isSupersetOf(indexSet->extendingCapacity(
-              getASTContext(), daIndexSet->getCapacity())) &&
-          // fewer parameters than before
-          (minimalIndexSet->isEmpty() ||
-           daIndexSet->getNumIndices() < minimalIndexSet->getNumIndices())) {
-        minimalAttr = da;
-        minimalIndexSet = daIndexSet;
-      }
-    }
-    return minimalAttr;
-  }
-
-  /// Finds the `@differentiable` attribute (and its parameter indices) on the
-  /// specified original function whose parameter indices are a minimal
-  /// superset of the specified parameter indices. Returns nullptr if no such
-  /// attribute exists.
-  std::pair<const DifferentiableAttr *, IndexSubset *>
-  lookUpMinimalASTDifferentiableAttrAndIndexSubset(
-      SILDeclRef originalDeclRef, CanSILFunctionType originalFnType,
-      const SILAutoDiffIndices &indices) {
-    auto *original = originalDeclRef.getDecl();
-    const DifferentiableAttr *minimalAttr = nullptr;
-    auto *minimalIndexSet = IndexSubset::getDefault(
-        getASTContext(), originalFnType->getNumParameters(), false);
-    auto *indexSet = indices.parameters;
-    for (auto *da : original->getAttrs().getAttributes<DifferentiableAttr>()) {
-      auto *daParamIndices = da->getParameterIndices();
-      auto *daIndexSet = autodiff::getLoweredParameterIndices(
-          daParamIndices, original->getInterfaceType()->castTo<AnyFunctionType>());
-      // If all indices in `indexSet` are in `daIndexSet`, and it has fewer
-      // indices than our current candidate and a primitive VJP, then `da` is
-      // our new candidate.
-      //
-      // NOTE(TF-642): `da` may come from a un-partial-applied function and
-      // have larger capacity than the desired indices. We expect this logic to
-      // go away when `partial_apply` supports `@differentiable` callees.
-      if (daIndexSet->isSupersetOf(indexSet->extendingCapacity(getASTContext(),
-              daIndexSet->getCapacity())) &&
-          // fewer parameters than before
-          (minimalIndexSet->isEmpty() ||
-           daIndexSet->getNumIndices() < minimalIndexSet->getNumIndices())) {
-        minimalAttr = da;
-        minimalIndexSet = daIndexSet;
-      }
-    }
-    return std::make_pair(minimalAttr, minimalIndexSet);
-  }
-
-  /// Creates a `[differentiable]` attribute on the specified original function
-  /// with the specified parameter indices.
-  SILDifferentiableAttr *createDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices,
-      GenericSignature *derivativeGenericSignature) const {
-    assert(!lookUpDifferentiableAttr(original, indices));
-    auto derivativeConstrainedGenSig = getConstrainedDerivativeGenericSignature(
-        original->getLoweredFunctionType(), indices.parameters,
-        derivativeGenericSignature);
-    auto *attr = SILDifferentiableAttr::create(getModule(), indices,
-                                               /*jvpName*/ StringRef(),
-                                               /*vjpName*/ StringRef(),
-                                               derivativeConstrainedGenSig);
-    original->addDifferentiableAttr(attr);
-    return attr;
-  }
-
-  /// Finds or creates a `[differentiable]` attribute on the specified
-  /// original function corresponding to the specified parameter indices.
-  SILDifferentiableAttr *getOrCreateDifferentiableAttr(
-      SILFunction *original, const SILAutoDiffIndices &indices,
-      GenericSignature *derivativeGenericSignature) {
-    if (auto *attr = lookUpDifferentiableAttr(original, indices))
-      return attr;
-    assert(original->isDefinition());
-    return createDifferentiableAttr(original, indices,
-                                    derivativeGenericSignature);
-  }
-#endif
-
   /// Finds the `[differentiable]` attribute on the specified original function
   /// with the exact specified parameter indices. Returns nullptr if no such
   /// attribute exists.
@@ -1130,17 +1017,14 @@ public:
 #endif
     for (auto &pair : getModule().lookUpDifferentiabilityWitnesses(original->getName())) {
       auto *diffWitness = pair.second;
-#if 0
-      diffWitness->dump();
-      diffWitness->getAutoDiffConfig().print(llvm::errs());  llvm::errs() << "\n";
-#endif
       if (diffWitness->getResultIndices() == config.resultIndices &&
           diffWitness->getParameterIndices() == config.parameterIndices)
         return diffWitness;
     }
     return nullptr;
 #if 0
-    // NOTE: Doesn't quite work if derivative generic signature
+    // NOTE: Does not work yet because derivative generic signature is not
+    // propagated correctly everywhere.
     auto key = std::make_pair(original->getName(), config);
     return getModule().lookUpDifferentiabilityWitness(key);
 #endif
@@ -1243,10 +1127,6 @@ public:
       SILFunction *original, const AutoDiffConfig &config) {
     if (auto *attr = lookUpDifferentiabilityWitness(original, config))
       return attr;
-#if 0
-    // NOTE: This assertion should be removed.
-    assert(original->isDefinition());
-#endif
     return createDifferentiabilityWitness(original, config);
   }
 
@@ -9011,21 +8891,11 @@ void Differentiation::run() {
     context.getInvokers().insert({&diffWitness, invoker});
     continue;
   }
-  for (SILFunction &f : module) {
-#if 0
-    for (auto *diffAttr : f.getDifferentiableAttrs()) {
-      DifferentiationInvoker invoker(diffAttr);
-      assert(!context.getInvokers().count(diffAttr) &&
-             "[differentiable] attribute already has an invoker");
-      context.getInvokers().insert({diffAttr, invoker});
-      continue;
-    }
-#endif
+  for (SILFunction &f : module)
     for (SILBasicBlock &bb : f)
       for (SILInstruction &i : bb)
         if (auto *dfi = dyn_cast<DifferentiableFunctionInst>(&i))
           context.getDifferentiableFunctionInsts().push_back(dfi);
-  }
 
   // If nothing has triggered differentiation, there's nothing to do.
   if (context.getInvokers().empty() &&

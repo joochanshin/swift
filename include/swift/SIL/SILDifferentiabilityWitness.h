@@ -80,9 +80,6 @@ private:
       = delete;
 
 public:
-
-  ~SILDifferentiabilityWitness();
-
   static SILDifferentiabilityWitness *create(
       SILModule &module, SILLinkage linkage, SILFunction *originalFunction,
       IndexSubset *parameterIndices, IndexSubset *resultIndices,

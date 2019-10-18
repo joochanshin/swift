@@ -8202,8 +8202,8 @@ bool ADContext::processDifferentiableAttribute(
     witness->setJVP(jvp);
   }
 
-  // If differentiation is triggered by `[differentiable]`, derivative function
-  // should share linkage of original function.
+  // If differentiation is triggered by SIL differentiability witness,
+  // derivative function should share linkage of original function.
   auto isDerivativeFnExported =
       invoker.getKind() ==
           DifferentiationInvoker::Kind::SILDifferentiabilityWitness;
@@ -8999,7 +8999,8 @@ void Differentiation::run() {
   auto &module = *getModule();
   auto &astCtx = module.getASTContext();
   debugDump(module);
-  // FIXME: TEMPORARY HACK
+  // FIXME: Temporary hack; SerializedSILLoader must be created at start of
+  // transform to avoid deserialization crash.
   module.getSILLoader();
 
   // A global differentiation context.

@@ -38,6 +38,7 @@
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/SIL/FormalLinkage.h"
 #include "swift/SIL/LoopInfo.h"
+#include "swift/SIL/PrettyStackTrace.h"
 #include "swift/SIL/Projection.h"
 #include "swift/SIL/SILBuilder.h"
 #include "swift/SIL/TypeSubstCloner.h"
@@ -7984,6 +7985,8 @@ static SILFunction *createEmptyJVP(
 bool ADContext::processDifferentiableAttribute(
     SILFunction *original, SILDifferentiableAttr *attr,
     DifferentiationInvoker invoker) {
+  PrettyStackTraceSILFunction trace(
+      "processing SIL differentiability witness", original);
   auto &module = getModule();
   // Try to look up JVP only if attribute specifies JVP name or if original
   // function is an external declaration. If JVP function cannot be found,
@@ -8769,6 +8772,8 @@ bool ADContext::processDifferentiableFunctionInst(
   });
   if (dfi->hasDerivativeFunctions())
     return false;
+  PrettyStackTraceSILLocation trace(
+      "processing DifferentiableFunctionInst", dfi->getLoc(), getASTContext());
 
   SILFunction *parent = dfi->getFunction();
   auto loc = dfi->getLoc();

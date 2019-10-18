@@ -1225,29 +1225,30 @@ public:
   /// Creates a `[differentiable]` attribute on the specified original function
   /// with the specified parameter indices.
   SILDifferentiabilityWitness *createDifferentiabilityWitness(
-      SILFunction *original, const AutoDiffConfig &config) const {
+      SILFunction *original, const AutoDiffConfig &config,
+      bool isDerivativeExported) const {
     assert(!lookUpDifferentiabilityWitness(original, config));
     auto derivativeConstrainedGenSig = getConstrainedDerivativeGenericSignature(
         original->getLoweredFunctionType(), config.parameterIndices,
         config.derivativeGenericSignature);
+    auto diffWitnessLinkage = autodiff::getAutoDiffDerivativeFunctionLinkage(
+        original->getLinkage(), isDerivativeExported);
     auto *diffWitness = SILDifferentiabilityWitness::create(
-        getModule(), original->getLinkage(), original, config.parameterIndices,
+        getModule(), diffWitnessLinkage, original, config.parameterIndices,
         config.resultIndices, derivativeConstrainedGenSig,
-        /*jvp*/ nullptr, /*vjp*/ nullptr, /*isSerialized*/ true);
+        /*jvp*/ nullptr, /*vjp*/ nullptr, /*isSerialized*/ false);
     return diffWitness;
   }
 
   /// Finds or creates a `[differentiable]` attribute on the specified
   /// original function corresponding to the specified parameter indices.
   SILDifferentiabilityWitness *getOrCreateDifferentiabilityWitness(
-      SILFunction *original, const AutoDiffConfig &config) {
+      SILFunction *original, const AutoDiffConfig &config,
+      bool isDerivativeExported) {
     if (auto *attr = lookUpDifferentiabilityWitness(original, config))
       return attr;
-#if 0
-    // NOTE: This assertion should be removed.
-    assert(original->isDefinition());
-#endif
-    return createDifferentiabilityWitness(original, config);
+    return createDifferentiabilityWitness(original, config,
+                                          isDerivativeExported);
   }
 
   /// Creates an `differentiable_function` instruction using the given builder
@@ -2816,8 +2817,11 @@ emitDerivativeFunctionReference(
           DifferentiationInvoker::Kind::IndirectDifferentiation)
         contextualDerivativeGenSig = invoker.getIndirectDifferentiation().second
             ->getDerivativeGenericSignature();
+      bool isDerivativeExported =
+          invoker.getKind() ==
+              DifferentiationInvoker::Kind::SILDifferentiabilityWitness;
       auto *newWitness = context.getOrCreateDifferentiabilityWitness(
-          originalFn, desiredConfig);
+          originalFn, desiredConfig, isDerivativeExported);
       if (context.processDifferentiableAttribute(originalFn, newWitness, invoker))
         return None;
       minimalWitness = newWitness;

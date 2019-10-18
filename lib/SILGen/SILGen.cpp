@@ -854,11 +854,15 @@ void SILGenModule::emitDifferentiabilityWitness(
     diffWitness = foundWitness;
   } else {
     // Create new SIL differentiability witness.
-    // JVP and VJP function are populated below.
+    // JVP/VJP functions are set below.
+    // Linkage is:
+    // - Hidden if no JVP/VJP functions are registered. The differentiation
+    //   transform will generate hidden JVP/VJP functions.
+    // - Otherwise, equal to the JVP/VJP function linkage.
     diffWitness = SILDifferentiabilityWitness::create(
-        M, originalFunction->getLinkage(), originalFunction,
+        M, SILLinkage::Hidden, originalFunction,
         loweredParamIndices, resultIndices, derivativeGenSig, /*jvp*/ nullptr,
-        /*vjp*/ nullptr, /*isSerialized*/ true);
+        /*vjp*/ nullptr, /*isSerialized*/ false);
   }
 
   // Set derivative function in differentiability witness.
@@ -899,6 +903,17 @@ void SILGenModule::emitDifferentiabilityWitness(
   if (vjp)
     setDerivativeInDifferentiabilityWitness(AutoDiffDerivativeFunctionKind::VJP,
                                             vjp);
+  // Set differentiability linkage to JVP/VJP linkage.
+#if NDEBUG
+  if (jvp && vjp) {
+    assert(jvp->getLinkage() == vjp->getLinkage() &&
+           "JVP/VJP linkages must match; this should be checked during Sema");
+  }
+#endif
+  if (jvp)
+    diffWitness->setLinkage(jvp->getLinkage());
+  if (vjp)
+    diffWitness->setLinkage(vjp->getLinkage());
 }
 
 void SILGenModule::

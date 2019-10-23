@@ -85,11 +85,16 @@ public:
       IndexSubset *parameterIndices, IndexSubset *resultIndices,
       GenericSignature derivativeGenSig, DeclAttribute *attribute = nullptr);
 
+#if 0
   static SILDifferentiabilityWitness *createDefinition(
       SILModule &module, SILLinkage linkage, SILFunction *originalFunction,
       IndexSubset *parameterIndices, IndexSubset *resultIndices,
       GenericSignature derivativeGenSig, SILFunction *jvp, SILFunction *vjp,
       bool isSerialized, DeclAttribute *attribute = nullptr);
+#endif
+
+  void convertToDefinition(
+      SILFunction *jvp, SILFunction *vjp, bool isSerialized);
 
   SILDifferentiabilityWitnessKey getKey() const;
   SILModule &getModule() const { return Module; }

@@ -33,6 +33,7 @@ SILDifferentiabilityWitness *SILDifferentiabilityWitness::createDeclaration(
   return diffWitness;
 }
 
+#if 0
 SILDifferentiabilityWitness *SILDifferentiabilityWitness::createDefinition(
     SILModule &module, SILLinkage linkage, SILFunction *originalFunction,
     IndexSubset *parameterIndices, IndexSubset *resultIndices,
@@ -49,7 +50,15 @@ SILDifferentiabilityWitness *SILDifferentiabilityWitness::createDefinition(
   module.getDifferentiabilityWitnessList().push_back(diffWitness);
   return diffWitness;
 }
+#endif
 
+void SILDifferentiabilityWitness::convertToDefinition(
+    SILFunction *jvp, SILFunction *vjp, bool isSerialized) {
+  assert(IsDeclaration && "");
+  IsSerialized = isSerialized;
+  JVP = jvp;
+  VJP = vjp;
+}
 
 SILDifferentiabilityWitnessKey SILDifferentiabilityWitness::getKey() const {
   return std::make_pair(getOriginalFunction()->getName(), getConfig());

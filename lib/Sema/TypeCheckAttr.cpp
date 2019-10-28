@@ -3008,8 +3008,6 @@ static IndexSubset *computeDifferentiationParameters(
 // Computes `IndexSubset` from the given parsed transposing parameters
 // (possibly empty) for the given function, then verifies that the parameter
 // indices are valid.
-// - If parsed parameters are empty, infer parameter indices.
-// - Otherwise, build parameter indices from parsed parameters.
 // The attribute name/location are used in diagnostics.
 static IndexSubset *computeTransposingParameters(
     TypeChecker &TC, ArrayRef<ParsedAutoDiffParameter> parsedWrtParams,
@@ -3054,14 +3052,7 @@ static IndexSubset *computeTransposingParameters(
       return nullptr;
     }
   }
-  
-  // If parsed differentiation parameters are empty, infer parameter indices
-  // from the function type.
-  // TODO(bartchr): still need to do this!
-//  if (parsedWrtParams.empty())
-//    return TypeChecker::inferTransposingParameters(
-//        function, derivativeGenEnv);
-  
+
   // Otherwise, build parameter indices from parsed differentiation parameters.
   unsigned numParams = params.size() + transposeResultTypes.size();
   auto paramIndices = SmallBitVector(numParams);
@@ -3070,7 +3061,7 @@ static IndexSubset *computeTransposingParameters(
     auto paramLoc = parsedWrtParams[i].getLoc();
     switch (parsedWrtParams[i].getKind()) {
     case ParsedAutoDiffParameter::Kind::Named: {
-      TC.diagnose(paramLoc, diag::transposing_attr_cant_use_named_wrt_params,
+      TC.diagnose(paramLoc, diag::transposing_attr_cannot_use_named_wrt_params,
                   parsedWrtParams[i].getName());
       return nullptr;
     }
@@ -3631,24 +3622,25 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
       derivativeInterfaceType->getAutoDiffOriginalFunctionType();
 
   std::function<bool(GenericSignature, GenericSignature)>
-    checkGenericSignatureSatisfied =
-        [&](GenericSignature source, GenericSignature target) {
-          // If target is null, then its requirements are satisfied.
-          if (!target)
-            return true;
-          // If source is null but target is not null, then target's
-          // requirements are not satisfied.
-          if (!source)
-            return false;
-          // Check if target's requirements are satisfied by source.
-          return TC.checkGenericArguments(
-                     derivative, original.Loc.getBaseNameLoc(),
-                     original.Loc.getBaseNameLoc(), Type(),
-                     source->getGenericParams(), target->getRequirements(),
-                     [](SubstitutableType *dependentType) {
-                       return Type(dependentType);
-                     }, lookupConformance, None) == RequirementCheckResult::Success;
-  };
+      checkGenericSignatureSatisfied = [&](GenericSignature source,
+                                           GenericSignature target) {
+        // If target is null, then its requirements are satisfied.
+        if (!target)
+          return true;
+        // If source is null but target is not null, then target's
+        // requirements are not satisfied.
+        if (!source)
+          return false;
+        // Check if target's requirements are satisfied by source.
+        return TC.checkGenericArguments(
+                   derivative, original.Loc.getBaseNameLoc(),
+                   original.Loc.getBaseNameLoc(), Type(),
+                   source->getGenericParams(), target->getRequirements(),
+                   [](SubstitutableType *dependentType) {
+                     return Type(dependentType);
+                   },
+                   lookupConformance, None) == RequirementCheckResult::Success;
+      };
 
   auto isValidOriginal = [&](FuncDecl *originalCandidate) {
     TC.validateDecl(originalCandidate);
@@ -3927,6 +3919,7 @@ void AttributeChecker::visitTransposingAttr(TransposingAttr *attr) {
   auto parsedWrtParams = attr->getParsedParameters();
   
   bool wrtSelf = false;
+  // NOTE: THIS IS A HACK!
   if (!parsedWrtParams.empty())
     wrtSelf = parsedWrtParams.front().getKind() ==
               ParsedAutoDiffParameter::Kind::Self;
@@ -3956,7 +3949,7 @@ void AttributeChecker::visitTransposingAttr(TransposingAttr *attr) {
 
   auto *expectedOriginalFnType =
       transposeInterfaceType->getTransposeOriginalFunctionType(
-          attr, wrtParamIndices, wrtSelf);
+          wrtParamIndices, wrtSelf);
 
   // `R` result type must conform to `Differentiable`.
   auto expectedOriginalResultType = expectedOriginalFnType->getResult();
@@ -3982,25 +3975,25 @@ void AttributeChecker::visitTransposingAttr(TransposingAttr *attr) {
 
   // Compute expected original function type.
   std::function<bool(GenericSignature, GenericSignature)>
-    checkGenericSignatureSatisfied = [&](GenericSignature source,
-                                         GenericSignature target) {
-          // If target is null, then its requirements are satisfied.
-          if (!target)
-            return true;
-          // If source is null but target is not null, then target's
-          // requirements are not satisfied.
-          if (!source)
-            return false;
-          // Check if target's requirements are satisfied by source.
-          return TC.checkGenericArguments(
-                     transpose, original.Loc.getBaseNameLoc(),
-                     original.Loc.getBaseNameLoc(), Type(),
-                     source->getGenericParams(), target->getRequirements(),
-                     [](SubstitutableType *dependentType) {
-                       return Type(dependentType);
-                     },
-                     lookupConformance, None) == RequirementCheckResult::Success;
-    };
+      checkGenericSignatureSatisfied = [&](GenericSignature source,
+                                           GenericSignature target) {
+        // If target is null, then its requirements are satisfied.
+        if (!target)
+          return true;
+        // If source is null but target is not null, then target's
+        // requirements are not satisfied.
+        if (!source)
+          return false;
+        // Check if target's requirements are satisfied by source.
+        return TC.checkGenericArguments(
+                   transpose, original.Loc.getBaseNameLoc(),
+                   original.Loc.getBaseNameLoc(), Type(),
+                   source->getGenericParams(), target->getRequirements(),
+                   [](SubstitutableType *dependentType) {
+                     return Type(dependentType);
+                   },
+                   lookupConformance, None) == RequirementCheckResult::Success;
+      };
   
   auto isValidOriginal = [&](FuncDecl *originalCandidate) {
     TC.validateDecl(originalCandidate);
@@ -4084,12 +4077,13 @@ void AttributeChecker::visitTransposingAttr(TransposingAttr *attr) {
 
   // Set the checked differentiation parameter indices in the attribute.
   attr->setParameterIndices(wrtParamIndices);
-
+#if 0
   // Check if original function type matches expected original function type
   // we computed.
   std::function<bool(GenericSignature, GenericSignature)>
-      genericComparison =
-          [&](GenericSignature a, GenericSignature b) { return a.getPointer() == b.getPointer(); };
+      genericComparison = [&](GenericSignature a, GenericSignature b) {
+        return a.getPointer() == b.getPointer();
+      };
   if (!checkFunctionSignature(
            cast<AnyFunctionType>(expectedOriginalFnType->getCanonicalType()),
            originalFn->getInterfaceType()->getCanonicalType(),
@@ -4116,6 +4110,7 @@ void AttributeChecker::visitTransposingAttr(TransposingAttr *attr) {
     attr->setInvalid();
     return;
   }
+#endif
 }
 
 static bool

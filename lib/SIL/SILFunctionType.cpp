@@ -119,15 +119,23 @@ CanSILFunctionType SILFunctionType::getWithDifferentiability(
   for (auto paramAndIndex : enumerate(getParameters())) {
     auto &param = paramAndIndex.value();
     unsigned index = paramAndIndex.index();
-    newParameters.push_back(param.getWithDifferentiability(
+    auto newParam = param.getWithDifferentiability(
         index < parameterIndices->getCapacity() &&
             parameterIndices->contains(index)
                 ? SILParameterDifferentiability::DifferentiableOrNotApplicable
-                : SILParameterDifferentiability::NotDifferentiable));
+                : SILParameterDifferentiability::NotDifferentiable);
+    // newParam = newParam.getWithTangentConvention(param.getConvention());
+    newParameters.push_back(newParam);
+  }
+  SmallVector<SILResultInfo, 8> newResults;
+  for (auto result : getResults()) {
+    auto newResult = result.getWithDerivativeConvention(result.getConvention());
+    newResult = newResult.getWithTangentConvention(result.getConvention());
+    newResults.push_back(newResult);
   }
   auto newExtInfo = getExtInfo().withDifferentiabilityKind(kind);
   return get(getGenericSignature(), newExtInfo, getCoroutineKind(),
-             getCalleeConvention(), newParameters, getYields(), getResults(),
+             getCalleeConvention(), newParameters, getYields(), newResults,
              getOptionalErrorResult(), getASTContext(),
              getWitnessMethodConformanceOrNone());
 }
@@ -141,9 +149,22 @@ CanSILFunctionType SILFunctionType::getWithoutDifferentiability() {
   for (auto &param : getParameters())
     newParams.push_back(param.getWithDifferentiability(
         SILParameterDifferentiability::DifferentiableOrNotApplicable));
+#if 0
+  for (auto &param : getParameters()) {
+    auto newParam = param.getWithDifferentiability(
+        SILParameterDifferentiability::DifferentiableOrNotApplicable);
+    newParams.push_back(newParam);
+  }
+#endif
+  SmallVector<SILResultInfo, 8> newResults;
+  for (auto result : getResults()) {
+    auto newResult = result.getWithDerivativeConvention(result.getConvention());
+    newResult = newResult.getWithTangentConvention(result.getConvention());
+    newResults.push_back(newResult);
+  }
   return SILFunctionType::get(getGenericSignature(), nondiffExtInfo,
                               getCoroutineKind(), getCalleeConvention(),
-                              newParams, getYields(), getResults(),
+                              newParams, getYields(), newResults,
                               getOptionalErrorResult(), getASTContext());
 }
 
@@ -261,6 +282,12 @@ CanSILFunctionType SILFunctionType::getAutoDiffDerivativeFunctionType(
     for (auto &param : wrtParams) {
       auto paramTan =
           param.getType()->getAutoDiffAssociatedTangentSpace(lookupConformance);
+      if (!paramTan) {
+        llvm::errs() << "NO PARAM TAN!\n";
+        parameterIndices->dump();
+        param.dump();
+        dump();
+      }
       assert(paramTan && "Parameter type does not have a tangent space?");
       differentialParams.push_back(
           {paramTan->getCanonicalType(), param.getConvention()});

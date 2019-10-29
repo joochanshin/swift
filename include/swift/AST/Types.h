@@ -3520,14 +3520,20 @@ class SILParameterInfo {
 
   // SWIFT_ENABLE_TENSORFLOW
   SILParameterDifferentiability Differentiability : 1;
+
+  /// The tangent convention of the given parameter.
+  Optional<ParameterConvention> TangentConvention;
+  // SWIFT_ENABLE_TENSORFLOW END
 public:
   SILParameterInfo() = default;//: Ty(), Convention((ParameterConvention)0) {}
   // SWIFT_ENABLE_TENSORFLOW
   SILParameterInfo(
       CanType type, ParameterConvention conv,
       SILParameterDifferentiability differentiability =
-          SILParameterDifferentiability::DifferentiableOrNotApplicable)
-    : TypeAndConvention(type, conv), Differentiability(differentiability) {
+          SILParameterDifferentiability::DifferentiableOrNotApplicable,
+      Optional<ParameterConvention> tangentConvention = None)
+    : TypeAndConvention(type, conv), Differentiability(differentiability),
+      TangentConvention(tangentConvention) {
     assert(type->isLegalSILType() && "SILParameterInfo has illegal SIL type");
   }
 
@@ -3577,10 +3583,22 @@ public:
     return Differentiability;
   }
 
+  Optional<ParameterConvention> getTangentConvention() const {
+    return TangentConvention;
+  }
+
   SILParameterInfo getWithDifferentiability(
       SILParameterDifferentiability differentiability) const {
-    return SILParameterInfo(getType(), getConvention(), differentiability);
+    return SILParameterInfo(getType(), getConvention(), differentiability,
+                            getTangentConvention());
   }
+
+  SILParameterInfo getWithTangentConvention(
+      Optional<ParameterConvention> tangentConv) const {
+    return SILParameterInfo(getType(), getConvention(), getDifferentiability(),
+                            tangentConv);
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
 
   /// The SIL storage type determines the ABI for arguments based purely on the
   /// formal parameter conventions. The actual SIL type for the argument values
@@ -3672,10 +3690,21 @@ inline bool isIndirectFormalResult(ResultConvention convention) {
 /// A result type and the rules for returning it.
 class SILResultInfo {
   llvm::PointerIntPair<CanType, 3, ResultConvention> TypeAndConvention;
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// The derivative convention of the given result.
+  Optional<ResultConvention> DerivativeConvention;
+
+  /// The tangent convention of the given result.
+  Optional<ResultConvention> TangentConvention;
 public:
   SILResultInfo() = default;
-  SILResultInfo(CanType type, ResultConvention conv)
-    : TypeAndConvention(type, conv) {
+  // SWIFT_ENABLE_TENSORFLOW
+  SILResultInfo(CanType type, ResultConvention conv,
+                Optional<ResultConvention> derivativeConv = None,
+                Optional<ResultConvention> tangentConv = None)
+    : TypeAndConvention(type, conv), DerivativeConvention(derivativeConv),
+      TangentConvention(tangentConv) {
     assert(type->isLegalSILType() && "SILResultInfo has illegal SIL type");
   }
 
@@ -3685,6 +3714,15 @@ public:
   ResultConvention getConvention() const {
     return TypeAndConvention.getInt();
   }
+  // SWIFT_ENABLE_TENSORFLOW
+  Optional<ResultConvention> getDerivativeConvention() const {
+    return DerivativeConvention;
+  }
+  Optional<ResultConvention> getTangentConvention() const {
+    return TangentConvention;
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
+
   /// The SIL storage type determines the ABI for arguments based purely on the
   /// formal result conventions. The actual SIL type for the result values may
   /// differ in canonical SIL. In particular, opaque values require indirect
@@ -3695,8 +3733,23 @@ public:
 
   /// Return a version of this result info with the type replaced.
   SILResultInfo getWithType(CanType type) const {
+    // SWIFT_ENABLE_TENSORFLOW
     return SILResultInfo(type, getConvention());
   }
+
+  // SWIFT_ENABLE_TENSORFLOW
+  SILResultInfo getWithDerivativeConvention(
+      Optional<ResultConvention> derivConv) const {
+    return SILResultInfo(getType(), getConvention(), derivConv,
+                         getTangentConvention());
+  }
+
+  SILResultInfo getWithTangentConvention(
+      Optional<ResultConvention> tangentConv) const {
+    return SILResultInfo(getType(), getConvention(), getDerivativeConvention(),
+                         tangentConv);
+  }
+  // SWIFT_ENABLE_TENSORFLOW END
 
   // Does this result convention require indirect storage? This reflects a
   // SILFunctionType's formal (immutable) conventions, as opposed to the

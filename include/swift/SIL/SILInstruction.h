@@ -7984,6 +7984,11 @@ public:
       NormalDifferentiableFunctionTypeComponent extractee,
       SILValue theFunction);
 
+  explicit DifferentiableFunctionExtractInst(
+      SILModule &module, SILDebugLocation debugLoc,
+      NormalDifferentiableFunctionTypeComponent extractee,
+      SILValue theFunction, SILType type);
+
   NormalDifferentiableFunctionTypeComponent getExtractee() const {
       return extractee;
   }

@@ -526,12 +526,19 @@ public:
         getModule(), getSILDebugLocation(Loc), ParameterIndices,
         OriginalFunction, TransposeFunction, hasOwnership()));
   }
-  
+
   DifferentiableFunctionExtractInst *createDifferentiableFunctionExtract(
       SILLocation Loc, NormalDifferentiableFunctionTypeComponent Extractee,
       SILValue TheFunction) {
     return insert(new (getModule()) DifferentiableFunctionExtractInst(
         getModule(), getSILDebugLocation(Loc), Extractee, TheFunction));
+  }
+
+  DifferentiableFunctionExtractInst *createDifferentiableFunctionExtract(
+      SILLocation Loc, NormalDifferentiableFunctionTypeComponent Extractee,
+      SILValue TheFunction, SILType Type) {
+    return insert(new (getModule()) DifferentiableFunctionExtractInst(
+        getModule(), getSILDebugLocation(Loc), Extractee, TheFunction, Type));
   }
 
   LinearFunctionExtractInst *createLinearFunctionExtract(

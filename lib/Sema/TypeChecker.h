@@ -1020,7 +1020,7 @@ public:
 
   // SWIFT_ENABLE_TENSORFLOW
   // TODO(TF-789): Figure out the proper way to typecheck these.
-  static void checkDeclDifferentiableAttributes(Decl *D);
+  static void checkDeclDifferentiableAttributes(Decl *D, Type interfaceType);
 
   static Type checkReferenceOwnershipAttr(VarDecl *D, Type interfaceType,
                                           ReferenceOwnershipAttr *attr);
@@ -2053,6 +2053,7 @@ public:
   ///   conform to `Differentiable`.
   static IndexSubset *
   inferDifferentiableParameters(AbstractFunctionDecl *AFD,
+                                AnyFunctionType *functionType,
                                 GenericEnvironment *derivativeGenEnv);
 };
 

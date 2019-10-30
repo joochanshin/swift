@@ -4225,17 +4225,23 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
     if (interfaceType->hasArchetype())
       interfaceType = interfaceType->mapTypeOutOfContext();
 
-    // SWIFT_ENABLE_TENSORFLOW
-    // TODO(TF-789): Find proper way to type-check `@differentiable` attributes.
-    TypeChecker::checkDeclDifferentiableAttributes(VD);
-    // SWIFT_ENABLE_TENSORFLOW END
-
     // In SIL mode, VarDecls are written as having reference storage types.
     if (!interfaceType->is<ReferenceStorageType>()) {
       if (auto *attr = VD->getAttrs().getAttribute<ReferenceOwnershipAttr>())
         interfaceType =
             TypeChecker::checkReferenceOwnershipAttr(VD, interfaceType, attr);
     }
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // TODO(TF-789): Find proper way to type-check `@differentiable` attributes.
+    // FIXME: None of the following work:
+#if 0
+    TypeChecker::checkDeclDifferentiableAttributes(VD, interfaceType);
+    TypeChecker::checkDeclDifferentiableAttributes(
+        VD, VD->getAccessor(AccessorKind::Get)->getInterfaceType());
+    TypeChecker::checkDeclDifferentiableAttributes(VD, Type());
+#endif
+    // SWIFT_ENABLE_TENSORFLOW END
 
     return interfaceType;
   }
@@ -4294,7 +4300,7 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
 
     // SWIFT_ENABLE_TENSORFLOW
     // TODO(TF-789): Find proper way to type-check `@differentiable` attributes.
-    TypeChecker::checkDeclDifferentiableAttributes(AFD);
+    TypeChecker::checkDeclDifferentiableAttributes(AFD, funcTy);
     // SWIFT_ENABLE_TENSORFLOW END
 
     return funcTy;
@@ -4316,7 +4322,10 @@ InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {
 
     // SWIFT_ENABLE_TENSORFLOW
     // TODO(TF-789): Find proper way to type-check `@differentiable` attributes.
-    TypeChecker::checkDeclDifferentiableAttributes(SD);
+    // FIXME: The following causes more test failures:
+#if 0
+    TypeChecker::checkDeclDifferentiableAttributes(SD, funcTy);
+#endif
     // SWIFT_ENABLE_TENSORFLOW END
 
     return funcTy;

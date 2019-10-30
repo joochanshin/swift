@@ -2263,7 +2263,8 @@ diagnoseMatch(ModuleDecl *module, NormalProtocolConformance *conformance,
     auto *whereClauseGenEnv =
         reqAttr->getDerivativeGenericEnvironment(original);
     auto *inferredParameters = TypeChecker::inferDifferentiableParameters(
-        original, whereClauseGenEnv);
+        original, original->getInterfaceType()->castTo<AnyFunctionType>(),
+        whereClauseGenEnv);
     bool omitWrtClause = reqAttr->getParameterIndices()->getNumIndices() ==
                          inferredParameters->getNumIndices();
     // Get `@differentiable` attribute description.

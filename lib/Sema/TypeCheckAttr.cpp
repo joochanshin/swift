@@ -247,6 +247,7 @@ class AttributeChecker : public AttributeVisitor<AttributeChecker> {
 
   // SWIFT_ENABLE_TENSORFLOW
   void visitDifferentiableAttr(DifferentiableAttr *attr);
+  void visitDifferentiableAttr(DifferentiableAttr *attr, Type funcType);
   void visitDifferentiatingAttr(DifferentiatingAttr *attr);
   void visitCompilerEvaluableAttr(CompilerEvaluableAttr *attr);
   void visitNoDerivativeAttr(NoDerivativeAttr *attr);
@@ -1065,13 +1066,13 @@ void TypeChecker::checkDeclAttributes(Decl *D) {
 
 // SWIFT_ENABLE_TENSORFLOW
 // TODO(TF-789): Figure out the proper way to typecheck these.
-void TypeChecker::checkDeclDifferentiableAttributes(Decl *D) {
+void TypeChecker::checkDeclDifferentiableAttributes(Decl *D, Type interfaceType) {
   AttributeChecker Checker(D);
-  for (auto attr : D->getAttrs()) {
-    if (!isa<DifferentiableAttr>(attr) || !attr->isValid() ||
-        !attr->canAppearOnDecl(D))
+  for (auto *attr : D->getAttrs().getAttributes<DifferentiableAttr>()) {
+    if (!attr->isValid() || !attr->canAppearOnDecl(D))
       continue;
-    Checker.visit(attr);
+    Checker.visitDifferentiableAttr(const_cast<DifferentiableAttr *>(attr),
+                                    interfaceType);
   }
 }
 
@@ -2670,9 +2671,9 @@ static bool tangentVectorEqualSelf(Type type, DeclContext *DC) {
 ///   conform to `Differentiable`.
 IndexSubset *
 TypeChecker::inferDifferentiableParameters(
-    AbstractFunctionDecl *AFD, GenericEnvironment *derivativeGenEnv) {
+    AbstractFunctionDecl *AFD, AnyFunctionType *functionType,
+    GenericEnvironment *derivativeGenEnv) {
   auto &ctx = AFD->getASTContext();
-  auto *functionType = AFD->getInterfaceType()->castTo<AnyFunctionType>();
   auto numUncurriedParams = functionType->getNumParams();
   if (auto *resultFnType =
           functionType->getResult()->getAs<AnyFunctionType>()) {
@@ -2883,11 +2884,11 @@ static bool checkFunctionSignature(
 // The attribute name/location are used in diagnostics.
 static IndexSubset *computeDifferentiationParameters(
     AttributeChecker &TC, ArrayRef<ParsedAutoDiffParameter> parsedWrtParams,
-    AbstractFunctionDecl *function, GenericEnvironment *derivativeGenEnv,
+    AbstractFunctionDecl *function, AnyFunctionType *functionType,
+    GenericEnvironment *derivativeGenEnv,
     StringRef attrName, SourceLoc attrLoc
 ) {
   // Get function type and parameters.
-  auto *functionType = function->getInterfaceType()->castTo<AnyFunctionType>();
   auto &params = *function->getParameters();
   auto numParams = function->getParameters()->size();
   auto isInstanceMethod = function->isInstanceMember();
@@ -2925,7 +2926,7 @@ static IndexSubset *computeDifferentiationParameters(
   // from the function type.
   if (parsedWrtParams.empty())
     return TypeChecker::inferDifferentiableParameters(
-        function, derivativeGenEnv);
+        function, functionType, derivativeGenEnv);
 
   // Otherwise, build parameter indices from parsed differentiation parameters.
   auto numUncurriedParams = functionType->getNumParams();
@@ -3212,6 +3213,10 @@ static bool checkTransposingParameters(
 
 // SWIFT_ENABLE_TENSORFLOW
 void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
+  visitDifferentiableAttr(attr, Type());
+}
+void AttributeChecker::visitDifferentiableAttr(
+    DifferentiableAttr *attr, Type interfaceType) {
   auto& TC = *this;
   // Skip checking implicit `@differentiable` attributes. We currently assume
   // that all implicit `@differentiable` attributes are valid.
@@ -3266,7 +3271,14 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     return;
   }
 
-  auto *originalFnTy = original->getInterfaceType()->castTo<AnyFunctionType>();
+  AnyFunctionType *originalFnTy = nullptr;
+  if (interfaceType) {
+    originalFnTy = interfaceType->castTo<AnyFunctionType>();
+  } else {
+    assert(original->getInterfaceType()->is<AnyFunctionType>() &&
+           "Original interface type must be an AnyFunctionType");
+    originalFnTy = original->getInterfaceType()->castTo<AnyFunctionType>();
+  }
   bool isMethod = original->hasImplicitSelfDecl();
 
   // If the original function returns the empty tuple type, there's no output to
@@ -3422,7 +3434,8 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
   if (!checkedWrtParamIndices)
     checkedWrtParamIndices =
         computeDifferentiationParameters(TC, parsedWrtParams, original,
-                                         whereClauseGenEnv, attr->getAttrName(),
+                                         originalFnTy, whereClauseGenEnv,
+                                         attr->getAttrName(),
                                          attr->getLocation());
   if (!checkedWrtParamIndices) {
     attr->setInvalid();
@@ -3710,12 +3723,16 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
   auto parsedWrtParams = attr->getParsedParameters();
 
   // If checked wrt param indices are not specified, compute them.
-  if (!checkedWrtParamIndices)
+  if (!checkedWrtParamIndices) {
+    auto *derivativeFnTy =
+        derivative->getInterfaceType()->castTo<AnyFunctionType>();
     checkedWrtParamIndices =
         computeDifferentiationParameters(TC, parsedWrtParams, derivative,
+                                         derivativeFnTy,
                                          derivative->getGenericEnvironment(),
                                          attr->getAttrName(),
                                          attr->getLocation());
+  }
   if (!checkedWrtParamIndices) {
     attr->setInvalid();
     return;

@@ -1072,3 +1072,25 @@ void swift::simple_display(llvm::raw_ostream &out,
   out << "precedence group " << desc.ident << " at ";
   desc.nameLoc.print(out, desc.dc->getASTContext().SourceMgr);
 }
+
+//----------------------------------------------------------------------------//
+// DifferentiableAttributeParameterIndicesRequest computation.
+//----------------------------------------------------------------------------//
+
+bool
+DifferentiableAttributeParameterIndicesRequest::isCached() const {
+  auto *attr = std::get<0>(getStorage());
+  return attr->getParameterIndices();
+}
+
+Optional<IndexSubset *>
+DifferentiableAttributeParameterIndicesRequest::getCachedResult() const {
+  auto *attr = std::get<0>(getStorage());
+  return attr->getParameterIndices();
+}
+
+void DifferentiableAttributeParameterIndicesRequest::cacheResult(
+    IndexSubset *parameterIndices) const {
+  auto *attr = std::get<0>(getStorage());
+  attr->setParameterIndices(parameterIndices);
+}

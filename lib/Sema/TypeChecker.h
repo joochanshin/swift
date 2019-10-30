@@ -2037,7 +2037,7 @@ public:
   // Returns the function declaration corresponding to the given function name
   // and lookup context. If the function declaration cannot be resolved, emits a
   // diagnostic and returns nullptr.
-  FuncDecl *lookupFuncDecl(
+  static FuncDecl *lookupFuncDecl(
       DeclName funcName, SourceLoc funcNameLoc, Type baseType,
       DeclContext *lookupContext,
       const std::function<bool(FuncDecl *)> &isValidFuncDecl,

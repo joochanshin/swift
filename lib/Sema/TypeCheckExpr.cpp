@@ -763,18 +763,19 @@ TypeChecker::lookupFuncDecl(
   // Perform lookup.
   LookupResult results;
   if (baseType) {
-    results = lookupMember(lookupContext, baseType, funcName);
+    results = TypeChecker::lookupMember(lookupContext, baseType, funcName);
   } else {
-    results =
-      lookupUnqualified(lookupContext, funcName, funcNameLoc, lookupOptions);
+    results = TypeChecker::lookupUnqualified(
+        lookupContext, funcName, funcNameLoc, lookupOptions);
 
     // If looking up an operator within a type context, look specifically within
     // the type context.
     // This tries to resolve unqualified operators, like `+`.
     if (funcName.isOperator() && lookupContext->isTypeContext()) {
-      if (auto tmp = lookupMember(lookupContext,
-                                  lookupContext->getSelfTypeInContext(),
-                                  funcName))
+      if (auto tmp =
+              TypeChecker::lookupMember(lookupContext,
+                                        lookupContext->getSelfTypeInContext(),
+                                        funcName))
         results = tmp;
     }
   }
@@ -815,8 +816,9 @@ TypeChecker::lookupFuncDecl(
 
   // Otherwise, emit the appropriate diagnostic and return nullptr.
   if (results.empty()) {
-    diagnose(funcNameLoc, diag::use_unresolved_identifier, funcName,
-             funcName.isOperator());
+    auto &ctx = lookupContext->getASTContext();
+    ctx.Diags.diagnose(funcNameLoc, diag::use_unresolved_identifier, funcName,
+                       funcName.isOperator());
     return nullptr;
   }
   if (ambiguousFuncDecl) {

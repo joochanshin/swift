@@ -15,6 +15,7 @@
 #include "swift/AST/Decl.h"
 // SWIFT_ENABLE_TENSORFLOW
 #include "swift/AST/ASTMangler.h"
+#include "swift/AST/TypeCheckRequests.h"
 using namespace swift;
 
 SILFunction *SILFunctionBuilder::getOrCreateFunction(
@@ -84,15 +85,25 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
       !constant.isStoredPropertyInitializer() &&
       !constant.isThunk()) {
     for (auto *A : Attrs.getAttributes<DifferentiableAttr>()) {
+      (void)decl->getInterfaceType();
+      auto &ctx = F->getASTContext();
       // Get lowered argument indices.
+      auto *paramIndices = evaluateOrDefault(ctx.evaluator, DifferentiableAttributeParameterIndicesRequest{const_cast<DifferentiableAttr *>(A), decl}, nullptr);
+#if 0
       auto *paramIndices = A->getParameterIndices();
+#endif
+      if (!paramIndices) {
+        llvm::errs() << "\n";
+        llvm::errs() << "SILFunctionBuilder @differentiable attribute: " << A << "\n";
+        A->print(llvm::errs(), decl);
+        llvm::errs() << "\n";
+      }
       assert(paramIndices && "Parameter indices should have been resolved");
       auto *loweredParamIndices = autodiff::getLoweredParameterIndices(
           paramIndices, decl->getInterfaceType()->castTo<AnyFunctionType>());
       SILAutoDiffIndices indices(/*source*/ 0, loweredParamIndices);
       // Get JVP/VJP names.
       std::string jvpName, vjpName;
-      auto &ctx = F->getASTContext();
       if (auto *jvpFn = A->getJVPFunction()) {
         Mangle::ASTMangler mangler;
         jvpName = ctx.getIdentifier(

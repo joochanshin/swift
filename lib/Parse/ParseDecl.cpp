@@ -3829,10 +3829,14 @@ Parser::parseDecl(ParseDeclOptions Flags,
 
       if (D->getAttrs().hasAttribute<DifferentiableAttr>()) {
         auto *AFD = dyn_cast<AbstractFunctionDecl>(D);
+        if (auto *ASD = dyn_cast<AbstractStorageDecl>(D))
+          AFD = ASD->getAccessor(AccessorKind::Get);
+        assert(AFD);
         // FIXME(!!!): Handle more original function cases! This is not correct
         for (auto *attr : D->getAttrs().getAttributes<DifferentiableAttr>()) {
           auto *diffAttr = const_cast<DifferentiableAttr *>(attr);
           diffAttr->setOriginalFunction(AFD);
+          llvm::errs() << "SET ORIG FUNCTION: " << attr << "\n";
         }
       }
       // SWIFT_ENABLE_TENSORFLOW END

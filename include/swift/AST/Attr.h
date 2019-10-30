@@ -1611,12 +1611,8 @@ public:
   /// registered VJP.
   Optional<DeclNameWithLoc> getVJP() const { return VJP; }
 
-  IndexSubset *getParameterIndices() const {
-    return ParameterIndices;
-  }
-  void setParameterIndices(IndexSubset *pi) {
-    ParameterIndices = pi;
-  }
+  IndexSubset *getParameterIndices() const;
+  void setParameterIndices(IndexSubset *paramIndices);
 
   /// The parsed differentiation parameters, i.e. the list of parameters
   /// specified in 'wrt:'.

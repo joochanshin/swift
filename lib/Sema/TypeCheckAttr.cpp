@@ -3441,6 +3441,8 @@ static bool checkTransposingParameters(
 
 // SWIFT_ENABLE_TENSORFLOW
 void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
+  // TODO: Try making everything lazy
+// #if 0
   // Skip checking implicit `@differentiable` attributes. We currently assume
   // that all implicit `@differentiable` attributes are valid.
   // Motivation: some implicit attributes do not contain a where clause, and
@@ -3778,6 +3780,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
                 diag::differentiable_attr_duplicate_note);
     return;
   }
+// #endif
 }
 
 llvm::Expected<IndexSubset *>
@@ -3901,7 +3904,8 @@ DifferentiableAttributeParameterIndicesRequest::evaluate(
         attr->setInvalid();
         return;
 #endif
-        diagnoseAndRemoveAttr(diags, D, attr, diag::differentiable_attr_class_member_no_dynamic_self);
+        diagnoseAndRemoveAttr(diags, D, attr,
+                              diag::differentiable_attr_class_member_no_dynamic_self);
         return nullptr;
       }
     }
@@ -4027,7 +4031,6 @@ DifferentiableAttributeParameterIndicesRequest::evaluate(
     // Store the resolved derivative generic signature in the attribute.
     attr->setDerivativeGenericSignature(ctx, whereClauseGenSig);
   }
-  llvm::errs() << "CHEC\n";
 
   // Validate the 'wrt:' parameters.
 

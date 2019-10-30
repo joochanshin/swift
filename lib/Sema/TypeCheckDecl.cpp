@@ -4128,6 +4128,7 @@ static Type validateParameterType(ParamDecl *decl) {
   return TL.getType();
 }
 
+#if 0
 static void checkDeclDifferentiableAttributes(Decl *D) {
   auto &evaluator = D->getASTContext().evaluator;
   for (auto *attr : D->getAttrs().getAttributes<DifferentiableAttr>()) {
@@ -4141,15 +4142,8 @@ static void checkDeclDifferentiableAttributes(Decl *D) {
       llvm::errs() << "WE HAVE A PROBLEM!\n";
     }
   }
-#if 0
-  for (auto attr : D->getAttrs()) {
-    if (!isa<DifferentiableAttr>(attr) || !attr->isValid() ||
-        !attr->canAppearOnDecl(D))
-      continue;
-    Checker.visit(attr);
-  }
-#endif
 }
+#endif
 
 llvm::Expected<Type>
 InterfaceTypeRequest::evaluate(Evaluator &eval, ValueDecl *D) const {

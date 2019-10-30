@@ -1497,6 +1497,11 @@ DifferentiableAttr::create(ASTContext &context, bool implicit,
                                       std::move(vjp), derivativeGenSig);
 }
 
+void DifferentiableAttr::setOriginalFunction(AbstractFunctionDecl *decl) {
+  assert(!OriginalFunction && "Original function cannot have already been set");
+  OriginalFunction = decl;
+}
+
 void DifferentiableAttr::setJVPFunction(FuncDecl *decl) {
   JVPFunction = decl;
   if (decl && !JVP)

@@ -3788,6 +3788,7 @@ Parser::parseDecl(ParseDeclOptions Flags,
     Decl *D = DeclResult.get();
     if (!declWasHandledAlready(D)) {
       Handler(D);
+      // SWIFT_ENABLE_TENSORFLOW
       if (auto FD = dyn_cast<FuncDecl>(D)) {
         if (auto attr = D->getAttrs().getAttribute<QuotedAttr>()) {
           // TODO(TF-718): Properly mangle names for quote decls.
@@ -3825,6 +3826,16 @@ Parser::parseDecl(ParseDeclOptions Flags,
           Handler(quoteDecl);
         }
       }
+
+      if (D->getAttrs().hasAttribute<DifferentiableAttr>()) {
+        auto *AFD = dyn_cast<AbstractFunctionDecl>(D);
+        // FIXME(!!!): Handle more original function cases! This is not correct
+        for (auto *attr : D->getAttrs().getAttributes<DifferentiableAttr>()) {
+          auto *diffAttr = const_cast<DifferentiableAttr *>(attr);
+          diffAttr->setOriginalFunction(AFD);
+        }
+      }
+      // SWIFT_ENABLE_TENSORFLOW END
     }
   }
 

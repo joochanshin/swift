@@ -1541,6 +1541,8 @@ class DifferentiableAttr final
                                     ParsedAutoDiffParameter> {
   friend TrailingObjects;
 
+  /// The declaration on which the `@differentiable` attribute is declared.
+  AbstractFunctionDecl *OriginalFunction = nullptr;
   /// Whether this function is linear.
   bool Linear;
   /// The number of parsed parameters specified in 'wrt:'.
@@ -1595,6 +1597,9 @@ public:
                                     Optional<DeclNameWithLoc> jvp,
                                     Optional<DeclNameWithLoc> vjp,
                                     GenericSignature derivativeGenSig);
+
+  AbstractFunctionDecl *getOriginalFunction() const { return OriginalFunction; }
+  void setOriginalFunction(AbstractFunctionDecl *decl);
 
   /// Get the optional 'jvp:' function name and location.
   /// Use this instead of `getJVPFunction` to check whether the attribute has a

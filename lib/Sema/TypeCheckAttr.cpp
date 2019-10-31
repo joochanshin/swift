@@ -3117,17 +3117,18 @@ static IndexSubset *computeTransposingParameters(
 // The parsed differentiation parameters and attribute location are used in
 // diagnostics.
 static bool checkDifferentiationParameters(
-    TypeChecker &TC, AbstractFunctionDecl *AFD, IndexSubset *indices,
+    AbstractFunctionDecl *AFD, IndexSubset *indices,
     AnyFunctionType *functionType, GenericEnvironment *derivativeGenEnv,
     ModuleDecl *module, ArrayRef<ParsedAutoDiffParameter> parsedWrtParams,
     SourceLoc attrLoc) {
+  auto &ctx = AFD->getASTContext();
+  auto &diags = ctx.Diags;
   // Diagnose empty parameter indices. This occurs when no `wrt` clause is
   // declared and no differentiation parameters can be inferred.
   if (indices->isEmpty()) {
-    TC.diagnose(attrLoc, diag::diff_params_clause_no_inferred_parameters);
+    diags.diagnose(attrLoc, diag::diff_params_clause_no_inferred_parameters);
     return true;
   }
-
   // Check that differentiation parameters have allowed types.
   SmallVector<Type, 4> wrtParamTypes;
   autodiff::getSubsetParameterTypes(indices, functionType, wrtParamTypes);
@@ -3137,10 +3138,8 @@ static bool checkDifferentiationParameters(
         : parsedWrtParams[i].getLoc();
     auto wrtParamType = wrtParamTypes[i];
     if (wrtParamType->is<InOutType>()) {
-      TC.diagnose(
-          loc,
-          diag::diff_params_clause_inout_argument,
-          wrtParamType);
+      diags.diagnose(
+          loc, diag::diff_params_clause_inout_argument, wrtParamType);
       return true;
     }
     if (!wrtParamType->hasTypeParameter())
@@ -3152,21 +3151,21 @@ static bool checkDifferentiationParameters(
       wrtParamType = AFD->mapTypeIntoContext(wrtParamType);
     // Parameter cannot have an existential type.
     if (wrtParamType->isExistentialType()) {
-      TC.diagnose(
+      diags.diagnose(
            loc, diag::diff_params_clause_cannot_diff_wrt_existentials,
            wrtParamType);
       return true;
     }
     // Parameter cannot have a function type.
     if (wrtParamType->is<AnyFunctionType>()) {
-      TC.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_functions,
-                  wrtParamType);
+      diags.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_functions,
+                     wrtParamType);
       return true;
     }
     // Parameter must conform to `Differentiable`.
     if (!conformsToDifferentiable(wrtParamType, AFD)) {
-      TC.diagnose(loc, diag::diff_params_clause_param_not_differentiable,
-                  wrtParamType);
+      diags.diagnose(loc, diag::diff_params_clause_param_not_differentiable,
+                     wrtParamType);
       return true;
     }
   }
@@ -3179,10 +3178,11 @@ static bool checkDifferentiationParameters(
 // The parsed differentiation parameters and attribute location are used in
 // diagnostics.
 static bool checkTransposingParameters(
-    TypeChecker &TC, AbstractFunctionDecl *AFD,
-    SmallVector<Type, 4> wrtParamTypes, GenericEnvironment *derivativeGenEnv,
-    ModuleDecl *module, ArrayRef<ParsedAutoDiffParameter> parsedWrtParams,
-    SourceLoc attrLoc) {
+    AbstractFunctionDecl *AFD, SmallVector<Type, 4> wrtParamTypes,
+    GenericEnvironment *derivativeGenEnv, ModuleDecl *module,
+    ArrayRef<ParsedAutoDiffParameter> parsedWrtParams, SourceLoc attrLoc) {
+  auto &ctx = AFD->getASTContext();
+  auto &diags = ctx.Diags;
   // Check that differentiation parameters have allowed types.
   for (unsigned i : range(wrtParamTypes.size())) {
     auto wrtParamType = wrtParamTypes[i];
@@ -3197,22 +3197,22 @@ static bool checkTransposingParameters(
         : parsedWrtParams[i].getLoc();
     // Parameter cannot have an existential type.
     if (wrtParamType->isExistentialType()) {
-      TC.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_existentials,
-                  wrtParamType);
+      diags.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_existentials,
+                     wrtParamType);
       return true;
     }
     // Parameter cannot have a function type.
     if (wrtParamType->is<AnyFunctionType>()) {
-      TC.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_functions,
-                  wrtParamType);
+      diags.diagnose(loc, diag::diff_params_clause_cannot_diff_wrt_functions,
+                     wrtParamType);
       return true;
     }
     // Parameter must conform to `Differentiable`
     // and `Type.TangentVector == Type`.
     if (!conformsToDifferentiable(wrtParamType, AFD) ||
         !tangentVectorEqualSelf(wrtParamType, AFD)) {
-      TC.diagnose(loc, diag::transpose_params_clause_param_not_differentiable,
-                  wrtParamType.getString());
+      diags.diagnose(loc, diag::transpose_params_clause_param_not_differentiable,
+                     wrtParamType.getString());
       return true;
     }
   }
@@ -4075,7 +4075,7 @@ void AttributeChecker::visitTransposingAttr(TransposingAttr *attr) {
                                wrtParamTypes, isCurried);
 
   // Check if differentiation parameter indices are valid.
-  if (checkTransposingParameters(TC, originalFn, wrtParamTypes,
+  if (checkTransposingParameters(originalFn, wrtParamTypes,
                                  transpose->getGenericEnvironment(),
                                  transpose->getModuleContext(), parsedWrtParams,
                                  attr->getLocation())) {

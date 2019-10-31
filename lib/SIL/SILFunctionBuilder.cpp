@@ -110,11 +110,28 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
       auto *silDiffAttr = SILDifferentiableAttr::create(
           M, indices, M.allocateCopy(jvpName), M.allocateCopy(vjpName),
           A->getDerivativeGenericSignature());
+      llvm::errs() << "BEFORE, SIL ATTRS: " << F->getDifferentiableAttrs().size() << "\n";
+      F->dump();
 #ifndef NDEBUG
       // Verify that no existing attributes have the same indices.
       for (auto *existingAttr : F->getDifferentiableAttrs()) {
         bool sameAttributeConfig =
             silDiffAttr->getIndices() == existingAttr->getIndices();
+        if (sameAttributeConfig) {
+          llvm::errs() << "duplicated [diff] attr:\n";
+          F->dump();
+          unsigned count = 0;
+          for (auto *A : Attrs.getAttributes<DifferentiableAttr>()) {
+            A->print(llvm::errs(), decl);
+            llvm::errs() << "\n";
+            ++count;
+          }
+          llvm::errs() << "AST ATTRIBUTES: " << count << ", SIL ATTRS: " << F->getDifferentiableAttrs().size() << "\n";
+          for (auto *silAttr : F->getDifferentiableAttrs()) {
+            silAttr->print(llvm::errs());
+            llvm::errs() << "\n";
+          }
+        }
         assert(!sameAttributeConfig &&
                "Duplicate `[differentiable]` attribute");
       }

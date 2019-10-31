@@ -226,6 +226,7 @@ public:
   }
 
   void diagnoseCycle(DiagnosticEngine &diags) const {
+    llvm::errs() << "CIRCULAR REFERENCE HERE!\n";
     diags.diagnose(asDerived().getNearestLoc(), diag::circular_reference);
   }
 

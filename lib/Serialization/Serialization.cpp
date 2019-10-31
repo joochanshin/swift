@@ -2308,8 +2308,9 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
     case DAK_Differentiable: {
       auto abbrCode = S.DeclTypeAbbrCodes[DifferentiableDeclAttrLayout::Code];
       auto *attr = cast<DifferentiableAttr>(DA);
-      assert(attr->getOriginalFunction() &&
-             "@differentiable attribute must have original function resolved");
+      assert(attr->getOriginalDeclaration() &&
+             "'@differentiable' attribute must have resolved original "
+             "declaration");
 
       IdentifierID jvpName = 0;
       DeclID jvpRef = 0;

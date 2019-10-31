@@ -1540,9 +1540,10 @@ class DifferentiableAttr final
       private llvm::TrailingObjects<DifferentiableAttr,
                                     ParsedAutoDiffParameter> {
   friend TrailingObjects;
+  friend class DifferentiableAttributeParameterIndicesRequest;
 
   /// The declaration on which the `@differentiable` attribute is declared.
-  AbstractFunctionDecl *OriginalFunction = nullptr;
+  Decl *OriginalDeclaration = nullptr;
   /// Whether this function is linear.
   bool Linear;
   /// The number of parsed parameters specified in 'wrt:'.
@@ -1575,9 +1576,9 @@ class DifferentiableAttr final
                               Optional<DeclNameWithLoc> vjp,
                               TrailingWhereClause *clause);
 
-  explicit DifferentiableAttr(AbstractFunctionDecl *original, bool implicit,
-                              SourceLoc atLoc, SourceRange baseRange,
-                              bool linear, IndexSubset *indices,
+  explicit DifferentiableAttr(Decl *original, bool implicit, SourceLoc atLoc,
+                              SourceRange baseRange, bool linear,
+                              IndexSubset *indices,
                               Optional<DeclNameWithLoc> jvp,
                               Optional<DeclNameWithLoc> vjp,
                               GenericSignature derivativeGenericSignature);
@@ -1591,18 +1592,15 @@ public:
                                     Optional<DeclNameWithLoc> vjp,
                                     TrailingWhereClause *clause);
 
-  static DifferentiableAttr *create(AbstractFunctionDecl *original,
-                                    bool implicit, SourceLoc atLoc,
-                                    SourceRange baseRange, bool linear,
-                                    IndexSubset *indices,
+  static DifferentiableAttr *create(Decl *original, bool implicit,
+                                    SourceLoc atLoc, SourceRange baseRange,
+                                    bool linear, IndexSubset *indices,
                                     Optional<DeclNameWithLoc> jvp,
                                     Optional<DeclNameWithLoc> vjp,
                                     GenericSignature derivativeGenSig);
 
-  AbstractFunctionDecl *getOriginalFunction() const {
-    return OriginalFunction;
-  }
-  void setOriginalFunction(AbstractFunctionDecl *decl);
+  Decl *getOriginalDeclaration() const { return OriginalDeclaration; }
+  void setOriginalDeclaration(Decl *decl);
 
   /// Get the optional 'jvp:' function name and location.
   /// Use this instead of `getJVPFunction` to check whether the attribute has a
@@ -1614,12 +1612,8 @@ public:
   /// registered VJP.
   Optional<DeclNameWithLoc> getVJP() const { return VJP; }
 
-  IndexSubset *getParameterIndices() const {
-    return ParameterIndices;
-  }
-  void setParameterIndices(IndexSubset *pi) {
-    ParameterIndices = pi;
-  }
+  IndexSubset *getParameterIndices() const;
+  void setParameterIndices(IndexSubset *paramIndices);
 
   /// The parsed differentiation parameters, i.e. the list of parameters
   /// specified in 'wrt:'.

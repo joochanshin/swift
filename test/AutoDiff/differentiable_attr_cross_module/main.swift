@@ -15,10 +15,12 @@ func testMethod(_ foo: Foo) -> Float {
   return foo.method()
 }
 
+/*
 @differentiable(wrt: foo)
 func testComputedProperty(_ foo: Foo) -> Float {
   return foo.computedProperty
 }
+*/
 
 @differentiable(wrt: foo)
 func testSubscript(_ foo: Foo) -> Float {

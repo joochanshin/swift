@@ -24,6 +24,8 @@
 #include "swift/AST/GenericSignatureBuilder.h"
 #include "swift/AST/Module.h"
 #include "swift/AST/TypeRepr.h"
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/AST/TypeCheckRequests.h"
 #include "swift/AST/Types.h"
 // SWIFT_ENABLE_TENSORFLOW
 #include "swift/AST/ParameterList.h"
@@ -1454,17 +1456,16 @@ DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
             getTrailingObjects<ParsedAutoDiffParameter>());
 }
 
-DifferentiableAttr::DifferentiableAttr(AbstractFunctionDecl *original,
-                                       bool implicit, SourceLoc atLoc,
-                                       SourceRange baseRange, bool linear,
-                                       IndexSubset *indices,
+DifferentiableAttr::DifferentiableAttr(Decl *original, bool implicit,
+                                       SourceLoc atLoc, SourceRange baseRange,
+                                       bool linear, IndexSubset *indices,
                                        Optional<DeclNameWithLoc> jvp,
                                        Optional<DeclNameWithLoc> vjp,
                                        GenericSignature derivativeGenSig)
     : DeclAttribute(DAK_Differentiable, atLoc, baseRange, implicit),
       Linear(linear), JVP(std::move(jvp)), VJP(std::move(vjp)),
       ParameterIndices(indices) {
-  setOriginalFunction(original);
+  setOriginalDeclaration(original);
   setDerivativeGenericSignature(derivativeGenSig);
 }
 
@@ -1484,10 +1485,9 @@ DifferentiableAttr::create(ASTContext &context, bool implicit,
 }
 
 DifferentiableAttr *
-DifferentiableAttr::create(AbstractFunctionDecl *original, bool implicit,
-                           SourceLoc atLoc, SourceRange baseRange,
-                           bool linear, IndexSubset *indices,
-                           Optional<DeclNameWithLoc> jvp,
+DifferentiableAttr::create(Decl *original, bool implicit, SourceLoc atLoc,
+                           SourceRange baseRange, bool linear,
+                           IndexSubset *indices, Optional<DeclNameWithLoc> jvp,
                            Optional<DeclNameWithLoc> vjp,
                            GenericSignature derivativeGenSig) {
   auto &ctx = original->getASTContext();
@@ -1498,10 +1498,44 @@ DifferentiableAttr::create(AbstractFunctionDecl *original, bool implicit,
                                       std::move(vjp), derivativeGenSig);
 }
 
-void DifferentiableAttr::setOriginalFunction(AbstractFunctionDecl *decl) {
-  assert(!OriginalFunction && "Original function cannot have already been set");
-  assert(decl && "Original function must be non-null");
-  OriginalFunction = decl;
+void DifferentiableAttr::setOriginalDeclaration(Decl *decl) {
+  assert(decl && "Original declaration must be non-null");
+  assert(!OriginalDeclaration &&
+         "Original declaration cannot have already been set");
+  OriginalDeclaration = decl;
+}
+
+IndexSubset *DifferentiableAttr::getParameterIndices() const {
+#if 0
+  return ParameterIndices;
+#endif
+  if (!getOriginalDeclaration()) {
+    llvm::errs() << "NO ORIG FUNCTION, " << this << "\n";
+  }
+  assert(getOriginalDeclaration() &&
+         "Original declaration must have been resolved");
+  auto &ctx = getOriginalDeclaration()->getASTContext();
+  return evaluateOrDefault(
+      ctx.evaluator,
+      DifferentiableAttributeParameterIndicesRequest{
+          const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
+      nullptr);
+}
+
+void DifferentiableAttr::setParameterIndices(IndexSubset *paramIndices) {
+  // NOTE: Doesn't work with `@differentiable` attribute deserialization.
+  // During deserialization, `setParameterIndices` is called before
+  // `setOriginalFunction`.
+#if 0
+  assert(getOriginalDeclaration() &&
+         "Original declaration must have been resolved");
+  auto &ctx = getOriginalDeclaration()->getASTContext();
+  ctx.evaluator.cacheOutput(
+      DifferentiableAttributeParameterIndicesRequest{
+          const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
+      std::move(paramIndices));
+#endif
+  ParameterIndices = paramIndices;
 }
 
 void DifferentiableAttr::setJVPFunction(FuncDecl *decl) {

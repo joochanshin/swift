@@ -14,10 +14,12 @@ public struct Foo: Differentiable {
     x
   }
 
+/*
   @differentiable
   public var computedProperty: Float {
     x
   }
+*/
 
   @differentiable
   public subscript() -> Float {

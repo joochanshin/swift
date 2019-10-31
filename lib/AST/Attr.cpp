@@ -24,6 +24,8 @@
 #include "swift/AST/GenericSignatureBuilder.h"
 #include "swift/AST/Module.h"
 #include "swift/AST/TypeRepr.h"
+// SWIFT_ENABLE_TENSORFLOW
+#include "swift/AST/TypeCheckRequests.h"
 #include "swift/AST/Types.h"
 // SWIFT_ENABLE_TENSORFLOW
 #include "swift/AST/ParameterList.h"
@@ -1501,6 +1503,39 @@ void DifferentiableAttr::setOriginalDeclaration(Decl *decl) {
   assert(!OriginalDeclaration &&
          "Original declaration cannot have already been set");
   OriginalDeclaration = decl;
+}
+
+IndexSubset *DifferentiableAttr::getParameterIndices() const {
+#if 0
+  return ParameterIndices;
+#endif
+  if (!getOriginalDeclaration()) {
+    llvm::errs() << "NO ORIG FUNCTION, " << this << "\n";
+  }
+  assert(getOriginalDeclaration() &&
+         "Original declaration must have been resolved");
+  auto &ctx = getOriginalDeclaration()->getASTContext();
+  return evaluateOrDefault(
+      ctx.evaluator,
+      DifferentiableAttributeParameterIndicesRequest{
+          const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
+      nullptr);
+}
+
+void DifferentiableAttr::setParameterIndices(IndexSubset *paramIndices) {
+  // NOTE: Doesn't work with `@differentiable` attribute deserialization.
+  // During deserialization, `setParameterIndices` is called before
+  // `setOriginalFunction`.
+#if 0
+  assert(getOriginalDeclaration() &&
+         "Original declaration must have been resolved");
+  auto &ctx = getOriginalDeclaration()->getASTContext();
+  ctx.evaluator.cacheOutput(
+      DifferentiableAttributeParameterIndicesRequest{
+          const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
+      std::move(paramIndices));
+#endif
+  ParameterIndices = paramIndices;
 }
 
 void DifferentiableAttr::setJVPFunction(FuncDecl *decl) {

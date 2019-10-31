@@ -1540,6 +1540,7 @@ class DifferentiableAttr final
       private llvm::TrailingObjects<DifferentiableAttr,
                                     ParsedAutoDiffParameter> {
   friend TrailingObjects;
+  friend class DifferentiableAttributeParameterIndicesRequest;
 
   /// The declaration on which the `@differentiable` attribute is declared.
   Decl *OriginalDeclaration = nullptr;
@@ -1575,9 +1576,9 @@ class DifferentiableAttr final
                               Optional<DeclNameWithLoc> vjp,
                               TrailingWhereClause *clause);
 
-  explicit DifferentiableAttr(Decl *original, bool implicit,
-                              SourceLoc atLoc, SourceRange baseRange,
-                              bool linear, IndexSubset *indices,
+  explicit DifferentiableAttr(Decl *original, bool implicit, SourceLoc atLoc,
+                              SourceRange baseRange, bool linear,
+                              IndexSubset *indices,
                               Optional<DeclNameWithLoc> jvp,
                               Optional<DeclNameWithLoc> vjp,
                               GenericSignature derivativeGenericSignature);
@@ -1611,12 +1612,8 @@ public:
   /// registered VJP.
   Optional<DeclNameWithLoc> getVJP() const { return VJP; }
 
-  IndexSubset *getParameterIndices() const {
-    return ParameterIndices;
-  }
-  void setParameterIndices(IndexSubset *pi) {
-    ParameterIndices = pi;
-  }
+  IndexSubset *getParameterIndices() const;
+  void setParameterIndices(IndexSubset *paramIndices);
 
   /// The parsed differentiation parameters, i.e. the list of parameters
   /// specified in 'wrt:'.

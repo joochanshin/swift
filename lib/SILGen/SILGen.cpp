@@ -775,6 +775,29 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
                             diffAttr->getDerivativeGenericSignature().getPointer());
       emitDifferentiabilityWitness(AFD, F, config, jvp, vjp);
     }
+    // Visit all `@transposing` attributes.
+    for (auto *transAttr : AFD->getAttrs().getAttributes<TransposingAttr>()) {
+      auto *originalAFD = transAttr->getOriginalFunction();
+      auto *originalFunction = M.lookUpFunction(SILDeclRef(originalAFD));
+      auto *origFnType =
+          originalAFD->getInterfaceType()->castTo<AnyFunctionType>();
+      auto origSilFnType = originalFunction->getLoweredFunctionType();
+      auto *loweredParamIndices = autodiff::getLoweredParameterIndices(
+          transAttr->getParameterIndices(), origFnType);
+      // NOTE(TF-893): Extending capacity is necessary when `origSilFnType` has
+      // parameters corresponding to captured variables. These parameters do not
+      // appear in the type of `origFnType`.
+      // TODO: If posssible, change `autodiff::getLoweredParameterIndices` to
+      // take `CaptureInfo` into account.
+      if (origSilFnType->getNumParameters() > loweredParamIndices->getCapacity())
+        loweredParamIndices = loweredParamIndices->extendingCapacity(
+            getASTContext(), origSilFnType->getNumParameters());
+      auto transposeFnType = origSilFnType->getAutoDiffTransposeFunctionType(loweredParamIndices, Types, LookUpConformanceInModule(M.getSwiftModule()));
+      llvm::errs() << "TRANSPOSE '" << AFD->getNameStr() << "': EXPECTED VS ACTUAL\n";
+      transposeFnType->dump();
+      F->getLoweredFunctionType()->dump();
+      llvm::errs() << "EQUAL? " << (transposeFnType == F->getLoweredFunctionType()) << "\n";
+    }
   }
   F->verify();
 }

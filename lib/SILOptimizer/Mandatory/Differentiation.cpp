@@ -6154,6 +6154,62 @@ private:
     return pullbackTrampolineBBMap.lookup({originalBlock, successorBlock});
   }
 
+  //--------------------------------------------------------------------------//
+  // Debugging utilities
+  //--------------------------------------------------------------------------//
+
+  void dumpAdjointBufferMap(llvm::raw_ostream &s = getADDebugStream()) {
+    s << "Adjoint buffer mapping for '" << getPullback().getName()
+      << "' (size " << bufferMap.size() << "):\n";
+    DenseMap<SILBasicBlock *, DenseMap<SILValue, SILValue>> tmpMap;
+    for (auto pair : bufferMap) {
+      auto origPair = pair.first;
+      auto *origBB = origPair.first;
+      auto origValue = origPair.second;
+      auto adjBuf = pair.second;
+      tmpMap[origBB][origValue] = adjBuf;
+    }
+    for (auto pair : tmpMap) {
+      auto *origBB = pair.first;
+      auto bbValueMap = pair.second;
+      s << "bb" << origBB->getDebugID() << " (size " << bbValueMap.size()
+        << "):\n";
+      for (auto valuePair : bbValueMap) {
+        auto origValue = valuePair.first;
+        auto adjBuf = valuePair.second;
+        s << "[ORIG] " << origValue;
+        s << "[ADJ] " << adjBuf;
+      }
+      s << "\n";
+    }
+  }
+
+  void dumpAdjointValueMap(llvm::raw_ostream &s = getADDebugStream()) {
+    s << "Adjoint value mapping for '" << getPullback().getName()
+      << "' (size " << valueMap.size() << "):\n";
+    DenseMap<SILBasicBlock *, DenseMap<SILValue, AdjointValue>> tmpMap;
+    for (auto pair : valueMap) {
+      auto origPair = pair.first;
+      auto *origBB = origPair.first;
+      auto origValue = origPair.second;
+      auto adjValue = pair.second;
+      tmpMap[origBB].insert({origValue, adjValue});
+    }
+    for (auto pair : tmpMap) {
+      auto *origBB = pair.first;
+      auto bbValueMap = pair.second;
+      s << "bb" << origBB->getDebugID() << " (size " << bbValueMap.size()
+        << "):\n";
+      for (auto valuePair : bbValueMap) {
+        auto origValue = valuePair.first;
+        auto adjValue = valuePair.second;
+        s << "[ORIG] " << origValue;
+        s << "[ADJ] " << adjValue << "\n";
+      }
+      s << "\n";
+    }
+  }
+
 public:
   //--------------------------------------------------------------------------//
   // Entry point
@@ -6455,6 +6511,28 @@ public:
 
     LLVM_DEBUG(getADDebugStream() << "Generated pullback for "
                                   << original.getName() << ":\n" << pullback);
+#if 0
+    LLVM_DEBUG(dumpAdjointBufferMap());
+    LLVM_DEBUG(dumpAdjointValueMap());
+#endif
+    dumpAdjointBufferMap();
+    dumpAdjointValueMap();
+
+    llvm::errs() << "PULLBACK BB MAP!\n";
+    for (auto pair : pullbackBBMap) {
+      auto *bb = pair.first;
+      auto *pbBB = pair.second;
+      llvm::errs() << "orig bb" << bb->getDebugID() << " -> pb bb" << pbBB->getDebugID() << "\n";
+    }
+    llvm::errs() << "PULLBACK TRAMP BB MAP!\n";
+    for (auto pair : pullbackTrampolineBBMap) {
+      auto bbPair = pair.first;
+      auto *origBB = bbPair.first;
+      auto *origSuccBB = bbPair.second;
+      auto *pbBB = pair.second;
+      llvm::errs() << "orig bb" << origBB->getDebugID() << ", succ bb" << origSuccBB->getDebugID() << " -> pb tramp bb" << pbBB->getDebugID() << "\n";
+    }
+    // pullback.viewCFG();
     return errorOccurred;
   }
 

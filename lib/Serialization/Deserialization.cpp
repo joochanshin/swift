@@ -2166,6 +2166,24 @@ static bool attributeChainContains(DeclAttribute *attr) {
   return tempAttrs.hasAttribute<DERIVED>();
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+// Set original declaration in `@differentiable` attributes.
+//
+// Serializing/deserializing the original declaration DeclID in
+// `@differentiable` attributes does not work because it causes
+// `@differentiable` attribute deserialization to enter an infinite loop.
+//
+// Instead, call this ad-hoc function after deserializing a declaration to set
+// it as the original declaration in its `@differentiable` attributes.
+static void setOriginalDeclarationInDifferentiableAttributes(
+    AbstractFunctionDecl *decl, DeclAttribute *attrs) {
+  DeclAttributes tempAttrs;
+  tempAttrs.setRawAttributeChain(attrs);
+  for (auto *attr : tempAttrs.getAttributes<DifferentiableAttr>())
+    const_cast<DifferentiableAttr *>(attr)->setOriginalFunction(decl);
+}
+// SWIFT_ENABLE_TENSORFLOW END
+
 Decl *ModuleFile::getDecl(DeclID DID) {
   Expected<Decl *> deserialized = getDeclChecked(DID);
   if (!deserialized) {
@@ -2565,6 +2583,11 @@ public:
 
     ctor->setImplicitlyUnwrappedOptional(isIUO);
     ctor->computeType();
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // Set original declaration in `@differentiable` attributes.
+    setOriginalDeclarationInDifferentiableAttributes(ctor, DAttrs);
+    // SWIFT_ENABLE_TENSORFLOW END
 
     return ctor;
   }
@@ -3038,6 +3061,11 @@ public:
 
     // Set the interface type.
     fn->computeType();
+
+    // SWIFT_ENABLE_TENSORFLOW
+    // Set original declaration in `@differentiable` attributes.
+    setOriginalDeclarationInDifferentiableAttributes(fn, DAttrs);
+    // SWIFT_ENABLE_TENSORFLOW END
 
     return fn;
   }
@@ -4084,10 +4112,11 @@ llvm::Error DeclDeserializer::deserializeDeclAttributes() {
           parametersBitVector[i] = parameters[i];
         auto *indices = IndexSubset::get(ctx, parametersBitVector);
 
-        auto diffAttr =
-            DifferentiableAttr::create(ctx, isImplicit, SourceLoc(),
-                                       SourceRange(), linear, indices, jvp, vjp,
-                                       derivativeGenSig);
+        auto *diffAttr = DifferentiableAttr::create(
+            ctx, isImplicit, SourceLoc(), SourceRange(), linear,
+            /*parsedParameters*/ {}, jvp, vjp, /*trailingWhereClause*/ nullptr);
+        diffAttr->setParameterIndices(indices);
+        diffAttr->setDerivativeGenericSignature(derivativeGenSig);
         diffAttr->setJVPFunction(jvpDecl);
         diffAttr->setVJPFunction(vjpDecl);
         Attr = diffAttr;

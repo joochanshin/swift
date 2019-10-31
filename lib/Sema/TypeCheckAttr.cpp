@@ -3279,6 +3279,8 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     return;
   }
 
+  if (!attr->getOriginalFunction())
+    attr->setOriginalFunction(original);
   auto *originalFnTy = original->getInterfaceType()->castTo<AnyFunctionType>();
   bool isMethod = original->hasImplicitSelfDecl();
 
@@ -3532,15 +3534,15 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
     D->getAttrs().removeAttribute(attr);
     // Transfer `@differentiable` attribute from storage declaration to
     // getter accessor.
+    auto *getterDecl = asd->getAccessor(AccessorKind::Get);
     auto *newAttr = DifferentiableAttr::create(
-        Ctx, /*implicit*/ true, attr->AtLoc, attr->getRange(), attr->isLinear(),
-        attr->getParameterIndices(), attr->getJVP(), attr->getVJP(),
-        attr->getDerivativeGenericSignature());
+        getterDecl, /*implicit*/ true, attr->AtLoc, attr->getRange(),
+        attr->isLinear(), attr->getParameterIndices(), attr->getJVP(),
+        attr->getVJP(), attr->getDerivativeGenericSignature());
     newAttr->setJVPFunction(attr->getJVPFunction());
     newAttr->setVJPFunction(attr->getVJPFunction());
     auto insertion = Ctx.DifferentiableAttrs.try_emplace(
-        {asd->getAccessor(AccessorKind::Get), newAttr->getParameterIndices()},
-        newAttr);
+        {getterDecl, newAttr->getParameterIndices()}, newAttr);
     // Valid `@differentiable` attributes are uniqued by their parameter
     // indices. Reject duplicate attributes for the same decl and parameter
     // indices pair.
@@ -3550,7 +3552,7 @@ void AttributeChecker::visitDifferentiableAttr(DifferentiableAttr *attr) {
                diag::differentiable_attr_duplicate_note);
       return;
     }
-    asd->getAccessor(AccessorKind::Get)->getAttrs().add(newAttr);
+    getterDecl->getAttrs().add(newAttr);
     return;
   }
   auto insertion = Ctx.DifferentiableAttrs.try_emplace(
@@ -3825,7 +3827,7 @@ void AttributeChecker::visitDifferentiatingAttr(DifferentiatingAttr *attr) {
   // If the original function does not have a `@differentiable` attribute with
   // the same differentiation parameters, create one.
   if (!da) {
-    da = DifferentiableAttr::create(Ctx, /*implicit*/ true, attr->AtLoc,
+    da = DifferentiableAttr::create(originalFn, /*implicit*/ true, attr->AtLoc,
                                     attr->getRange(), attr->isLinear(),
                                     checkedWrtParamIndices, /*jvp*/ None,
                                     /*vjp*/ None,

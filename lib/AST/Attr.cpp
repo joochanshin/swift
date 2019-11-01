@@ -1506,12 +1506,6 @@ void DifferentiableAttr::setOriginalDeclaration(Decl *decl) {
 }
 
 IndexSubset *DifferentiableAttr::getParameterIndices() const {
-#if 0
-  return ParameterIndices;
-#endif
-  if (!getOriginalDeclaration()) {
-    llvm::errs() << "NO ORIG FUNCTION, " << this << "\n";
-  }
   assert(getOriginalDeclaration() &&
          "Original declaration must have been resolved");
   auto &ctx = getOriginalDeclaration()->getASTContext();
@@ -1523,10 +1517,6 @@ IndexSubset *DifferentiableAttr::getParameterIndices() const {
 }
 
 void DifferentiableAttr::setParameterIndices(IndexSubset *paramIndices) {
-  // NOTE: Doesn't work with `@differentiable` attribute deserialization.
-  // During deserialization, `setParameterIndices` is called before
-  // `setOriginalFunction`.
-#if 0
   assert(getOriginalDeclaration() &&
          "Original declaration must have been resolved");
   auto &ctx = getOriginalDeclaration()->getASTContext();
@@ -1534,8 +1524,6 @@ void DifferentiableAttr::setParameterIndices(IndexSubset *paramIndices) {
       DifferentiableAttributeParameterIndicesRequest{
           const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
       std::move(paramIndices));
-#endif
-  ParameterIndices = paramIndices;
 }
 
 void DifferentiableAttr::setJVPFunction(FuncDecl *decl) {

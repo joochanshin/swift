@@ -83,6 +83,9 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
       !constant.autoDiffDerivativeFunctionIdentifier &&
       !constant.isStoredPropertyInitializer() &&
       !constant.isThunk()) {
+    // NOTE: Call `getParameterIndices` for all `@differentiable` attributes.
+    for (auto *A : Attrs.getAttributes<DifferentiableAttr>())
+      (void)A->getParameterIndices();
     for (auto *A : Attrs.getAttributes<DifferentiableAttr>()) {
       // Get lowered argument indices.
       auto *paramIndices = A->getParameterIndices();
@@ -222,8 +225,10 @@ SILFunctionBuilder::getOrCreateFunction(SILLocation loc, SILDeclRef constant,
     if (auto *accessor = dyn_cast<AccessorDecl>(decl)) {
       auto *storage = accessor->getStorage();
       // SWIFT_ENABLE_TENSORFLOW
+      llvm::errs() << "addFunctionAttributes from storage for accessor, " << decl->getFullName() << "\n";
       addFunctionAttributes(F, storage->getAttrs(), mod, constant);
     }
+    llvm::errs() << "addFunctionAttributes, " << decl->getFullName() << "\n";
     addFunctionAttributes(F, decl->getAttrs(), mod, constant);
   }
 

@@ -359,7 +359,7 @@ ValueID SILSerializer::addValueRef(const ValueBase *Val) {
 }
 
 void SILSerializer::writeSILFunction(const SILFunction &F, bool DeclOnly) {
-  PrettyStackTraceSILFunction stackTrace("Serializing", &F);
+  PrettyStackTraceSILFunction stackTrace("serializing", &F);
 
   ValueIDs.clear();
   InstID = 0;
@@ -720,7 +720,7 @@ SILSerializer::writeKeyPathPatternComponent(
 }
 
 void SILSerializer::writeSILInstruction(const SILInstruction &SI) {
-  PrettyStackTraceSILNode stackTrace("Serializing", &SI);
+  PrettyStackTraceSILNode stackTrace("serializing", &SI);
 
   switch (SI.getKind()) {
   case SILInstructionKind::ObjectInst:

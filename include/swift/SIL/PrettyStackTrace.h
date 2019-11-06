@@ -59,10 +59,12 @@ protected:
 class PrettyStackTraceSILNode : public llvm::PrettyStackTraceEntry {
   const SILNode *Node;
   const char *Action;
+  bool PrintSILFunctionName;
 
 public:
-  PrettyStackTraceSILNode(const char *action, const SILNode *node)
-    : Node(node), Action(action) {}
+  PrettyStackTraceSILNode(const char *action, const SILNode *node,
+                          bool printSILFunctionName = false)
+    : Node(node), Action(action), PrintSILFunctionName(printSILFunctionName) {}
 
   virtual void print(llvm::raw_ostream &OS) const;
 };

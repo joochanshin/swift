@@ -39,6 +39,7 @@
 #include "swift/AST/TypeCheckRequests.h"
 #include "swift/SIL/FormalLinkage.h"
 #include "swift/SIL/LoopInfo.h"
+#include "swift/SIL/PrettyStackTrace.h"
 #include "swift/SIL/Projection.h"
 #include "swift/SIL/SILBuilder.h"
 #include "swift/SIL/TypeSubstCloner.h"
@@ -3343,6 +3344,7 @@ public:
                               context, original, attr->getIndices(), vjp)),
         pullbackInfo(context, AutoDiffLinearMapKind::Pullback, original, vjp,
                      attr->getIndices(), activityInfo) {
+    PrettyStackTraceSILFunction trace("generating VJP for", original);
     // Create empty pullback function.
     pullback = createEmptyPullback();
     context.getGeneratedFunctions().push_back(pullback);
@@ -5234,6 +5236,8 @@ public:
         differentialBuilder(SILBuilder(*createEmptyDifferential(
             context, original, attr, &differentialInfo))),
         diffLocalAllocBuilder(getDifferential()) {
+    PrettyStackTraceSILFunction trace("generating JVP and differential for",
+                                      original);
     // Create empty differential function.
     context.getGeneratedFunctions().push_back(&getDifferential());
   }
@@ -5787,6 +5791,8 @@ public:
   explicit PullbackEmitter(VJPEmitter &vjpEmitter)
       : vjpEmitter(vjpEmitter), builder(getPullback()),
         localAllocBuilder(getPullback()) {
+    PrettyStackTraceSILFunction trace("generating pullback for",
+                                      &getOriginal());
     // Get dominance and post-order info for the original function.
     auto &passManager = getContext().getPassManager();
     auto *domAnalysis = passManager.getAnalysis<DominanceAnalysis>();
@@ -7969,6 +7975,14 @@ static SILFunction *createEmptyJVP(
 bool ADContext::processDifferentiableAttribute(
     SILFunction *original, SILDifferentiableAttr *attr,
     DifferentiationInvoker invoker) {
+  std::string traceMessage;
+  llvm::raw_string_ostream OS(traceMessage);
+  OS << "processing attribute [differentiable ";
+  attr->print(OS);
+  OS << "] on";
+  OS.flush();
+  PrettyStackTraceSILFunction trace(traceMessage.c_str(), original);
+
   auto &module = getModule();
   // Try to look up JVP only if attribute specifies JVP name or if original
   // function is an external declaration. If JVP function cannot be found,
@@ -8750,6 +8764,8 @@ void ADContext::foldDifferentiableFunctionExtraction(
 
 bool ADContext::processDifferentiableFunctionInst(
     DifferentiableFunctionInst *dfi) {
+  PrettyStackTraceSILInstruction trace("canonicalizing", dfi);
+  assert(false);
   LLVM_DEBUG({
     auto &s = getADDebugStream() << "Processing DifferentiableFunctionInst:\n";
     dfi->printInContext(s);

@@ -24,6 +24,7 @@
 #ifndef SWIFT_SILOPTIMIZER_MANDATORY_DIFFERENTIATION_H
 #define SWIFT_SILOPTIMIZER_MANDATORY_DIFFERENTIATION_H
 
+#include "swift/SIL/PrettyStackTrace.h"
 #include "swift/SIL/TypeSubstCloner.h"
 #include "swift/SILOptimizer/Analysis/DominanceAnalysis.h"
 
@@ -139,6 +140,32 @@ public:
     cloneFunctionBody(&Original, entry, entryArguments);
   }
 };
+
+class PrettyStackTraceSILInstruction : public llvm::PrettyStackTraceEntry {
+  const SILInstruction *Inst;
+  const char *Action;
+
+public:
+  PrettyStackTraceSILInstruction(const char *action, const SILInstruction *inst)
+    : Inst(inst), Action(action) {}
+
+  virtual void print(llvm::raw_ostream &OS) const;
+};
+
+void PrettyStackTraceSILInstruction::print(llvm::raw_ostream &out) const {
+  out << "While " << Action << " SIL instruction ";
+  if (Inst) {
+    out << *Inst;
+    out << " in SIL function ";
+    Inst->getFunction()->printName(out);
+    if (!Inst->getLoc().isNull()) {
+      out << " for ";
+      printSILLocationDescription(out, Inst->getLoc(),
+                                  Inst->getFunction()->getASTContext());
+    }
+  }
+  out << '\n';
+}
 
 } // end namespace swift
 

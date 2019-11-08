@@ -518,6 +518,9 @@ public:
   /// Returns true if this SILType is a differentiable type.
   bool isDifferentiable(SILModule &M) const;
 
+  /// Returns true if this SILType is a differentiable type.
+  bool isDifferentiable(LookupConformanceFn lookupConformance) const;
+
   /// Returns the hash code for the SILType.
   llvm::hash_code getHashCode() const {
     return llvm::hash_combine(*this);

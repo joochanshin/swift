@@ -6158,6 +6158,33 @@ private:
     return pullbackTrampolineBBMap.lookup({originalBlock, successorBlock});
   }
 
+  void dumpAdjointValueMap(llvm::raw_ostream &s = getADDebugStream()) {
+     s << "ADJOINT VALUE MAPPING for '" << getPullback().getName()
+       << "' (size " << bufferMap.size() << "):\n";
+     DenseMap<SILBasicBlock *, DenseMap<SILValue, AdjointValue>> tmpBufferMap;
+     for (auto pair : valueMap) {
+       auto origPair = pair.first;
+       auto *origBB = origPair.first;
+       auto origValue = origPair.second;
+       auto adjVal = pair.second;
+       tmpBufferMap[origBB].insert({origValue, adjVal});
+     }
+     for (auto pair : tmpBufferMap) {
+       auto *origBB = pair.first;
+       auto bbValueMap = pair.second;
+       s << "bb" << origBB->getDebugID() << " (size " << bbValueMap.size()
+         << "):\n";
+       for (auto valuePair : bbValueMap) {
+         auto origValue = valuePair.first;
+         auto adjBuf = valuePair.second;
+         s << "[ORIG] " << origValue;
+         s << "[ADJ] " << adjBuf;
+         llvm::errs()<< "\n";
+       }
+       llvm::errs()<< "\n\n";
+     }
+   }
+
 public:
   //--------------------------------------------------------------------------//
   // Entry point
@@ -6422,8 +6449,14 @@ public:
       destroyedLocalAllocations.insert(source);
     }
 
+    for (auto pair : blockTemporaries) {
+      auto tempValues = pair.second;
+      for (auto tempValue : tempValues) {
+      }
+    }
+
     // Emit cleanups for all local values.
-    cleanUpTemporariesForBlock(pbExit, pbLoc);
+    // cleanUpTemporariesForBlock(pbExit, pbLoc);
     // Deallocate local allocations.
     for (auto alloc : functionLocalAllocations) {
       // Assert that local allocations have at least one use.
@@ -6436,6 +6469,7 @@ public:
       builder.createDeallocStack(pbLoc, alloc);
     }
     builder.createReturn(pbLoc, joinElements(retElts, builder, pbLoc));
+    dumpAdjointValueMap();
 
 #ifndef NDEBUG
     bool leakFound = false;
@@ -6657,6 +6691,13 @@ public:
       for (auto pair : incomingValues) {
         auto *predBB = std::get<0>(pair);
         auto incomingValue = std::get<1>(pair);
+#if 0
+        if (bbArgAdj.getKind() == AdjointValueKind::Concrete) {
+          auto bbArgAdjCopy = builder.createCopyValue(loc, bbArgAdj);
+          llvm::errs() << "MADE COPY!\n";
+          bbArgAdjCopy->dump();
+        }
+#endif
         setAdjointValue(predBB, incomingValue, bbArgAdj);
       }
     }
@@ -6695,7 +6736,7 @@ public:
       }
     }
     // Emit cleanups for all block-local temporaries.
-    cleanUpTemporariesForBlock(pbBB, pbLoc);
+    // cleanUpTemporariesForBlock(pbBB, pbLoc);
     // - If the original block has exactly one predecessor, then the pullback
     //   block has exactly one successor. Extract the pullback struct value
     //   from the predecessor enum value using `unchecked_take_enum_data_addr`

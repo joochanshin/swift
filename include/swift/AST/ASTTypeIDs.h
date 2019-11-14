@@ -32,6 +32,9 @@ enum class FunctionBuilderClosurePreCheck : uint8_t;
 class GenericParamList;
 class GenericSignature;
 class GenericTypeParamType;
+// SWIFT_ENABLE_TENSORFLOW
+class IndexSubset;
+// SWIFT_ENABLE_TENSORFLOW END
 class InfixOperatorDecl;
 class IterableDeclContext;
 class ModuleDecl;

@@ -1525,8 +1525,8 @@ IndexSubset *DifferentiableAttr::getParameterIndices() const {
   auto &ctx = getOriginalDeclaration()->getASTContext();
   return evaluateOrDefault(
       ctx.evaluator,
-      DifferentiableAttributeParameterIndicesRequest{
-          const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
+      DifferentiableAttributeTypeCheckRequest{
+          const_cast<DifferentiableAttr *>(this)},
       nullptr);
 }
 
@@ -1535,8 +1535,8 @@ void DifferentiableAttr::setParameterIndices(IndexSubset *paramIndices) {
          "Original declaration must have been resolved");
   auto &ctx = getOriginalDeclaration()->getASTContext();
   ctx.evaluator.cacheOutput(
-      DifferentiableAttributeParameterIndicesRequest{
-          const_cast<DifferentiableAttr *>(this), getOriginalDeclaration()},
+      DifferentiableAttributeTypeCheckRequest{
+          const_cast<DifferentiableAttr *>(this)},
       std::move(paramIndices));
 }
 

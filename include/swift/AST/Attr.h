@@ -1541,7 +1541,7 @@ class DifferentiableAttr final
       private llvm::TrailingObjects<DifferentiableAttr,
                                     ParsedAutoDiffParameter> {
   friend TrailingObjects;
-  friend class DifferentiableAttributeParameterIndicesRequest;
+  friend class DifferentiableAttributeTypeCheckRequest;
 
   /// The declaration on which the `@differentiable` attribute is declared.
   Decl *OriginalDeclaration = nullptr;

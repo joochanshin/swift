@@ -62,6 +62,8 @@ ATTRIBUTE_NODES = [
                              kind='ImplementsAttributeArguments'),
                        Child('DifferentiableArguments',
                              kind='DifferentiableAttributeArguments'),
+                       Child('DifferentiatingArguments',
+                             kind='DifferentiatingAttributeArguments'),
                        Child('NamedAttributeString',
                              kind='NamedAttributeStringArgument'),
                    ], description='''
@@ -290,6 +292,22 @@ ATTRIBUTE_NODES = [
              Child('FunctionDeclName', kind='FunctionDeclName',
                    description='The referenced function name.'),
              Child('TrailingComma', kind='CommaToken', is_optional=True),
+         ]),
+
+    # The argument of '@differentiating(...)'.
+    # differentiating-attr-arguments ->
+    #     func-decl-name ','? differentiable-attr-parameters?
+    Node('DifferentiatingAttributeArguments', kind='Syntax',
+         description='''
+         The arguments for the `@differentiating` attribute: the original
+         function and an optional differentiation parameter list.
+         ''',
+         children=[
+             Child('Original', kind='FunctionDeclName',
+                   description='The referenced original function.'),
+             Child('Comma', kind='CommaToken', is_optional=True),
+             Child('DiffParams', kind='DifferentiationParamsClause',
+                   is_optional=True),
          ]),
 
     # func-decl-name -> (identifier | operator) decl-name-arguments?

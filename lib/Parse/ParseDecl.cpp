@@ -1059,6 +1059,80 @@ bool Parser::parseDifferentiableAttributeArguments(
   return false;
 }
 
+ParserResult<DifferentiatingAttr>
+Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
+  StringRef AttrName = "differentiating";
+  SourceLoc lParenLoc = loc, rParenLoc = loc;
+  DeclNameWithLoc original;
+  bool linear = false;
+  SmallVector<ParsedAutoDiffParameter, 8> params;
+
+  // Parse trailing comma, if it exists, and check for errors.
+  auto consumeIfTrailingComma = [&]() -> bool {
+    if (!consumeIf(tok::comma)) return false;
+    // Diagnose trailing comma before ')'.
+    if (Tok.is(tok::r_paren)) {
+      diagnose(Tok, diag::unexpected_separator, ",");
+      return true;
+    }
+    // Check that token after comma is 'linear' or 'wrt:'.
+    if (!Tok.is(tok::identifier) ||
+        !(Tok.getText() == "linear" || Tok.getText() == "wrt")) {
+      diagnose(Tok, diag::attr_differentiating_expected_label_linear_or_wrt);
+      return true;
+    }
+    return false;
+  };
+
+  // Parse '('.
+  if (!consumeIf(tok::l_paren, lParenLoc)) {
+    diagnose(getEndOfPreviousLoc(), diag::attr_expected_lparen, AttrName,
+             /*DeclModifier*/ false);
+    return makeParserError();
+  }
+
+  {
+    SyntaxParsingContext ContentContext(
+        SyntaxContext, SyntaxKind::DifferentiatingAttributeArguments);
+
+    {
+      // Parse the name of the function.
+      SyntaxParsingContext FuncDeclNameContext(
+          SyntaxContext, SyntaxKind::FunctionDeclName);
+      original.Name = parseUnqualifiedDeclName(
+          /*afterDot*/ false, original.Loc,
+          diag::attr_differentiating_expected_original_name,
+          /*allowOperators*/ true, /*allowZeroArgCompoundNames*/ true);
+
+      if (consumeIfTrailingComma())
+        return makeParserError();
+    }
+
+    // Parse the optional 'linear' differentiation flag.
+    if (Tok.is(tok::identifier) && Tok.getText() == "linear") {
+      linear = true;
+      consumeToken(tok::identifier);
+      if (consumeIfTrailingComma())
+        return makeParserError();
+    }
+
+    // Parse the optional 'wrt' differentiation parameters clause.
+    if (Tok.is(tok::identifier) && Tok.getText() == "wrt" &&
+        parseDifferentiationParametersClause(params, AttrName))
+      return makeParserError();
+  }
+
+  // Parse ')'.
+  if (!consumeIf(tok::r_paren, rParenLoc)) {
+    diagnose(getEndOfPreviousLoc(), diag::attr_expected_rparen, AttrName,
+             /*DeclModifier*/ false);
+    return makeParserError();
+  }
+  return ParserResult<DifferentiatingAttr>(
+      DifferentiatingAttr::create(Context, /*implicit*/ false, atLoc,
+                                  SourceRange(loc, rParenLoc),
+                                  original, linear, params));
+}
 
 void Parser::parseObjCSelector(SmallVector<Identifier, 4> &Names,
                                SmallVector<SourceLoc, 4> &NameLocs,
@@ -1861,6 +1935,13 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
 
   case DAK_Differentiable: {
     auto Attr = parseDifferentiableAttribute(AtLoc, Loc);
+    if (Attr.isNonNull())
+      Attributes.add(Attr.get());
+    break;
+  }
+
+  case DAK_Differentiating: {
+    auto Attr = parseDifferentiatingAttribute(AtLoc, Loc);
     if (Attr.isNonNull())
       Attributes.add(Attr.get());
     break;

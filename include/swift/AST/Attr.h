@@ -1866,6 +1866,79 @@ public:
   }
 };
 
+/// Attribute that registers a function as a derivative of another function.
+///
+/// Examples:
+///   @differentiating(sin(_:))
+///   @differentiating(+, wrt: (lhs, rhs))
+class DifferentiatingAttr final
+    : public DeclAttribute,
+      private llvm::TrailingObjects<DifferentiatingAttr,
+                                    ParsedAutoDiffParameter> {
+  friend TrailingObjects;
+
+  /// The original function name.
+  DeclNameWithLoc Original;
+  /// The original function, resolved by the type checker.
+  FuncDecl *OriginalFunction = nullptr;
+  /// Whether this function is linear.
+  bool Linear;
+  /// The number of parsed parameters specified in 'wrt:'.
+  unsigned NumParsedParameters = 0;
+  /// The differentiation parameters' indices, resolved by the type checker.
+  IndexSubset *ParameterIndices = nullptr;
+
+  explicit DifferentiatingAttr(ASTContext &context, bool implicit,
+                               SourceLoc atLoc, SourceRange baseRange,
+                               DeclNameWithLoc original, bool linear,
+                               ArrayRef<ParsedAutoDiffParameter> params);
+
+  explicit DifferentiatingAttr(ASTContext &context, bool implicit,
+                               SourceLoc atLoc, SourceRange baseRange,
+                               DeclNameWithLoc original, bool linear,
+                               IndexSubset *indices);
+
+public:
+  static DifferentiatingAttr *create(ASTContext &context, bool implicit,
+                                     SourceLoc atLoc, SourceRange baseRange,
+                                     DeclNameWithLoc original, bool linear,
+                                     ArrayRef<ParsedAutoDiffParameter> params);
+
+  static DifferentiatingAttr *create(ASTContext &context, bool implicit,
+                                     SourceLoc atLoc, SourceRange baseRange,
+                                     DeclNameWithLoc original, bool linear,
+                                     IndexSubset *indices);
+
+  DeclNameWithLoc getOriginal() const { return Original; }
+
+  bool isLinear() const { return Linear; }
+
+  FuncDecl *getOriginalFunction() const { return OriginalFunction; }
+  void setOriginalFunction(FuncDecl *decl) { OriginalFunction = decl; }
+
+  /// The parsed differentiation parameters, i.e. the list of parameters
+  /// specified in 'wrt:'.
+  ArrayRef<ParsedAutoDiffParameter> getParsedParameters() const {
+    return {getTrailingObjects<ParsedAutoDiffParameter>(), NumParsedParameters};
+  }
+  MutableArrayRef<ParsedAutoDiffParameter> getParsedParameters() {
+    return {getTrailingObjects<ParsedAutoDiffParameter>(), NumParsedParameters};
+  }
+  size_t numTrailingObjects(OverloadToken<ParsedAutoDiffParameter>) const {
+    return NumParsedParameters;
+  }
+
+  IndexSubset *getParameterIndices() const {
+    return ParameterIndices;
+  }
+  void setParameterIndices(IndexSubset *pi) {
+    ParameterIndices = pi;
+  }
+
+  static bool classof(const DeclAttribute *DA) {
+    return DA->getKind() == DAK_Differentiating;
+  }
+};
 
 void simple_display(llvm::raw_ostream &out, const DeclAttribute *attr);
 

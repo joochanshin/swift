@@ -115,6 +115,9 @@ public:
   // TODO(TF-828): Upstream `@differentiable` attribute type-checking from
   // tensorflow branch.
   IGNORED_ATTR(Differentiable)
+  // TODO(TF-829): Upstream `@differentiating` attribute type-checking from
+  // tensorflow branch.
+  IGNORED_ATTR(Differentiating)
 #undef IGNORED_ATTR
 
   void visitAlignmentAttr(AlignmentAttr *attr) {

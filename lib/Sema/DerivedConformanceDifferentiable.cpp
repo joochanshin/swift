@@ -694,6 +694,11 @@ static void addAssociatedTypeAliasDecl(Identifier name,
 static void checkAndDiagnoseImplicitNoDerivative(ASTContext &Context,
                                                  NominalTypeDecl *nominal,
                                                  DeclContext* DC) {
+  // If conformance context is not the nominal type declaration, return.
+  // Adding `@noDerivative` attribute to stored properties in a different
+  // context may not work.
+  if (DC != nominal)
+    return;
   auto *diffableProto =
       Context.getProtocol(KnownProtocolKind::Differentiable);
   bool nominalCanDeriveAdditiveArithmetic =
@@ -705,8 +710,8 @@ static void checkAndDiagnoseImplicitNoDerivative(ASTContext &Context,
     if (vd->getAttrs().hasAttribute<NoDerivativeAttr>())
       continue;
     // Check whether to diagnose stored property.
-    bool conformsToDifferentiable =
-        !TypeChecker::conformsToProtocol(varType, diffableProto, nominal, None).isInvalid();
+    bool conformsToDifferentiable = !TypeChecker::conformsToProtocol(
+        varType, diffableProto, nominal, None).isInvalid();
     // If stored property should not be diagnosed, continue.
     if (conformsToDifferentiable && !vd->isLet())
       continue;
@@ -808,9 +813,8 @@ deriveDifferentiable_TangentVectorStruct(DerivedConformance &derived) {
       });
 
   auto *addArithProto = C.getProtocol(KnownProtocolKind::AdditiveArithmetic);
-  auto nominalConformsToAddArith =
-      TypeChecker::conformsToProtocol(parentDC->getSelfTypeInContext(), addArithProto,
-                            parentDC, None);
+  auto nominalConformsToAddArith = TypeChecker::conformsToProtocol(
+      parentDC->getSelfTypeInContext(), addArithProto, parentDC, None);
 
   // Return `Self` if conditions are met.
   if (!hasNoDerivativeStoredProp && !nominal->getSelfClassDecl() &&
@@ -837,7 +841,8 @@ ValueDecl *DerivedConformance::deriveDifferentiable(ValueDecl *requirement) {
     return nullptr;
   if (requirement->getBaseName() == Context.Id_move)
     return deriveDifferentiable_move(*this);
-  Context.Diags.diagnose(requirement->getLoc(), diag::broken_differentiable_requirement);
+  Context.Diags.diagnose(requirement->getLoc(),
+                         diag::broken_differentiable_requirement);
   return nullptr;
 }
 
@@ -847,7 +852,8 @@ Type DerivedConformance::deriveDifferentiable(AssociatedTypeDecl *requirement) {
     return nullptr;
   if (requirement->getBaseName() == Context.Id_TangentVector)
     return deriveDifferentiable_TangentVectorStruct(*this);
-  Context.Diags.diagnose(requirement->getLoc(), diag::broken_differentiable_requirement);
+  Context.Diags.diagnose(requirement->getLoc(),
+                         diag::broken_differentiable_requirement);
   return nullptr;
 }
 
@@ -862,6 +868,6 @@ ValueDecl *DerivedConformance::deriveEuclideanDifferentiable(
   if (requirement->getFullName() == Context.Id_differentiableVectorView)
     return deriveEuclideanDifferentiable_differentiableVectorView(*this);
   Context.Diags.diagnose(requirement->getLoc(),
-              diag::broken_euclidean_differentiable_requirement);
+                         diag::broken_euclidean_differentiable_requirement);
   return nullptr;
 }

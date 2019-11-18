@@ -25,6 +25,25 @@ struct EmptyAdditiveArithmetic : AdditiveArithmetic, Differentiable {}
 // Test interaction with `AdditiveArithmetic` derived conformances.
 struct EmptyAdditiveArithmeticEuclidean : AdditiveArithmetic, EuclideanDifferentiable {}
 
+// Verify no `@noDerivative` warnings or fixits when conformance context is not
+// the nominal type declaration.
+
+struct ExtensionDifferentiableNoDerivative<T> {
+  var x, y: T
+  // Expected no `@noDerivative` warnings.
+  var nondiffBool: Bool
+  var nondiffInt: Int
+}
+extension ExtensionDifferentiableNoDerivative: Differentiable where T: Differentiable {}
+
+struct ConditionalDifferentiableNoDerivative<T> {
+  var x, y: T
+  // Expected no `@noDerivative` warnings.
+  var nondiffBool: Bool
+  var nondiffInt: Int
+}
+extension ConditionalDifferentiableNoDerivative: Differentiable where T: Differentiable {}
+
 // Test structs with `let` stored properties.
 // Derived conformances fail because `mutating func move` requires all stored
 // properties to be mutable.

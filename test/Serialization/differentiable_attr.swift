@@ -7,6 +7,8 @@
 
 // BCANALYZER-NOT: UnknownCode
 
+import _Differentiation
+
 // CHECK: @differentiable(wrt: x, jvp: jvpSimple, vjp: vjpSimple)
 // CHECK-NEXT: func simple(x: Float) -> Float
 @differentiable(jvp: jvpSimple, vjp: vjpSimple)
@@ -111,6 +113,3 @@ extension P where Self : Differentiable, Self == Self.TangentVector {
     return (self, { v in v })
   }
 }
-
-// CHECK: func testDifferentiableParam(f: @differentiable (Float) -> Float)
-func testDifferentiableParam(f: @differentiable (Float) -> Float) {}

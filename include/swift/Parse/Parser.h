@@ -1008,17 +1008,19 @@ public:
   /// Parse a differentiation parameters clause.
   bool parseDifferentiationParametersClause(
       SmallVectorImpl<ParsedAutoDiffParameter> &params, StringRef attrName);
-  
-  /// Parse a transposing parameters clause.
-  bool parseTransposingParametersClause(
-      SmallVectorImpl<ParsedAutoDiffParameter> &params, StringRef attrName);
 
   /// Parse the @differentiating attribute.
   ParserResult<DifferentiatingAttr>
   parseDifferentiatingAttribute(SourceLoc AtLoc, SourceLoc Loc);
-  
+
+  /// Parse a transposing parameters clause.
+  bool parseTransposingParametersClause(
+      SmallVectorImpl<ParsedAutoDiffParameter> &params, StringRef attrName);
+
+  /// Parse the @transposing attribute.
   ParserResult<TransposingAttr> parseTransposingAttribute(SourceLoc AtLoc,
                                                           SourceLoc Loc);
+  // SWIFT_ENABLE_TENSORFLOW
 
   /// Parse the @quoted attribute.
   ParserResult<QuotedAttr> parseQuotedAttribute(SourceLoc AtLoc, SourceLoc Loc);

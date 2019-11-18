@@ -1151,7 +1151,7 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
   DeclNameWithLoc original;
   bool linear = false;
   SmallVector<ParsedAutoDiffParameter, 8> params;
-  
+
   // Parse trailing comma, if it exists, and check for errors.
   auto consumeIfTrailingComma = [&]() -> bool {
     if (!consumeIf(tok::comma)) return false;
@@ -1188,11 +1188,11 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
           /*afterDot*/ false, original.Loc,
           diag::attr_differentiating_expected_original_name,
           /*allowOperators*/ true, /*allowZeroArgCompoundNames*/ true);
-      
+
       if (consumeIfTrailingComma())
         return makeParserError();
     }
-    
+
     // Parse the optional 'linear' differentiation flag.
     if (Tok.is(tok::identifier) && Tok.getText() == "linear") {
       linear = true;
@@ -1200,7 +1200,7 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
       if (consumeIfTrailingComma())
         return makeParserError();
     }
-    
+
     // Parse the optional 'wrt' differentiation parameters clause.
     if (Tok.is(tok::identifier) && Tok.getText() == "wrt" &&
         parseDifferentiationParametersClause(params, AttrName))

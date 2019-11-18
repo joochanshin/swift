@@ -7,6 +7,8 @@
 
 // BCANALYZER-NOT: UnknownCode
 
+import _Differentiation
+
 // CHECK: @differentiable(wrt: x, jvp: jvpAddWrtX)
 // CHECK-NEXT: @differentiable(wrt: (x, y), vjp: vjpAdd)
 func add(x: Float, y: Float) -> Float {

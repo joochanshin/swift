@@ -513,11 +513,18 @@ NOTE(autodiff_opaque_function_not_differentiable,none,
      "opaque non-'@differentiable' function is not differentiable", ())
 NOTE(autodiff_property_not_differentiable,none,
      "property is not differentiable", ())
-NOTE(autodiff_stored_property_no_corresponding_tangent,none,
-     "property cannot be differentiated because '%0.TangentVector' does not "
-     "have a member named '%1'", (StringRef, StringRef))
+NOTE(autodiff_struct_property_no_corresponding_tangent,none,
+     "property cannot be differentiated because '%0' is not a struct with a "
+     "stored property named '%1' with type %2",
+     (StringRef, StringRef, Type))
+NOTE(autodiff_struct_property_multiple_corresponding_tangents,none,
+     "property cannot be differentiated because '%0' has multiple stored "
+     "properties named '%1' with type %2",
+     (StringRef, StringRef, Type))
 NOTE(autodiff_value_defined_here,none,
      "value defined here", ())
+NOTE(autodiff_property_defined_here,none,
+     "property defined here", ())
 NOTE(autodiff_when_differentiating_function_call,none,
      "when differentiating this function call", ())
 NOTE(autodiff_when_differentiating_function_definition,none,

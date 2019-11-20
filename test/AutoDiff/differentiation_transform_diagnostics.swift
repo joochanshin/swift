@@ -13,6 +13,106 @@ func one_to_one_0(_ x: Float) -> Float {
 _ = gradient(at: 0, in: one_to_one_0) // okay!
 
 //===----------------------------------------------------------------------===//
+// Invalid `TangentVector` associated types
+//===----------------------------------------------------------------------===//
+
+// Test struct property with no corresponding `TangentVector` computed property.
+struct InvalidTangentVectorComputedProperty: Differentiable {
+  var x: Float
+  struct TangentVector: Differentiable, AdditiveArithmetic {
+    // NOTE(TF-969): `TangentVector` computed property not yet supported.
+    var x: Float { 1 }
+  }
+  mutating func move(along direction: TangentVector) {}
+}
+// expected-error @+1 {{function is not differentiable}}
+@differentiable
+// expected-note @+1 {{when differentiating this function definition}}
+func TF_696(_ foo: InvalidTangentVectorComputedProperty) -> Float {
+  // expected-warning @+1 {{variable 'tmp' was never mutated; consider changing to 'let' constant}}
+  var tmp = foo
+  // expected-note @+1 {{property cannot be differentiated because 'InvalidTangentVectorComputedProperty.TangentVector' is not a struct with a stored property named 'x' with type 'Float'}}
+  return tmp.x + foo.x // `struct_extract` and `struct_element_addr`
+}
+// expected-error @+1 {{function is not differentiable}}
+@differentiable
+// expected-note @+1 {{when differentiating this function definition}}
+func TF_696_control_flow(_ foo: InvalidTangentVectorComputedProperty, bool: Bool) -> Float {
+  if bool {}
+  if bool {}
+  // expected-warning @+1 {{variable 'tmp' was never mutated; consider changing to 'let' constant}}
+  var tmp = foo
+  // expected-note @+1 {{property cannot be differentiated because 'InvalidTangentVectorComputedProperty.TangentVector' is not a struct with a stored property named 'x' with type 'Float'}}
+  return tmp.x + foo.x // `struct_extract` and `struct_element_addr`
+}
+
+struct InvalidTangentVectorComputedPropertyGeneric<T> {
+  var x: T
+}
+extension InvalidTangentVectorComputedPropertyGeneric: Differentiable where T: Differentiable {
+  struct TangentVector: Differentiable, AdditiveArithmetic {
+    // NOTE(TF-969): `TangentVector` computed property not yet supported.
+    var x: T.TangentVector { fatalError() }
+  }
+  mutating func move(along direction: TangentVector) {}
+}
+// expected-error @+1 {{function is not differentiable}}
+@differentiable(where T: Differentiable)
+// expected-note @+1 {{when differentiating this function definition}}
+func TF_969_generic<T>(_ foo: InvalidTangentVectorComputedPropertyGeneric<T>) -> T {
+  // expected-warning @+1 {{variable 'tmp' was never mutated; consider changing to 'let' constant}}
+  var tmp = foo
+  // expected-note @+1 {{property cannot be differentiated because 'InvalidTangentVectorComputedProperty.TangentVector' is not a struct with a stored property named 'x' with type 'Float'}}
+  return tmp.x // `struct_element_addr`
+}
+
+// Test class `TangentVector` associated type.
+struct InvalidClassTangentVector: Equatable, Differentiable {
+  var x: Float
+  final class TangentVector: Differentiable, AdditiveArithmetic {
+    var x: Float = 1
+    typealias TangentVector = InvalidClassTangentVector.TangentVector
+    static func ==(_: TangentVector, _: TangentVector) -> Bool { fatalError() }
+    static var zero: TangentVector { fatalError() }
+    static func +(_: TangentVector, _: TangentVector) -> TangentVector { fatalError() }
+    static func -(_: TangentVector, _: TangentVector) -> TangentVector { fatalError() }
+  }
+  mutating func move(along direction: TangentVector) {}
+}
+// expected-error @+1 {{function is not differentiable}}
+@differentiable
+// expected-note @+1 {{when differentiating this function definition}}
+func TF_700_class(_ foo: InvalidClassTangentVector) -> Float {
+  // expected-warning @+1 {{variable 'tmp' was never mutated; consider changing to 'let' constant}}
+  var tmp = foo
+  // expected-note @+1 {{property cannot be differentiated because 'InvalidClassTangentVector.TangentVector' is not a struct with a stored property named 'x' with type 'Float'}}
+  return tmp.x + foo.x // `struct_extract` and `struct_element_addr`
+}
+
+// Test enum `TangentVector` associated type.
+struct InvalidEnumTangentVector: Equatable, Differentiable {
+  var x: Float
+  enum TangentVector: Differentiable, AdditiveArithmetic {
+    case unit
+    typealias TangentVector = Self
+    static func ==(_: Self, _: Self) -> Bool { fatalError() }
+    static var zero: Self { fatalError() }
+    static func +(_: Self, _: Self) -> Self { fatalError() }
+    static func -(_: Self, _: Self) -> Self { fatalError() }
+  }
+  mutating func move(along direction: TangentVector) {}
+}
+// expected-error @+1 {{function is not differentiable}}
+@differentiable
+// expected-note @+1 {{when differentiating this function definition}}
+func TF_700_enum(_ foo: InvalidEnumTangentVector) -> Float {
+  // expected-warning @+1 {{variable 'tmp' was never mutated; consider changing to 'let' constant}}
+  var tmp = foo
+  // expected-note @+1 {{property cannot be differentiated because 'InvalidEnumTangentVector.TangentVector' is not a struct with a stored property named 'x' with type 'Float'}}
+  return tmp.x + foo.x // `struct_extract` and `struct_element_addr`
+}
+
+//===----------------------------------------------------------------------===//
 // Non-differentiable stored properties
 //===----------------------------------------------------------------------===//
 
@@ -37,7 +137,7 @@ extension S : Differentiable, AdditiveArithmetic {
 }
 
 // expected-error @+2 {{function is not differentiable}}
-// expected-note @+1 {{property cannot be differentiated because 'S.TangentVector' does not have a member named 'p'}}
+// expected-note @+1 {{property cannot be differentiated because 'S.TangentVector' is not a struct with a stored property named 'p' with type 'Float'}}
 _ = gradient(at: S(p: 0)) { s in 2 * s.p }
 
 struct NoDerivativeProperty : Differentiable {

@@ -4767,6 +4767,7 @@ public:
            "differentiated; activity analysis should not marked as varied.");
 
     auto diffBuilder = getDifferentialBuilder();;
+    auto tanFieldTy = getRemappedTangentType(sei->getType()).getASTType();
     auto tangentVectorTy =
         getRemappedTangentType(sei->getOperand()->getType());
     auto *tangentVectorDecl =
@@ -4784,9 +4785,9 @@ public:
       if (tanFieldLookup.empty()) {
         context.emitNondifferentiabilityError(
             sei, invoker,
-            diag::autodiff_stored_property_no_corresponding_tangent,
-            sei->getStructDecl()->getNameStr(),
-            sei->getField()->getNameStr());
+            diag::autodiff_struct_property_no_corresponding_tangent,
+            sei->getStructDecl()->getNameStr(), sei->getField()->getNameStr(),
+            tanFieldTy);
         errorOccurred = true;
         return;
       }
@@ -4814,6 +4815,7 @@ public:
 
     auto diffBuilder = getDifferentialBuilder();
     auto *bb = seai->getParent();
+    auto tanFieldTy = getRemappedTangentType(seai->getType()).getASTType();
     auto tangentVectorTy =
         getRemappedTangentType(seai->getOperand()->getType());
     auto *tangentVectorDecl =
@@ -4831,9 +4833,9 @@ public:
       if (tanFieldLookup.empty()) {
         context.emitNondifferentiabilityError(
             seai, invoker,
-            diag::autodiff_stored_property_no_corresponding_tangent,
-            seai->getStructDecl()->getNameStr(),
-            seai->getField()->getNameStr());
+            diag::autodiff_struct_property_no_corresponding_tangent,
+            seai->getStructDecl()->getNameStr(), seai->getField()->getNameStr(),
+            tanFieldTy);
         errorOccurred = true;
         return;
       }
@@ -5774,6 +5776,13 @@ private:
   /// cleaned before processing another basic block.
   DenseMap<SILBasicBlock *, SmallSetVector<SILValue, 64>> blockTemporaries;
 
+  /// Mapping from stored property declarations for `Differentiable`-conforming
+  /// structs to corresponding tangent stored property declarations in their
+  /// `TangentVector` struct type. Used for differentiating struct projections:
+  /// `struct_extract` and `struct_element_addr`.
+  // TODO(TF-969): Consider supporting tangent struct computed properties.
+  DenseMap<VarDecl *, VarDecl *> structStoredPropertyTangentDeclMap;
+
   /// The main builder.
   SILBuilder builder;
 
@@ -5944,10 +5953,10 @@ private:
   // Type transformer
   //--------------------------------------------------------------------------//
 
-  /// Remap any archetypes into the current function's context.
+  /// Remap any archetypes into the pullback function's context.
   SILType remapType(SILType ty) {
     if (ty.hasArchetype())
-      return getPullback().mapTypeIntoContext(ty.mapTypeOutOfContext());
+      ty = ty.mapTypeOutOfContext();
     return getPullback().mapTypeIntoContext(ty);
   }
 
@@ -5959,9 +5968,9 @@ private:
   /// Assuming the given type conforms to `Differentiable` after remapping,
   /// returns the associated tangent space type.
   SILType getRemappedTangentType(SILType type) {
-    return SILType::getPrimitiveType(
-        getTangentSpace(remapType(type).getASTType())->getCanonicalType(),
-        type.getCategory());
+    auto remappedCanType =
+        getTangentSpace(remapType(type).getASTType())->getCanonicalType();
+    return SILType::getPrimitiveType(remappedCanType, type.getCategory());
   }
 
   /// Substitutes all replacement types of the given substitution map using the
@@ -5971,7 +5980,7 @@ private:
   }
 
   //--------------------------------------------------------------------------//
-  // Managed value mapping
+  // Adjoint value mapping
   //--------------------------------------------------------------------------//
 
   /// Returns true if the original value has a corresponding adjoint value.
@@ -6185,6 +6194,100 @@ private:
     return pullbackTrampolineBBMap.lookup({originalBlock, successorBlock});
   }
 
+  //--------------------------------------------------------------------------//
+  // Struct property mapping
+  //--------------------------------------------------------------------------//
+
+  /// Given a field declaration for a `Differentiable`-conforming struct, the
+  /// type of a projection to that struct field, the type of a struct instance,
+  /// and a SILLocation, returns the corresponding
+  VarDecl *getTangentStructProperty(
+      VarDecl *fieldDecl, SILType projType, SILType structType, SILLocation loc) {
+    auto *structDecl =
+        dyn_cast<StructDecl>(fieldDecl->getInnermostDeclContext());
+    assert(structDecl);
+    assert(!fieldDecl->getAttrs().hasAttribute<NoDerivativeAttr>() &&
+           "`@noDerivative` struct projections should never be active");
+    structDecl->TypeDecl::getDeclaredInterfaceType();
+    // auto *moduleDecl =
+    auto *diffProto = getASTContext().getProtocol(KnownProtocolKind::Differentiable);
+    auto structASTType = structDecl->getDeclaredInterfaceType();
+    auto conf = getModule().getSwiftModule()->lookupConformance(structASTType, diffProto);
+    llvm::errs() << "CONF for " << structType << ":\n";
+    conf.dump();
+#if 0
+    auto associatedTypeLookup =
+        diffProto->lookupDirect(getASTContext().Id_TangentVector);
+    assert(associatedTypeLookup.size() == 1);
+    auto *dependentType = DependentMemberType::get(
+        diffProto->getDeclaredInterfaceType(),
+        cast<AssociatedTypeDecl>(associatedTypeLookup[0]));
+    // auto structTanType2 = conf.getAssociatedType(dependentType);
+    // auto structTanType2 = conf.getAssociatedType(structASTType, dependentType);
+#endif
+    auto structTanType = conf.getTypeWitnessByName(structASTType, getASTContext().Id_TangentVector);
+    llvm::errs() << "STRUCT TAN TYPE\n";
+    structTanType->dump();
+#if 0
+    auto projTanType = getRemappedTangentType(fieldDecl->getType()->getCanonicalType());
+#endif
+    auto projTanType = getRemappedTangentType(projType).getASTType();
+#if 0
+    auto structTanType = getRemappedTangentType(
+        structDecl->getDeclaredInterfaceType()->getCanonicalType());
+#endif
+
+#if 0
+    // WORKING! BUT REQUIRES EXTRA ARGUMENT
+    auto structTanType = getRemappedTangentType(structType).getASTType();
+#endif
+    auto diagnoseInvalidTangentVectorStructProperty = [&](auto diag) {
+      getContext().emitNondifferentiabilityError(
+          // loc.getSourceLoc(), getInvoker(), diag, structDecl->getNameStr(),
+          loc.getSourceLoc(), getInvoker(), diag, structTanType->getString(),
+          fieldDecl->getNameStr(), projTanType);
+      errorOccurred = true;
+    };
+    auto *tanStructDecl = structTanType->getStructOrBoundGenericStruct();
+    if (!tanStructDecl) {
+      diagnoseInvalidTangentVectorStructProperty(
+          diag::autodiff_struct_property_no_corresponding_tangent);
+      return nullptr;
+    }
+    // If the tangent space is the original struct, then field is the same.
+    if (structDecl == tanStructDecl)
+      return fieldDecl;
+    auto tanFieldLookup = tanStructDecl->lookupDirect(fieldDecl->getName());
+    VarDecl *tanFieldDecl = nullptr;
+    if (projTanType->hasArchetype())
+      projTanType = projTanType->mapTypeOutOfContext()->getCanonicalType();
+    auto *moduleDecl = getModule().getSwiftModule();
+    for (auto *decl : tanFieldLookup) {
+      auto *varDecl = dyn_cast<VarDecl>(decl);
+      auto tanFieldType = structTanType->getTypeOfMember(moduleDecl, varDecl);
+      if (tanFieldType->hasArchetype())
+        tanFieldType = tanFieldType->mapTypeOutOfContext();
+      if (!varDecl || !varDecl->hasStorage() ||
+          !tanFieldType->isEqual(projTanType)) {
+        diagnoseInvalidTangentVectorStructProperty(
+            diag::autodiff_struct_property_no_corresponding_tangent);
+        return nullptr;
+      }
+      if (tanFieldDecl) {
+        diagnoseInvalidTangentVectorStructProperty(
+            diag::autodiff_struct_property_multiple_corresponding_tangents);
+        return nullptr;
+      }
+      tanFieldDecl = varDecl;
+    }
+    if (!tanFieldDecl) {
+      diagnoseInvalidTangentVectorStructProperty(
+          diag::autodiff_struct_property_no_corresponding_tangent);
+      return nullptr;
+    }
+    return tanFieldDecl;
+  }
+
 public:
   //--------------------------------------------------------------------------//
   // Entry point
@@ -6247,6 +6350,7 @@ public:
       auto addActiveValue = [&](SILValue v) {
         if (visited.count(v))
           return;
+        visited.insert(v);
         // Diagnose active enum values. Differentiation of enum values requires
         // special adjoint value handling and is not yet supported. Diagnose
         // only the first active enum value to prevent too many diagnostics.
@@ -6257,12 +6361,18 @@ public:
           errorOccurred = true;
           diagnosedActiveEnumValue = true;
         }
+        // Diagnose `struct_element_addr` for which there is no valid tangent
+        // stored property.
+        if (auto *seai = dyn_cast<StructElementAddrInst>(v))
+          if (!getTangentStructProperty(seai->getField(), seai->getType(),
+                                        seai->getOperand()->getType(),
+                                        seai->getLoc()))
+            return;
         // Skip address projections.
         // Address projections do not need their own adjoint buffers; they
         // become projections into their adjoint base buffer.
         if (Projection::isAddressProjection(v))
           return;
-        visited.insert(v);
         bbActiveValues.push_back(v);
       };
       // Register bb arguments and all instruction operands/results.
@@ -7056,7 +7166,7 @@ public:
           tangentVectorTy->getStructOrBoundGenericStruct();
       assert(tangentVectorDecl);
 
-      auto *dti = builder.createDestructureStruct(si->getLoc(), adjStruct);
+      auto *dsi = builder.createDestructureStruct(si->getLoc(), adjStruct);
       // Accumulate adjoints for the fields of the `struct` operand.
       unsigned fieldIndex = 0;
       for (auto it = structDecl->getStoredProperties().begin();
@@ -7064,26 +7174,12 @@ public:
         VarDecl *field = *it;
         if (field->getAttrs().hasAttribute<NoDerivativeAttr>())
           continue;
-        // Find the corresponding field in the tangent space.
-        VarDecl *tanField = nullptr;
-        if (tangentVectorDecl == structDecl)
-          tanField = field;
-        // Otherwise, look up the field by name.
-        else {
-          auto tanFieldLookup =
-          tangentVectorDecl->lookupDirect(field->getName());
-          if (tanFieldLookup.empty()) {
-            getContext().emitNondifferentiabilityError(
-                si, getInvoker(),
-                diag::autodiff_stored_property_no_corresponding_tangent,
-                tangentVectorDecl->getNameStr(), field->getNameStr());
-            errorOccurred = true;
-            return;
-          }
-          tanField = cast<VarDecl>(tanFieldLookup.front());
-        }
-        assert(tanField);
-        auto tanElt = dti->getResult(fieldIndex);
+        // Verify that a corresponding tangent field exists.
+        auto *tanField = getTangentStructProperty(
+            field, si->getFieldValue(field)->getType(), si->getType(), loc);
+        if (!tanField)
+          return;
+        auto tanElt = dsi->getResult(fieldIndex);
         addAdjointValue(
             bb, si->getFieldValue(field),
             makeConcreteAdjointValue(tanElt), si->getLoc());
@@ -7122,25 +7218,9 @@ public:
         tangentVectorTy->getStructOrBoundGenericStruct();
     assert(tangentVectorDecl);
     // Find the corresponding field in the tangent space.
-    VarDecl *tanField = nullptr;
-    // If the tangent space is the original struct, then field is the same.
-    if (tangentVectorDecl == sei->getStructDecl())
-      tanField = sei->getField();
-    // Otherwise, look up the field by name.
-    else {
-      auto tanFieldLookup =
-          tangentVectorDecl->lookupDirect(sei->getField()->getName());
-      if (tanFieldLookup.empty()) {
-        getContext().emitNondifferentiabilityError(
-            sei, getInvoker(),
-            diag::autodiff_stored_property_no_corresponding_tangent,
-            sei->getStructDecl()->getNameStr(),
-            sei->getField()->getNameStr());
-        errorOccurred = true;
-        return;
-      }
-      tanField = cast<VarDecl>(tanFieldLookup.front());
-    }
+    auto *tanField = getTangentStructProperty(sei->getField(), sei->getType(),
+                                              sei->getOperand()->getType(),
+                                              sei->getLoc());
     // Accumulate adjoint for the `struct_extract` operand.
     auto av = getAdjointValue(bb, sei);
     switch (av.getKind()) {

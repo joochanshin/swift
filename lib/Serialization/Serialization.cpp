@@ -2095,10 +2095,10 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
     case DAK_RestatedObjCConformance:
     case DAK_ClangImporterSynthesizedType:
     case DAK_PrivateImport:
-    // TODO(TF-837): Implement `@differentiating` attribute serialization.
-    // Blocked by TF-829: `@differentiating` attribute type-checking, which
+    // TODO(TF-837): Implement `@derivative(of:)` attribute serialization.
+    // Blocked by TF-829: `@derivative(of:)` attribute type-checking, which
     // resolves parameter indices (`IndexSubset *`).
-    case DAK_Differentiating:
+    case DAK_Derivative:
       llvm_unreachable("cannot serialize attribute");
 
     case DAK_Count:

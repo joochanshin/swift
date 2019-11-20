@@ -62,8 +62,8 @@ ATTRIBUTE_NODES = [
                              kind='ImplementsAttributeArguments'),
                        Child('DifferentiableArguments',
                              kind='DifferentiableAttributeArguments'),
-                       Child('DifferentiatingArguments',
-                             kind='DifferentiatingAttributeArguments'),
+                       Child('DerivativeArguments',
+                             kind='DerivativeAttributeArguments'),
                        Child('NamedAttributeString',
                              kind='NamedAttributeStringArgument'),
                    ], description='''
@@ -294,17 +294,23 @@ ATTRIBUTE_NODES = [
              Child('TrailingComma', kind='CommaToken', is_optional=True),
          ]),
 
-    # The argument of '@differentiating(...)'.
-    # differentiating-attr-arguments ->
-    #     func-decl-name ','? differentiable-attr-parameters?
-    Node('DifferentiatingAttributeArguments', kind='Syntax',
+    # The argument of '@derivative(of: ...)'.
+    # derivative-attr-arguments ->
+    #     'of' ':' func-decl-name ','? derivative-attr-parameters?
+    Node('DerivativeAttributeArguments', kind='Syntax',
          description='''
-         The arguments for the `@differentiating` attribute: the original
-         function and an optional differentiation parameter list.
+         The arguments for the `@derivative` attribute: the 'of:' label, the
+         original declaration, and an optional differentiation parameter list.
          ''',
          children=[
+             Child('OfLabel', kind='IdentifierToken', text_choices=['of'],
+                   description='The "of" label.'),
+             Child('Colon', kind='ColonToken', description='''
+                   The colon separating the "of" label and the original
+                   declaration name.
+                   '''),
              Child('Original', kind='FunctionDeclName',
-                   description='The referenced original function.'),
+                   description='The referenced original declaration.'),
              Child('Comma', kind='CommaToken', is_optional=True),
              Child('DiffParams', kind='DifferentiationParamsClause',
                    is_optional=True),

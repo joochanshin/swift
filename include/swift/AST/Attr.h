@@ -1869,11 +1869,11 @@ public:
 /// Attribute that registers a function as a derivative of another function.
 ///
 /// Examples:
-///   @differentiating(sin(_:))
-///   @differentiating(+, wrt: (lhs, rhs))
-class DifferentiatingAttr final
+///   @derivative(of: sin(_:))
+///   @derivative(of: +, wrt: (lhs, rhs))
+class DerivativeAttr final
     : public DeclAttribute,
-      private llvm::TrailingObjects<DifferentiatingAttr,
+      private llvm::TrailingObjects<DerivativeAttr,
                                     ParsedAutoDiffParameter> {
   friend TrailingObjects;
 
@@ -1888,26 +1888,25 @@ class DifferentiatingAttr final
   /// The differentiation parameters' indices, resolved by the type checker.
   IndexSubset *ParameterIndices = nullptr;
 
-  explicit DifferentiatingAttr(ASTContext &context, bool implicit,
-                               SourceLoc atLoc, SourceRange baseRange,
-                               DeclNameWithLoc original, bool linear,
-                               ArrayRef<ParsedAutoDiffParameter> params);
+  explicit DerivativeAttr(ASTContext &context, bool implicit, SourceLoc atLoc,
+                          SourceRange baseRange, DeclNameWithLoc original,
+                          bool linear,
+                          ArrayRef<ParsedAutoDiffParameter> params);
 
-  explicit DifferentiatingAttr(ASTContext &context, bool implicit,
-                               SourceLoc atLoc, SourceRange baseRange,
-                               DeclNameWithLoc original, bool linear,
-                               IndexSubset *indices);
+  explicit DerivativeAttr(ASTContext &context, bool implicit, SourceLoc atLoc,
+                          SourceRange baseRange, DeclNameWithLoc original,
+                          bool linear, IndexSubset *indices);
 
 public:
-  static DifferentiatingAttr *create(ASTContext &context, bool implicit,
-                                     SourceLoc atLoc, SourceRange baseRange,
-                                     DeclNameWithLoc original, bool linear,
-                                     ArrayRef<ParsedAutoDiffParameter> params);
+  static DerivativeAttr *create(ASTContext &context, bool implicit,
+                                SourceLoc atLoc, SourceRange baseRange,
+                                DeclNameWithLoc original, bool linear,
+                                ArrayRef<ParsedAutoDiffParameter> params);
 
-  static DifferentiatingAttr *create(ASTContext &context, bool implicit,
-                                     SourceLoc atLoc, SourceRange baseRange,
-                                     DeclNameWithLoc original, bool linear,
-                                     IndexSubset *indices);
+  static DerivativeAttr *create(ASTContext &context, bool implicit,
+                                SourceLoc atLoc, SourceRange baseRange,
+                                DeclNameWithLoc original, bool linear,
+                                IndexSubset *indices);
 
   DeclNameWithLoc getOriginal() const { return Original; }
 
@@ -1936,7 +1935,7 @@ public:
   }
 
   static bool classof(const DeclAttribute *DA) {
-    return DA->getKind() == DAK_Differentiating;
+    return DA->getKind() == DAK_Derivative;
   }
 };
 

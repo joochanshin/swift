@@ -1329,7 +1329,7 @@ namespace  {
 
     // Differentiation-related attributes.
     UNINTERESTING_ATTR(Differentiable)
-    UNINTERESTING_ATTR(Differentiating)
+    UNINTERESTING_ATTR(Derivative)
 
     // These can't appear on overridable declarations.
     UNINTERESTING_ATTR(Prefix)

@@ -941,9 +941,9 @@ bool Parser::parseDifferentiableAttributeArguments(
       diagnose(Tok, diag::unexpected_separator, ",");
       return true;
     }
-    // Check that token after comma is 'wrt:' or a function specifier label.
-    if (!(isWRTIdentifier(Tok) || isJVPIdentifier(Tok) ||
-          isVJPIdentifier(Tok))) {
+    // Check that token after comma is 'wrt' or a function specifier label.
+    if (!(isIdentifier(Tok, "wrt") || isIdentifier(Tok, "jvp") ||
+          isIdentifier(Tok, "vjp"))) {
       diagnose(Tok, diag::attr_differentiable_expected_label);
       return true;
     }
@@ -976,7 +976,7 @@ bool Parser::parseDifferentiableAttributeArguments(
         .fixItReplace(withRespectToRange, "wrt:");
     return errorAndSkipToEnd();
   }
-  if (isWRTIdentifier(Tok)) {
+  if (isIdentifier(Tok, "wrt")) {
     if (parseDifferentiationParametersClause(params, AttrName))
       return true;
     // If no trailing comma or 'where' clause, terminate parsing arguments.
@@ -1014,7 +1014,7 @@ bool Parser::parseDifferentiableAttributeArguments(
   bool terminateParsingArgs = false;
 
   // Parse 'jvp: <func_name>' (optional).
-  if (isJVPIdentifier(Tok)) {
+  if (isIdentifier(Tok, "jvp")) {
     SyntaxParsingContext JvpContext(
         SyntaxContext, SyntaxKind::DifferentiableAttributeFuncSpecifier);
     jvpSpec = DeclNameWithLoc();
@@ -1027,7 +1027,7 @@ bool Parser::parseDifferentiableAttributeArguments(
   }
 
   // Parse 'vjp: <func_name>' (optional).
-  if (isVJPIdentifier(Tok)) {
+  if (isIdentifier(Tok, "vjp")) {
     SyntaxParsingContext VjpContext(
         SyntaxContext, SyntaxKind::DifferentiableAttributeFuncSpecifier);
     vjpSpec = DeclNameWithLoc();
@@ -1059,26 +1059,27 @@ bool Parser::parseDifferentiableAttributeArguments(
   return false;
 }
 
-ParserResult<DifferentiatingAttr>
-Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
-  StringRef AttrName = "differentiating";
+/// Parse a '@derivative(of:)' attribute.
+ParserResult<DerivativeAttr>
+Parser::parseDerivativeAttribute(SourceLoc atLoc, SourceLoc loc) {
+  StringRef AttrName = "derivative";
   SourceLoc lParenLoc = loc, rParenLoc = loc;
   DeclNameWithLoc original;
   bool linear = false;
   SmallVector<ParsedAutoDiffParameter, 8> params;
 
-  // Parse trailing comma, if it exists, and check for errors.
+  // Parse trailing comma if it exists. Returns true on error.
   auto consumeIfTrailingComma = [&]() -> bool {
-    if (!consumeIf(tok::comma)) return false;
+    if (!consumeIf(tok::comma))
+      return false;
     // Diagnose trailing comma before ')'.
     if (Tok.is(tok::r_paren)) {
       diagnose(Tok, diag::unexpected_separator, ",");
       return true;
     }
     // Check that token after comma is 'linear' or 'wrt:'.
-    if (!Tok.is(tok::identifier) ||
-        !(Tok.getText() == "linear" || Tok.getText() == "wrt")) {
-      diagnose(Tok, diag::attr_differentiating_expected_label_linear_or_wrt);
+    if (!isIdentifier(Tok, "linear") && !isIdentifier(Tok, "wrt")) {
+      diagnose(Tok, diag::attr_derivative_expected_label_linear_or_wrt);
       return true;
     }
     return false;
@@ -1090,10 +1091,15 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
              /*DeclModifier*/ false);
     return makeParserError();
   }
-
   {
     SyntaxParsingContext ContentContext(
-        SyntaxContext, SyntaxKind::DifferentiatingAttributeArguments);
+        SyntaxContext, SyntaxKind::DerivativeAttributeArguments);
+
+    // Parse the 'of:' label and colon.
+    if (parseSpecificIdentifier("of",
+            diag::attr_differentiable_missing_label, "of") ||
+        parseToken(tok::colon, diag::expected_colon_after_label, "of"))
+      return makeParserError();
 
     {
       // Parse the name of the function.
@@ -1101,15 +1107,14 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
           SyntaxContext, SyntaxKind::FunctionDeclName);
       original.Name = parseUnqualifiedDeclName(
           /*afterDot*/ false, original.Loc,
-          diag::attr_differentiating_expected_original_name,
-          /*allowOperators*/ true, /*allowZeroArgCompoundNames*/ true);
-
+          diag::attr_derivative_expected_original_name, /*allowOperators*/ true,
+          /*allowZeroArgCompoundNames*/ true);
       if (consumeIfTrailingComma())
         return makeParserError();
     }
 
     // Parse the optional 'linear' differentiation flag.
-    if (Tok.is(tok::identifier) && Tok.getText() == "linear") {
+    if (isIdentifier(Tok, "linear")) {
       linear = true;
       consumeToken(tok::identifier);
       if (consumeIfTrailingComma())
@@ -1117,19 +1122,19 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
     }
 
     // Parse the optional 'wrt' differentiation parameters clause.
-    if (Tok.is(tok::identifier) && Tok.getText() == "wrt" &&
-        parseDifferentiationParametersClause(params, AttrName))
+    if (isIdentifier(Tok, "wrt") &&
+            parseDifferentiationParametersClause(params, AttrName)) {
       return makeParserError();
+    }
   }
-
   // Parse ')'.
   if (!consumeIf(tok::r_paren, rParenLoc)) {
     diagnose(getEndOfPreviousLoc(), diag::attr_expected_rparen, AttrName,
              /*DeclModifier*/ false);
     return makeParserError();
   }
-  return ParserResult<DifferentiatingAttr>(
-      DifferentiatingAttr::create(Context, /*implicit*/ false, atLoc,
+  return ParserResult<DerivativeAttr>(
+      DerivativeAttr::create(Context, /*implicit*/ false, atLoc,
                                   SourceRange(loc, rParenLoc),
                                   original, linear, params));
 }
@@ -1940,8 +1945,8 @@ bool Parser::parseNewDeclAttribute(DeclAttributes &Attributes, SourceLoc AtLoc,
     break;
   }
 
-  case DAK_Differentiating: {
-    auto Attr = parseDifferentiatingAttribute(AtLoc, Loc);
+  case DAK_Derivative: {
+    auto Attr = parseDerivativeAttribute(AtLoc, Loc);
     if (Attr.isNonNull())
       Attributes.add(Attr.get());
     break;

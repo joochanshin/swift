@@ -2230,6 +2230,7 @@ void DifferentiableActivityInfo::setUsefulThroughArrayInitialization(
       //   `RawPointer`.
       for (auto use : ptai->getUses()) {
         auto *user = use->getUser();
+        propagateUseful(use->getUser(), dependentVariableIndex);
         if (auto *si = dyn_cast<StoreInst>(user)) {
           setUseful(si->getDest(), dependentVariableIndex);
           setUsefulAndPropagateToOperands(si->getSrc(), dependentVariableIndex);
@@ -2238,6 +2239,7 @@ void DifferentiableActivityInfo::setUsefulThroughArrayInitialization(
           setUsefulAndPropagateToOperands(cai->getSrc(),
                                           dependentVariableIndex);
         } else if (auto *iai = dyn_cast<IndexAddrInst>(user)) {
+          setUseful(iai, dependentVariableIndex);
           for (auto use : iai->getUses()) {
             auto *user = use->getUser();
             if (auto si = dyn_cast<StoreInst>(user)) {
@@ -6146,6 +6148,76 @@ private:
         return (bufferMap[{origBB, originalProjection}] = SILValue());
       // Return the base buffer's adjoint buffer.
       return adjBase;
+    }
+    // Get the source and destination of the `store` or `copy_addr`.
+    auto *ai = getAllocateUninitializedArrayIntrinsicElementAddress(
+        originalProjection);
+    if (ai) {
+      llvm::errs() << "FOUND AI! " << *ai << "\n";
+    }
+    // MISSING SPECIFIC USER. DEFINING INST NOT CORRECT
+    auto *user = originalProjection->getDefiningInstruction();
+    bool isAllocateUninitializedArrayIntrinsicElementAddress = false;
+    if (user) {
+      if (auto *si = dyn_cast<StoreInst>(user)) {
+        if (originalProjection == si->getDest())
+         isAllocateUninitializedArrayIntrinsicElementAddress = true;
+      } else if (auto *cai = dyn_cast<CopyAddrInst>(user)) {
+        if (originalProjection == cai->getDest())
+         isAllocateUninitializedArrayIntrinsicElementAddress = true;
+      // THIS FAILS!
+      } else if (auto *ai = dyn_cast<ApplyInst>(user)) {
+        llvm::errs() << "WE ARRIVED!\n";
+        for (auto indRes : ai->getIndirectSILResults()) {
+          if (originalProjection == indRes) {
+            isAllocateUninitializedArrayIntrinsicElementAddress = true;
+            break;
+          }
+        }
+      }
+    }
+    if (ai && isAllocateUninitializedArrayIntrinsicElementAddress) {
+      SILValue src;
+      SILValue dest;
+      if (auto *si = dyn_cast<StoreInst>(user)) {
+        src = si->getSrc();
+        dest = si->getDest();
+      } else if (auto *cai = dyn_cast<CopyAddrInst>(user)) {
+        src = cai->getSrc();
+        dest = cai->getDest();
+      } else if (auto *ai = dyn_cast<ApplyInst>(user)) {
+#if 0
+        src = ai->getSrc();
+        dest = ai->getDest();
+#endif
+        llvm::errs() << "WE ARRIVED!\n";
+      }
+      // Get the array element index of the result address.
+      int eltIndex = 0;
+      if (auto *iai = dyn_cast<IndexAddrInst>(dest->getDefiningInstruction())) {
+        auto *ili = cast<IntegerLiteralInst>(iai->getIndex());
+        eltIndex = ili->getValue().getLimitedValue();
+      } else {
+        assert(isa<PointerToAddressInst>(dest->getDefiningInstruction()));
+      }
+      // Get the array adjoint value.
+      SILValue arrayAdjoint;
+      assert(ai && "Expected `array.uninitialized_intrinsic` application");
+      for (auto use : ai->getUses()) {
+        auto *dti = dyn_cast<DestructureTupleInst>(use->getUser());
+        if (!dti)
+          continue;
+        // The first `destructure_tuple` result is the `Array` value.
+        auto arrayValue = dti->getResult(0);
+        arrayAdjoint =
+            getAdjointValue(ai->getParent(), arrayValue).getConcreteValue();
+      }
+      assert(arrayAdjoint && "Array does not have adjoint value");
+      // Apply `Array.TangentVector.subscript` to get array element adjoint value.
+      auto eltTanType = getRemappedTangentType(src->getType());
+      auto *eltAdjBuffer = getArrayAdjointElementBuffer(arrayAdjoint, eltIndex,
+                                                        eltTanType, ai->getLoc());
+      return eltAdjBuffer;
     }
     return SILValue();
   }

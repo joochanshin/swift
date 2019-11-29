@@ -337,12 +337,16 @@ template<class Inst>
 static Inst *peerThroughFunctionConversions(SILValue value) {
   if (auto *inst = dyn_cast<Inst>(value))
     return inst;
-  if (auto *thinToThick = dyn_cast<ThinToThickFunctionInst>(value))
-    return peerThroughFunctionConversions<Inst>(thinToThick->getOperand());
-  if (auto *convertFn = dyn_cast<ConvertFunctionInst>(value))
-    return peerThroughFunctionConversions<Inst>(convertFn->getOperand());
-  if (auto *partialApply = dyn_cast<PartialApplyInst>(value))
-    return peerThroughFunctionConversions<Inst>(partialApply->getCallee());
+  if (auto *cvi = dyn_cast<CopyValueInst>(value))
+    return peerThroughFunctionConversions<Inst>(cvi->getOperand());
+  if (auto *bbi = dyn_cast<BeginBorrowInst>(value))
+    return peerThroughFunctionConversions<Inst>(bbi->getOperand());
+  if (auto *tttfi = dyn_cast<ThinToThickFunctionInst>(value))
+    return peerThroughFunctionConversions<Inst>(tttfi->getOperand());
+  if (auto *cfi = dyn_cast<ConvertFunctionInst>(value))
+    return peerThroughFunctionConversions<Inst>(cfi->getOperand());
+  if (auto *pai = dyn_cast<PartialApplyInst>(value))
+    return peerThroughFunctionConversions<Inst>(pai->getCallee());
   return nullptr;
 }
 
@@ -2333,11 +2337,10 @@ static bool diagnoseUnsupportedControlFlow(ADContext &context,
 }
 
 /// Check whether the given requirements are satisfied, with the given
-/// derivative generic signature (containing requirements), original function,
-/// and substitution map. Returns true if error is emitted.
+/// derivative generic signature (containing requirements), and substitution
+/// map. Returns true if error is emitted.
 static bool diagnoseUnsatisfiedRequirements(ADContext &context,
                                             GenericSignature derivativeGenSig,
-                                            SILFunction *original,
                                             SubstitutionMap substMap,
                                             DifferentiationInvoker invoker,
                                             SourceLoc loc) {
@@ -2418,6 +2421,8 @@ static bool diagnoseUnsatisfiedRequirements(ADContext &context,
   if (unsatisfiedRequirements.empty())
     return false;
   // Diagnose unsatisfied requirements.
+  llvm::errs() << "SUBST MAP\n";
+  substMap.dump();
   std::string reqText;
   llvm::raw_string_ostream stream(reqText);
   interleave(unsatisfiedRequirements,
@@ -2516,20 +2521,30 @@ static void copyParameterArgumentsForApply(
 /// recursively converts the new function just like how the old function is
 /// converted. If the new function's generic signature is specified, it is used
 /// to create substitution maps for reapplied `partial_apply` instructions.
-static SILValue
-reapplyFunctionConversion(
-    SILValue newFunc, SILValue oldFunc, SILValue oldConvertedFunc,
-    SILBuilder &builder, SILLocation loc,
+static SILValue reapplyFunctionConversion(
+    ADContext &context, SILValue newFunc, SILValue oldFunc,
+    SILValue oldConvertedFunc, SILBuilder &builder, SILLocation loc,
     SmallVectorImpl<AllocStackInst *> &newBuffersToDealloc,
-    GenericSignature newFuncGenSig = GenericSignature()) {
+    GenericSignature newFuncGenSig = GenericSignature(),
+    IndexSubset *reabstractionThunkIndices = nullptr) {
   // If the old func is the new func, then there's no conversion.
   if (oldFunc == oldConvertedFunc)
     return newFunc;
   // Handle a few instruction cases.
+  // copy_value
+  if (auto *cvi = dyn_cast<CopyValueInst>(oldConvertedFunc)) {
+    auto innerNewFunc = reapplyFunctionConversion(
+        context, newFunc, oldFunc, cvi->getOperand(), builder, loc,
+        newBuffersToDealloc, newFuncGenSig);
+    // Note: no `copy_value` is needed for the re-converted function because the
+    // caller of `reapplyFunctionConversion` should consume the re-converted
+    // function.
+    return innerNewFunc;
+  }
   // thin_to_thick_function
   if (auto *tttfi = dyn_cast<ThinToThickFunctionInst>(oldConvertedFunc)) {
     auto innerNewFunc = reapplyFunctionConversion(
-        newFunc, oldFunc, tttfi->getOperand(), builder, loc,
+        context, newFunc, oldFunc, tttfi->getOperand(), builder, loc,
         newBuffersToDealloc, newFuncGenSig);
     auto operandFnTy = innerNewFunc->getType().castTo<SILFunctionType>();
     auto thickTy = operandFnTy->getWithRepresentation(
@@ -2544,9 +2559,19 @@ reapplyFunctionConversion(
     SmallVector<SILValue, 1> newArgsToDestroy;
     copyParameterArgumentsForApply(pai, newArgs, newArgsToDestroy,
                                    newBuffersToDealloc);
+    if (reabstractionThunkIndices) {
+      // TODO: Is this assertion robust for thunks reabstracting to indirect
+      // parameters/results? If not, use `newArgs.back()` instead.
+      assert(newArgs.size() == 1 &&
+             "Expected reabstraction thunk to have only one argument");
+      auto *dfi = context.createDifferentiableFunction(
+          builder, loc, reabstractionThunkIndices, newArgs[0]);
+      context.getDifferentiableFunctionInsts().push_back(dfi);
+      newArgs[0] = dfi;
+    }
     auto innerNewFunc = reapplyFunctionConversion(
-        newFunc, oldFunc, pai->getCallee(), builder, loc, newBuffersToDealloc,
-        newFuncGenSig);
+        context, newFunc, oldFunc, pai->getCallee(), builder, loc,
+        newBuffersToDealloc, newFuncGenSig);
     // If new function's generic signature is specified, use it to create
     // substitution map for reapplied `partial_apply` instruction.
     auto substMap = !newFuncGenSig
@@ -2557,6 +2582,8 @@ reapplyFunctionConversion(
     return builder.createPartialApply(loc, innerNewFunc, substMap, newArgs,
                                       ParameterConvention::Direct_Guaranteed);
   }
+  llvm::errs() << "FUNC CONVERSION!\n";
+  oldConvertedFunc->dump();
   llvm_unreachable("Unhandled function conversion instruction");
 }
 
@@ -2703,14 +2730,15 @@ emitDerivativeFunctionReference(
     // If the original callee is a `partial_apply` or `apply` instruction, use
     // its substitution map instead.
     auto substMap = original->getFunction()->getForwardingSubstitutionMap();
-    if (auto *pai = dyn_cast<PartialApplyInst>(original)) {
+    if (auto *pai =
+            peerThroughFunctionConversions<PartialApplyInst>(original)) {
       substMap = pai->getSubstitutionMap();
-    } else if (auto *ai = dyn_cast<ApplyInst>(original)) {
+    } else if (auto *ai = peerThroughFunctionConversions<ApplyInst>(original)) {
       substMap = ai->getSubstitutionMap();
     }
     if (diagnoseUnsatisfiedRequirements(
-            context, minimalWitness->getDerivativeGenericSignature(),
-            originalFn, substMap, invoker, original.getLoc().getSourceLoc()))
+            context, minimalWitness->getDerivativeGenericSignature(), substMap,
+            invoker, original.getLoc().getSourceLoc()))
       return None;
     DifferentiabilityWitnessFunctionKind witnessKind;
     switch (kind) {
@@ -2723,19 +2751,17 @@ emitDerivativeFunctionReference(
     }
     auto *derivativeFnRef = builder.createDifferentiabilityWitnessFunction(
         loc, witnessKind, minimalWitness);
-    // FIXME(TF-201): Handle direct differentiation of reabstraction thunks.
-    // Tentative solution: clone a new reabstraction thunk where function
-    // argument has a `@differentiable` function type.
-    if (originalFn->isThunk() == IsReabstractionThunk) {
-      // Handle here.
-    }
+    IndexSubset *reabstractionThunkIndices = nullptr;
+    if (originalFn->isThunk() == IsReabstractionThunk)
+      reabstractionThunkIndices = desiredIndices.parameters;
     auto convertedRef =
         reapplyFunctionConversion(derivativeFnRef, originalFRI, original,
                                   builder, loc, newBuffersToDealloc,
                                   derivativeFnRef->getType()
                                       .getASTType()
                                       ->castTo<SILFunctionType>()
-                                      ->getSubstGenericSignature());
+                                      ->getSubstGenericSignature(),
+                                  reabstractionThunkIndices);
     return std::make_pair(
         convertedRef,
         SILAutoDiffIndices(desiredIndices.source,
@@ -2781,8 +2807,8 @@ emitDerivativeFunctionReference(
         requirementDeclRef.asAutoDiffDerivativeFunction(autoDiffFuncId),
         SILType::getPrimitiveObjectType(assocType));
     auto convertedRef =
-        reapplyFunctionConversion(ref, witnessMethod, original, builder, loc,
-                                  newBuffersToDealloc);
+        reapplyFunctionConversion(context, ref, witnessMethod, original,
+                                  builder, loc, newBuffersToDealloc);
     return std::make_pair(convertedRef, minimalIndices);
   }
 
@@ -2826,8 +2852,8 @@ emitDerivativeFunctionReference(
         methodDeclRef.asAutoDiffDerivativeFunction(autoDiffFuncId),
         SILType::getPrimitiveObjectType(assocType));
     auto convertedRef =
-        reapplyFunctionConversion(ref, classMethodInst, original, builder, loc,
-                                  newBuffersToDealloc);
+        reapplyFunctionConversion(context, ref, classMethodInst, original,
+                                  builder, loc, newBuffersToDealloc);
     return std::make_pair(convertedRef, minimalIndices);
   }
 
@@ -7044,6 +7070,14 @@ public:
     }
   }
 
+#if 0
+  void visitPartialApplyInst(PartialApplyInst *pai) {
+    context.emitNondifferentiabilityError(
+        pai, invoker,
+        diag::autodiff_opaque_function_not_differentiable);
+  }
+#endif
+
   /// Handle `struct` instruction.
   ///   Original: y = struct (x0, x1, x2, ...)
   ///    Adjoint: adj[x0] += struct_extract adj[y], #x0
@@ -8003,7 +8037,11 @@ static SILFunction *createEmptyVJP(
   auto vjpType = originalTy->getAutoDiffDerivativeFunctionType(
       indices.parameters, indices.source, AutoDiffDerivativeFunctionKind::VJP,
       module.Types, LookUpConformanceInModule(module.getSwiftModule()),
-      vjpGenericSig);
+      vjpGenericSig,
+      /*isReabstractionThunk*/ original->isThunk() == IsReabstractionThunk);
+  if (original->isThunk() == IsReabstractionThunk) {
+    llvm::errs() << "FOUND REABSTRACTION THUNK!\n";
+  }
 
   SILOptFunctionBuilder fb(context.getTransform());
   auto linkage = autodiff::getAutoDiffDerivativeFunctionLinkage(
@@ -8051,9 +8089,10 @@ static SILFunction *createEmptyJVP(
       ? jvpGenericSig->getGenericEnvironment()
       : nullptr;
   auto jvpType = originalTy->getAutoDiffDerivativeFunctionType(
-      indices.parameters, indices.source,
-      AutoDiffDerivativeFunctionKind::JVP, module.Types,
-      LookUpConformanceInModule(module.getSwiftModule()), jvpGenericSig);
+      indices.parameters, indices.source, AutoDiffDerivativeFunctionKind::JVP,
+      module.Types, LookUpConformanceInModule(module.getSwiftModule()),
+      jvpGenericSig,
+      /*isReabstractionThunk*/ original->isThunk() == IsReabstractionThunk);
 
   SILOptFunctionBuilder fb(context.getTransform());
   auto linkage = autodiff::getAutoDiffDerivativeFunctionLinkage(

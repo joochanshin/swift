@@ -4298,7 +4298,8 @@ public:
       IndexSubset *parameterIndices, unsigned resultIndex,
       AutoDiffDerivativeFunctionKind kind, Lowering::TypeConverter &TC,
       LookupConformanceFn lookupConformance,
-      CanGenericSignature derivativeFunctionGenericSignature = nullptr);
+      CanGenericSignature derivativeFunctionGenericSignature = nullptr,
+      bool isReabstractionThunk = false);
 
   /// Returns the type of the transpose function.
   CanSILFunctionType getAutoDiffTransposeFunctionType(

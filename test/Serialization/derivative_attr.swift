@@ -7,24 +7,24 @@
 
 // BCANALYZER-NOT: UnknownCode
 
-// CHECK: @differentiable(wrt: x, jvp: jvpAddWrtX)
-// CHECK-NEXT: @differentiable(wrt: (x, y), vjp: vjpAdd)
 func add(x: Float, y: Float) -> Float {
   return x + y
 }
+// CHECK: @derivative(of: add, wrt: x)
 @derivative(of: add, wrt: x)
 func jvpAddWrtX(x: Float, y: Float) -> (value: Float, differential: (Float) -> (Float)) {
   return (x + y, { $0 })
 }
+// CHECK: @derivative(of: add)
 @derivative(of: add)
 func vjpAdd(x: Float, y: Float) -> (value: Float, pullback: (Float) -> (Float, Float)) {
   return (x + y, { ($0, $0) })
 }
 
-// CHECK: @differentiable(wrt: x, vjp: vjpGeneric where T : Differentiable)
 func generic<T : Numeric>(x: T) -> T {
   return x
 }
+// CHECK: @derivative(of: generic)
 @derivative(of: generic)
 func vjpGeneric<T>(x: T) -> (value: T, pullback: (T.TangentVector) -> T.TangentVector)
   where T : Numeric, T : Differentiable
@@ -32,18 +32,18 @@ func vjpGeneric<T>(x: T) -> (value: T, pullback: (T.TangentVector) -> T.TangentV
   return (x, { v in v })
 }
 
-protocol InstanceMethod : Differentiable {
-  // CHECK: @differentiable(wrt: (self, x), vjp: vjpFoo)
+protocol InstanceMethod: Differentiable {
   func foo(_ x: Self) -> Self
-  // CHECK: @differentiable(wrt: (self, x), jvp: jvpBarWrt where T == T.TangentVector)
   func bar<T : Differentiable>(_ x: T) -> Self
 }
 extension InstanceMethod {
+  // CHECK: @derivative(of: foo)
   @derivative(of: foo)
   func vjpFoo(x: Self) -> (value: Self, pullback: (Self.TangentVector) -> (Self.TangentVector, Self.TangentVector)) {
     return (x, { ($0, $0) })
   }
 
+  // CHECK: @derivative(of: bar, wrt: (self, x))
   @derivative(of: bar, wrt: (self, x))
   func jvpBarWrt<T : Differentiable>(_ x: T) -> (value: Self, differential: (Self.TangentVector, T) -> Self.TangentVector)
     where T == T.TangentVector

@@ -335,6 +335,25 @@ enum class ParameterConvention : uint8_t {
 };
 using ParameterConventionField = BCFixed<4>;
 
+// SWIFT_ENABLE_TENSORFLOW
+// These IDs must \em not be renumbered or reordered without incrementing the
+// module version.
+enum class DifferentiabilityKind : uint8_t {
+  NonDifferentiable = 0,
+  Normal = 1,
+  Linear = 2
+};
+using DifferentiabilityKindField = BCFixed<2>;
+
+// SWIFT_ENABLE_TENSORFLOW
+// These IDs must \em not be renumbered or reordered without incrementing the
+// module version.
+enum class AutoDiffDerivativeFunctionKind : uint8_t {
+  JVP = 0,
+  VJP = 1
+};
+using AutoDiffDerivativeFunctionKindField = BCFixed<1>;
+
 // These IDs must \em not be renumbered or reordered without incrementing
 // the module version.
 enum class SILParameterDifferentiability : uint8_t {
@@ -1772,6 +1791,7 @@ namespace decls_block {
     BCFixed<1>, // Implicit flag.
     IdentifierIDField, // Original name.
     DeclIDField, // Original function declaration.
+    AutoDiffDerivativeFunctionKindField, // Derivative function kind.
     BCArray<BCFixed<1>> // Differentiation parameter indices' bitvector.
   >;
 
@@ -1784,7 +1804,7 @@ namespace decls_block {
     BCFixed<1>, // Implicit flag.
     IdentifierIDField, // Original name.
     DeclIDField, // Original function declaration.
-    BCArray<BCFixed<1>> // Differentiation parameter indices' bitvector.
+    BCArray<BCFixed<1>> // Transposed parameter indices' bitvector.
   >;
 
 #define SIMPLE_DECL_ATTR(X, CLASS, ...)         \

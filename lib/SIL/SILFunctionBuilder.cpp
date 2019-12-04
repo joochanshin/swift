@@ -92,6 +92,7 @@ void SILFunctionBuilder::addFunctionAttributes(SILFunction *F,
     //   of the `AbstractStorageDecl`.
     for (auto *A : Attrs.getAttributes<DifferentiableAttr>())
       (void)A->getParameterIndices();
+    emitDifferentiabilityWitnesses(constant, F, Attrs);
   }
 
   // Only emit replacements for the objc entry point of objc methods.

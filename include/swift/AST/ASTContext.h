@@ -110,8 +110,12 @@ namespace swift {
   class VarDecl;
   class UnifiedStatsReporter;
   class IndexSubset;
+  // SWIFT_ENABLE_TENSORFLOW
   class VectorSpace;
   class DifferentiableAttr;
+  class DerivativeAttr;
+  struct AutoDiffDerivativeFunctionKind;
+  // SWIFT_ENABLE_TENSORFLOW END
 
   enum class KnownProtocolKind : uint8_t;
 
@@ -287,12 +291,19 @@ public:
   /// Cache of autodiff-associated vector spaces.
   llvm::DenseMap<Type, Optional<VectorSpace>> AutoDiffVectorSpaces;
 
-  /// Cache of `@differentiable` attributes keyed by parameter indices. This
-  /// helps us diagnose multiple `@differentiable`s that are with respect to the
-  /// same set of parameters.
+  /// Cache of `@differentiable` attributes keyed by parameter indices. Used to
+  /// diagnose duplicate `@differentiable` attributes for the same key.
   llvm::DenseMap<std::pair<Decl *, IndexSubset *>, DifferentiableAttr *>
       DifferentiableAttrs;
   // SWIFT_ENABLE_TENSORFLOW END
+
+  /// Cache of `@derivative` attributes keyed by parameter indices and
+  /// derivative function kind. Used to diagnose duplicate `@derivative`
+  /// attributes for the same key.
+  llvm::DenseMap<
+      std::tuple<Decl *, IndexSubset *, AutoDiffDerivativeFunctionKind>,
+      DerivativeAttr *>
+      DerivativeAttrs;
 
 private:
   /// The current generation number, which reflects the number of

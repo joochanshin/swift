@@ -179,26 +179,27 @@ void TBDGenVisitor::addConformances(DeclContext *DC) {
 
 // SWIFT_ENABLE_TENSORFLOW
 void TBDGenVisitor::addAutoDiffDerivativeFunction(
-    AbstractFunctionDecl *original, const DifferentiableAttr *attr,
+    AbstractFunctionDecl *original, IndexSubset *parameterIndices,
     AutoDiffDerivativeFunctionKind kind) {
   auto *assocFnId = AutoDiffDerivativeFunctionIdentifier::get(
-      kind, attr->getParameterIndices(), original->getASTContext());
+      kind, parameterIndices, original->getASTContext());
   addSymbol(SILDeclRef(original).asAutoDiffDerivativeFunction(assocFnId));
 }
 
 void TBDGenVisitor::addDifferentiabilityWitness(
-    AbstractFunctionDecl *original, const DifferentiableAttr *attr) {
+    AbstractFunctionDecl *original, IndexSubset *parameterIndices,
+    GenericSignature derivativeGenericSignature) {
   if (SILDeclRef(original).getLinkage(ForDefinition) != SILLinkage::Public)
     return;
 
   auto *resultIndices = IndexSubset::get(original->getASTContext(), 1, {0});
   auto *loweredParamIndices = autodiff::getLoweredParameterIndices(
-      attr->getParameterIndices(),
+      parameterIndices,
       original->getInterfaceType()->castTo<AnyFunctionType>());
 
   std::string originalMangledName = SILDeclRef(original).mangle();
   AutoDiffConfig config{loweredParamIndices, resultIndices,
-                        attr->getDerivativeGenericSignature()};
+                        derivativeGenericSignature};
   SILDifferentiabilityWitnessKey key(originalMangledName, config);
 
   Mangle::ASTMangler mangle;
@@ -208,11 +209,38 @@ void TBDGenVisitor::addDifferentiabilityWitness(
 
 void TBDGenVisitor::addDifferentiableAttr(AbstractFunctionDecl *original,
                                           const DifferentiableAttr *attr) {
-  addAutoDiffDerivativeFunction(original, attr,
+  addAutoDiffDerivativeFunction(original, attr->getParameterIndices(),
                                 AutoDiffDerivativeFunctionKind::JVP);
-  addAutoDiffDerivativeFunction(original, attr,
+  addAutoDiffDerivativeFunction(original, attr->getParameterIndices(),
                                 AutoDiffDerivativeFunctionKind::VJP);
-  addDifferentiabilityWitness(original, attr);
+  addDifferentiabilityWitness(original, attr->getParameterIndices(),
+                              attr->getDerivativeGenericSignature());
+}
+
+void TBDGenVisitor::addDerivativeAttr(AbstractFunctionDecl *derivative,
+                                      const DerivativeAttr *attr) {
+  auto *originalFunction = attr->getOriginalFunction();
+  // Skip if original function has a `@differentiable` attribute.
+  // TBDGen already emits symbols for `@differentiable` attributes.
+  if (originalFunction->getAttrs().hasAttribute<DifferentiableAttr>())
+    return;
+  // Skip if:
+  // - The derivative function is a VJP.
+  // - There exists a registered JVP function for the same original function and
+  //   parameter indices.
+  // This prevents duplicate symbol emission for original functions that have a
+  // `@derivative` JVP and a `@derivative` VJP.
+  auto &ctx = originalFunction->getASTContext();
+  if (attr->getDerivativeKind() == AutoDiffDerivativeFunctionKind::VJP &&
+      ctx.DerivativeAttrs.count({originalFunction, attr->getParameterIndices(),
+                                 AutoDiffDerivativeFunctionKind::JVP}))
+    return;
+  addAutoDiffDerivativeFunction(originalFunction, attr->getParameterIndices(),
+                                AutoDiffDerivativeFunctionKind::JVP);
+  addAutoDiffDerivativeFunction(originalFunction, attr->getParameterIndices(),
+                                AutoDiffDerivativeFunctionKind::VJP);
+  addDifferentiabilityWitness(originalFunction, attr->getParameterIndices(),
+                              derivative->getGenericSignature());
 }
 
 /// Determine whether dynamic replacement should be emitted for the allocator or
@@ -279,9 +307,11 @@ void TBDGenVisitor::visitAbstractFunctionDecl(AbstractFunctionDecl *AFD) {
   }
 
   // SWIFT_ENABLE_TENSORFLOW
-  auto diffAttrs = AFD->getAttrs().getAttributes<DifferentiableAttr>();
-  for (auto *DA : diffAttrs) {
+  for (auto *DA : AFD->getAttrs().getAttributes<DifferentiableAttr>()) {
     addDifferentiableAttr(AFD, DA);
+  }
+  for (auto *DA : AFD->getAttrs().getAttributes<DerivativeAttr>()) {
+    addDerivativeAttr(AFD, DA);
   }
 
   visitDefaultArguments(AFD, AFD->getParameters());
@@ -333,8 +363,7 @@ void TBDGenVisitor::visitAbstractStorageDecl(AbstractStorageDecl *ASD) {
   }
 
   // SWIFT_ENABLE_TENSORFLOW
-  auto diffAttrs = ASD->getAttrs().getAttributes<DifferentiableAttr>();
-  for (auto *DA : diffAttrs) {
+  for (auto *DA : ASD->getAttrs().getAttributes<DifferentiableAttr>()) {
     addDifferentiableAttr(ASD->getAccessor(AccessorKind::Get), DA);
   }
 

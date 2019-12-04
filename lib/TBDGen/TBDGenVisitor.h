@@ -78,18 +78,24 @@ private:
   /// Adds the symbol for the autodiff function of the given kind associated
   /// with the given original function and `@differentiable` attr.
   void addAutoDiffDerivativeFunction(AbstractFunctionDecl *original,
-                                     const DifferentiableAttr *attr,
+                                     IndexSubset *parameterIndices,
                                      AutoDiffDerivativeFunctionKind kind);
 
   /// Adds the symbol for the differentiability witness associated with the
   /// given original function and `@differentiable` attr.
   void addDifferentiabilityWitness(AbstractFunctionDecl *original,
-                                   const DifferentiableAttr *attr);
+                                   IndexSubset *parameterIndices,
+                                   GenericSignature derivativeGenericSignature);
 
   /// Adds symbols associated with the given original function and
   /// `@differentiable` attr.
   void addDifferentiableAttr(AbstractFunctionDecl *original,
                              const DifferentiableAttr *attr);
+
+  /// Adds symbols associated with the given original function and
+  /// `@derivative` attr.
+  void addDerivativeAttr(AbstractFunctionDecl *original,
+                         const DerivativeAttr *attr);
 
 public:
   TBDGenVisitor(llvm::MachO::InterfaceFile &symbols,

@@ -755,9 +755,6 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
   // SWIFT_ENABLE_TENSORFLOW
   // Visit `@differentiable` attributes and generate SIL differentiability
   // witnesses.
-  // TODO(TF-835): Visit `@derivative` attributes when type-checking no longer
-  // generates implicit `@differentiable` attributes. See TF-835 for replacement
-  // code.
   // Skip if the SILDeclRef is a:
   // - Default argument generator function.
   // - Thunk.
@@ -777,6 +774,28 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
         AutoDiffConfig config(diffAttr->getParameterIndices(), resultIndices,
                               diffAttr->getDerivativeGenericSignature());
         emitDifferentiabilityWitness(AFD, F, config, jvp, vjp, diffAttr);
+      }
+      for (auto *derivAttr : Attrs.getAttributes<DerivativeAttr>()) {
+        SILFunction *jvp = nullptr;
+        SILFunction *vjp = nullptr;
+        switch (derivAttr->getDerivativeKind()) {
+        case AutoDiffDerivativeFunctionKind::JVP:
+          jvp = F;
+          break;
+        case AutoDiffDerivativeFunctionKind::VJP:
+          vjp = F;
+          break;
+        }
+        auto *origAFD = derivAttr->getOriginalFunction();
+        auto *origFn = getFunction(SILDeclRef(origAFD), NotForDefinition);
+        auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
+        GenericSignature derivativeGenericSignature;
+        if (auto *derivGenEnv = F->getGenericEnvironment())
+          derivativeGenericSignature = derivGenEnv->getGenericSignature();
+        AutoDiffConfig config(derivAttr->getParameterIndices(), resultIndices,
+                              derivativeGenericSignature);
+        emitDifferentiabilityWitness(origAFD, origFn, config, jvp, vjp,
+                                     derivAttr);
       }
     };
     if (auto *accessor = dyn_cast<AccessorDecl>(AFD))
@@ -818,13 +837,20 @@ void SILGenModule::emitDifferentiabilityWitness(
   };
   bool reorderSelf = shouldReorderSelf();
 
-  // Create new SIL differentiability witness.
+  // Get or create new SIL differentiability witness.
   // Witness JVP and VJP are set below.
-  auto *diffWitness = SILDifferentiabilityWitness::createDefinition(
-      M, originalFunction->getLinkage(), originalFunction, loweredParamIndices,
-      config.resultIndices, config.derivativeGenericSignature,
-      /*jvp*/ nullptr, /*vjp*/ nullptr, originalFunction->isSerialized(),
-      diffAttr);
+  AutoDiffConfig loweredConfig(loweredParamIndices, config.resultIndices,
+                               config.derivativeGenericSignature);
+  SILDifferentiabilityWitnessKey key{originalFunction->getName(),
+                                     loweredConfig};
+  auto *diffWitness = M.lookUpDifferentiabilityWitness(key);
+  if (!diffWitness) {
+    diffWitness = SILDifferentiabilityWitness::createDefinition(
+        M, originalFunction->getLinkage(), originalFunction,
+        loweredParamIndices, config.resultIndices,
+        config.derivativeGenericSignature, /*jvp*/ nullptr, /*vjp*/ nullptr,
+        originalFunction->isSerialized(), diffAttr);
+  }
 
   // Set derivative function in differentiability witness.
   auto setDerivativeInDifferentiabilityWitness =

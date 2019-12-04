@@ -3903,83 +3903,63 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
   }
 
   // Reject different-file retroactive derivatives.
-  // TODO(TF-136): Full support for cross-file/cross-module retroactive
-  // differentiability will require SIL differentiability witnesses and lots of
-  // plumbing.
+  // TODO(TF-136): Lift this restriction now that SIL diffferentiability witness
+  // infrastructure is in-place. Also requires differentiation transform
+  // changes.
   if (originalAFD->getParentSourceFile() != derivative->getParentSourceFile()) {
     diagnoseAndRemoveAttr(attr,
                           diag::derivative_attr_not_in_same_file_as_original);
     return;
   }
 
+  // Valid `@differentiable` attributes are uniqued by original function and
+  // parameter indices. Reject duplicate attributes.
+  auto insertion = Ctx.DerivativeAttrs.try_emplace(
+      {originalAFD, checkedWrtParamIndices, kind}, attr);
+  if (!insertion.second) {
+    diagnoseAndRemoveAttr(attr,
+                          diag::derivative_attr_original_already_has_derivative,
+                          originalAFD->getFullName());
+    return;
+  }
   // Try to find a `@differentiable` attribute on the original function with the
   // same differentiation parameters.
-  DifferentiableAttr *da = nullptr;
-  for (auto *cda : originalAFD->getAttrs().getAttributes<DifferentiableAttr>())
-    if (checkedWrtParamIndices == cda->getParameterIndices())
-      da = const_cast<DifferentiableAttr *>(cda);
-  // If the original function does not have a `@differentiable` attribute with
-  // the same differentiation parameters, create one.
-  // TODO(TF-835): Lower `@derivative` attributes directly to SIL
-  // differentiability witnesses during SILGen instead of generating implicit
-  // `@differentiable` attributes.
-  if (!da) {
-    da = DifferentiableAttr::create(
-        originalAFD, /*implicit*/ true, attr->AtLoc, attr->getRange(),
-        /*linear*/ false, checkedWrtParamIndices, /*jvp*/ None,
-        /*vjp*/ None, derivative->getGenericSignature());
+  auto *da =
+      Ctx.DifferentiableAttrs.lookup({originalAFD, checkedWrtParamIndices});
+  if (da) {
+    // If the original function has a `@differentiable` attribute with the same
+    // differentiation parameters, check if the `@differentiable` attribute
+    // already has a different registered derivative. If so, emit an error on
+    // the `@derivative` attribute. Otherwise, register the derivative in the
+    // `@differentiable` attribute.
     switch (kind) {
     case AutoDiffDerivativeFunctionKind::JVP:
+      // If there's a different registered derivative, emit an error.
+      if ((da->getJVP() &&
+           da->getJVP()->Name.getBaseName() != derivative->getBaseName()) ||
+          (da->getJVPFunction() && da->getJVPFunction() != derivative)) {
+        diagnoseAndRemoveAttr(
+            attr, diag::derivative_attr_original_already_has_derivative,
+            originalAFD->getFullName());
+        return;
+      }
+      // TODO(TF-835): CONSIDER REMOVING?
       da->setJVPFunction(derivative);
       break;
     case AutoDiffDerivativeFunctionKind::VJP:
+      // If there's a different registered derivative, emit an error.
+      if ((da->getVJP() &&
+           da->getVJP()->Name.getBaseName() != derivative->getBaseName()) ||
+          (da->getVJPFunction() && da->getVJPFunction() != derivative)) {
+        diagnoseAndRemoveAttr(
+            attr, diag::derivative_attr_original_already_has_derivative,
+            originalAFD->getFullName());
+        return;
+      }
+      // TODO(TF-835): CONSIDER REMOVING?
       da->setVJPFunction(derivative);
       break;
     }
-    auto insertion = Ctx.DifferentiableAttrs.try_emplace(
-        {originalAFD, checkedWrtParamIndices}, da);
-    // Valid `@differentiable` attributes are uniqued by their parameter
-    // indices. Reject duplicate attributes for the same decl and parameter
-    // indices pair.
-    if (!insertion.second && insertion.first->getSecond() != da) {
-      diagnoseAndRemoveAttr(da, diag::differentiable_attr_duplicate);
-      diagnose(insertion.first->getSecond()->getLocation(),
-               diag::differentiable_attr_duplicate_note);
-      return;
-    }
-    originalAFD->getAttrs().add(da);
-    return;
-  }
-  // If the original function has a `@differentiable` attribute with the same
-  // differentiation parameters, check if the `@differentiable` attribute
-  // already has a different registered derivative. If so, emit an error on the
-  // `@derivative` attribute. Otherwise, register the derivative in the
-  // `@differentiable` attribute.
-  switch (kind) {
-  case AutoDiffDerivativeFunctionKind::JVP:
-    // If there's a different registered derivative, emit an error.
-    if ((da->getJVP() &&
-         da->getJVP()->Name.getBaseName() != derivative->getBaseName()) ||
-        (da->getJVPFunction() && da->getJVPFunction() != derivative)) {
-      diagnoseAndRemoveAttr(
-          attr, diag::derivative_attr_original_already_has_derivative,
-          originalAFD->getFullName());
-      return;
-    }
-    da->setJVPFunction(derivative);
-    break;
-  case AutoDiffDerivativeFunctionKind::VJP:
-    // If there's a different registered derivative, emit an error.
-    if ((da->getVJP() &&
-         da->getVJP()->Name.getBaseName() != derivative->getBaseName()) ||
-        (da->getVJPFunction() && da->getVJPFunction() != derivative)) {
-      diagnoseAndRemoveAttr(
-          attr, diag::derivative_attr_original_already_has_derivative,
-          originalAFD->getFullName());
-      return;
-    }
-    da->setVJPFunction(derivative);
-    break;
   }
 }
 

@@ -19,6 +19,6 @@
 
 @differentiable(wrt: x)
 func TF_656(_ x: Float, _ y: Float) -> Float {
-  return 0
+  return x + y
 }
 _ = gradient(at: 1, in: { x in TF_656(x, 2) })

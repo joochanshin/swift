@@ -30,6 +30,7 @@
 #include "swift/AST/AutoDiff.h"
 #include "swift/AST/GenericSignature.h"
 #include "swift/SIL/SILAllocated.h"
+#include "swift/SIL/SILDeclRef.h"
 #include "llvm/ADT/ilist_node.h"
 #include "llvm/ADT/ilist.h"
 
@@ -140,6 +141,9 @@ public:
   void print(llvm::raw_ostream &os, bool verbose = false) const;
   void dump() const;
 };
+
+void emitDifferentiabilityWitnesses(
+    SILDeclRef constant, SILFunction *F, DeclAttributes &Attrs);
 
 } // end namespace swift
 

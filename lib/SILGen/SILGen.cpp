@@ -63,7 +63,7 @@ SILGenModule::SILGenModule(SILModule &M, ModuleDecl *SM)
 
 SILGenModule::~SILGenModule() {
   assert(!TopLevelSGF && "active source file lowering!?");
-  M.verify();
+  // M.verify();
 }
 
 static SILDeclRef
@@ -752,6 +752,7 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
   LLVM_DEBUG(llvm::dbgs() << "lowered sil:\n";
              F->print(llvm::dbgs()));
 
+#if 0
   // SWIFT_ENABLE_TENSORFLOW
   // Visit `@differentiable` attributes and generate SIL differentiability
   // witnesses.
@@ -784,6 +785,7 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
         emitWitnesses(accessor->getStorage()->getAttrs());
     emitWitnesses(AFD->getAttrs());
   }
+#endif
   F->verify();
 }
 
@@ -820,11 +822,18 @@ void SILGenModule::emitDifferentiabilityWitness(
 
   // Create new SIL differentiability witness.
   // Witness JVP and VJP are set below.
-  auto *diffWitness = SILDifferentiabilityWitness::createDefinition(
-      M, originalFunction->getLinkage(), originalFunction, loweredParamIndices,
-      config.resultIndices, config.derivativeGenericSignature,
-      /*jvp*/ nullptr, /*vjp*/ nullptr, originalFunction->isSerialized(),
-      diffAttr);
+  AutoDiffConfig loweredConfig(loweredParamIndices, config.resultIndices,
+                               config.derivativeGenericSignature);
+  SILDifferentiabilityWitnessKey key{originalFunction->getName(),
+                                     loweredConfig};
+  auto *diffWitness = M.lookUpDifferentiabilityWitness(key);
+  if (!diffWitness) {
+    diffWitness = SILDifferentiabilityWitness::createDefinition(
+        M, originalFunction->getLinkage(), originalFunction,
+        loweredParamIndices, config.resultIndices,
+        config.derivativeGenericSignature, /*jvp*/ nullptr, /*vjp*/ nullptr,
+        originalFunction->isSerialized(), diffAttr);
+  }
 
   // Set derivative function in differentiability witness.
   auto setDerivativeInDifferentiabilityWitness =
@@ -866,6 +875,69 @@ void SILGenModule::emitDifferentiabilityWitness(
   if (vjp)
     setDerivativeInDifferentiabilityWitness(AutoDiffDerivativeFunctionKind::VJP,
                                             vjp);
+}
+
+// SWIFT_ENABLE_TENSORFLOW
+void swift::emitDifferentiabilityWitnesses(
+    SILDeclRef constant, SILFunction *F, DeclAttributes &Attrs) {
+  // Visit `@differentiable` attributes and generate SIL differentiability
+  // witnesses.
+  // Skip if the SILDeclRef is a:
+  // - Default argument generator function.
+  // - Thunk.
+  bool shouldCheckDifferentiabilityWitnesses =
+      constant.hasDecl() && constant.getAbstractFunctionDecl() &&
+      constant.kind != SILDeclRef::Kind::DefaultArgGenerator &&
+      !constant.isThunk();
+  if (!shouldCheckDifferentiabilityWitnesses)
+    return;
+  auto *AFD = constant.getAbstractFunctionDecl();
+  auto &ctx = F->getASTContext();
+  auto &M = F->getModule();
+  SILGenModule SGM(M, AFD->getModuleContext());
+  auto emitWitnesses = [&](DeclAttributes &Attrs) {
+    for (auto *diffAttr : Attrs.getAttributes<DifferentiableAttr>()) {
+      SILFunction *jvp = nullptr;
+      SILFunction *vjp = nullptr;
+      if (auto *jvpDecl = diffAttr->getJVPFunction())
+        jvp = SGM.getFunction(SILDeclRef(jvpDecl), NotForDefinition);
+      if (auto *vjpDecl = diffAttr->getVJPFunction())
+        vjp = SGM.getFunction(SILDeclRef(vjpDecl), NotForDefinition);
+      auto *resultIndices = IndexSubset::get(ctx, 1, {0});
+      AutoDiffConfig config(diffAttr->getParameterIndices(), resultIndices,
+                            diffAttr->getDerivativeGenericSignature());
+      SGM.emitDifferentiabilityWitness(AFD, F, config, jvp, vjp, diffAttr);
+    }
+    for (auto *derivAttr : Attrs.getAttributes<DerivativeAttr>()) {
+      SILFunction *jvp = nullptr;
+      SILFunction *vjp = nullptr;
+      switch (derivAttr->getDerivativeKind()) {
+      case AutoDiffDerivativeFunctionKind::JVP:
+        jvp = F;
+        break;
+      case AutoDiffDerivativeFunctionKind::VJP:
+        vjp = F;
+        break;
+      }
+      auto *origAFD = derivAttr->getOriginalFunction();
+      auto *origFn = SGM.getFunction(SILDeclRef(origAFD), NotForDefinition);
+      auto *resultIndices = IndexSubset::get(ctx, 1, {0});
+      GenericSignature derivativeGenericSignature;
+      if (auto *derivGenEnv = F->getGenericEnvironment())
+        derivativeGenericSignature = derivGenEnv->getGenericSignature();
+      AutoDiffConfig config(derivAttr->getParameterIndices(), resultIndices,
+                            derivativeGenericSignature);
+      SGM.emitDifferentiabilityWitness(origAFD, origFn, config, jvp, vjp,
+                                       derivAttr);
+    }
+  };
+#if 0
+  if (auto *accessor = dyn_cast<AccessorDecl>(AFD))
+    if (accessor->isGetter())
+      emitWitnesses(accessor->getStorage()->getAttrs());
+  emitWitnesses(AFD->getAttrs());
+#endif
+  emitWitnesses(Attrs);
 }
 
 void SILGenModule::

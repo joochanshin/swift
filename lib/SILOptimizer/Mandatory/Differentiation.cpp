@@ -5566,6 +5566,8 @@ public:
           getAdjointBuffer(origBB, activeValue);
         } else {
           // Create and register pullback block argument for the active value.
+          activeValue->dump();
+          activeValue->getType().dump();
           auto *pullbackArg = pullbackBB->createPhiArgument(
               getRemappedTangentType(activeValue->getType()),
               ValueOwnershipKind::Owned);
@@ -6167,6 +6169,15 @@ public:
       seed = materializeAdjoint(getAdjointValue(bb, origResult), loc);
     } else {
       seed = getAdjointBuffer(bb, origResult);
+    }
+    if (auto *nom = seed->getType().getNominalOrBoundGenericNominal()) {
+      auto *moduleDecl = nom->getModuleContext();
+      auto *diffProto = getASTContext().getProtocol(KnownProtocolKind::Differentiable);
+      SmallVector<ProtocolConformance *, 4> conformances;
+      llvm::errs() << "HERE WE GO!\n";
+      nom->lookupConformance(moduleDecl, diffProto, conformances);
+      for (auto *conf : conformances)
+        conf->dump(llvm::errs());
     }
 
     // Create allocations for pullback indirect results.

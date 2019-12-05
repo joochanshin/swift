@@ -1293,6 +1293,10 @@ void NominalTypeDecl::prepareConformanceTable() const {
 bool NominalTypeDecl::lookupConformance(
        ModuleDecl *module, ProtocolDecl *protocol,
        SmallVectorImpl<ProtocolConformance *> &conformances) const {
+  auto *diffProto = getASTContext().getProtocol(KnownProtocolKind::Differentiable);
+  if (protocol == diffProto) {
+    llvm::errs() << "NominalTypeDecl::lookupConformance: " << getNameStr() << ", " << protocol->getNameStr() << "\n";
+  }
   prepareConformanceTable();
   return ConformanceTable->lookupConformance(
            module,

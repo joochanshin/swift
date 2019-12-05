@@ -2295,6 +2295,7 @@ void ModuleFile::lookupVisibleDecls(ModuleDecl::AccessPathTy accessPath,
 }
 
 void ModuleFile::loadExtensions(NominalTypeDecl *nominal) {
+  llvm::errs() << "ModuleFile::loadExtensions: " << Name << ", " << nominal->getNameStr() << "\n";
   PrettyStackTraceModuleFile stackEntry(*this);
   if (!ExtensionDecls)
     return;

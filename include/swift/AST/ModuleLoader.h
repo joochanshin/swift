@@ -151,6 +151,19 @@ public:
                  unsigned previousGeneration,
                  llvm::TinyPtrVector<AbstractFunctionDecl *> &methods) = 0;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Load derivative functions for the given AbstractFunctionDecl.
+  ///
+  /// \param originalAFD The declaration whose derivative functions should be
+  /// loaded.
+  ///
+  /// \param previousGeneration The previous generation number. The AST already
+  /// contains derivative functions loaded from any generation up to and
+  /// including this one.
+  virtual void loadDerivativeFunctions(AbstractFunctionDecl *originalAFD,
+                                       unsigned previousGeneration) {}
+  // SWIFT_ENABLE_TENSORFLOW END
+
   /// Verify all modules loaded by this loader.
   virtual void verifyAllModules() { }
 };

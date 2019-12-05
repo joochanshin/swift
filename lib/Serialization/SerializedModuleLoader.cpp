@@ -954,6 +954,17 @@ void SerializedModuleLoaderBase::loadObjCMethods(
   }
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+void SerializedModuleLoaderBase::loadDerivativeFunctions(
+    AbstractFunctionDecl *originalAFD, unsigned int previousGeneration) {
+  for (auto &modulePair : LoadedModuleFiles) {
+    if (modulePair.second <= previousGeneration)
+      continue;
+    modulePair.first->loadDerivativeFunctions(originalAFD);
+  }
+}
+// SWIFT_ENABLE_TENSORFLOW END
+
 std::error_code MemoryBufferSerializedModuleLoader::findModuleFilesInDirectory(
     AccessPathElem ModuleID, StringRef DirPath, StringRef ModuleFilename,
     StringRef ModuleDocFilename, StringRef ModuleSourceInfoFilename,

@@ -18,6 +18,9 @@
 
 #include "swift/SILOptimizer/Utils/Differentiation/DerivativeLookup.h"
 
+// TODO: REMOVE
+#include "swift/AST/GenericSignatureBuilder.h"
+
 namespace swift {
 
 /// Returns the AbstractFunctionDecl corresponding to `F`. If there isn't one,
@@ -75,6 +78,32 @@ getMinimalASTDifferentiableAttr(AbstractFunctionDecl *original,
   return minimalAttr;
 }
 
+// Returns the canonical generic signature for an autodiff derivative function
+// given an existing derivative function generic signature. All differentiation
+// parameters are constrained to conform to `Differentiable`.
+static CanGenericSignature getAutoDiffDerivativeFunctionGenericSignature(
+    GenericSignature derivativeFnGenSig, ModuleDecl *module) {
+  if (!derivativeFnGenSig)
+    return nullptr;
+  auto &ctx = module->getASTContext();
+  GenericSignatureBuilder builder(ctx);
+
+  // Add derivative function generic signature.
+  builder.addGenericSignature(derivativeFnGenSig);
+  // Constrain all wrt parameters to conform to `Differentiable`.
+  auto source =
+      GenericSignatureBuilder::FloatingRequirementSource::forAbstract();
+  auto *diffableProto = ctx.getProtocol(KnownProtocolKind::Differentiable);
+  for (auto gpType : derivativeFnGenSig->getGenericParams()) {
+    Requirement req(RequirementKind::Conformance, gpType,
+                    diffableProto->getDeclaredType());
+    builder.addRequirement(req, source, module);
+  }
+  return std::move(builder)
+      .computeGenericSignature(SourceLoc(), /*allowConcreteGenericParams*/ true)
+      ->getCanonicalSignature();
+}
+
 DeclAttribute *
 getMinimalASTDerivativeAttr(AbstractFunctionDecl *original,
                             IndexSubset *parameterIndices,
@@ -109,15 +138,42 @@ getMinimalASTDerivativeAttr(AbstractFunctionDecl *original,
   if (minimalAttr)
     return minimalAttr;
   // TODO: Need minimal attributes
+  original->getDerivativeFunctionConfigurations();
 
+  llvm::errs() << "ctx.DerivativeAttrs: " << ctx.DerivativeAttrs.size() << "\n";
   for (auto entry : ctx.DerivativeAttrs) {
+    auto *attr = entry.getSecond();
     auto *origDecl = std::get<0>(entry.getFirst());
+    llvm::errs() << "@deriv attr for: " << cast<ValueDecl>(origDecl)->getFullName() << "\n";
     if (original == origDecl) {
       llvm::errs() << "WE FOUND ONE!\n";
+      auto *attrParameterIndices = autodiff::getLoweredParameterIndices(
+          attr->getParameterIndices(),
+          original->getInterfaceType()->castTo<AnyFunctionType>());
+      // If all indices in `parameterIndices` are in `daParameterIndices`, and it
+      // has fewer indices than our current candidate and a primitive VJP, then
+      // `attr` is our new candidate.
+      //
+      // NOTE(TF-642): `attr` may come from a un-partial-applied function and
+      // have larger capacity than the desired indices. We expect this logic to
+      // go away when `partial_apply` supports `@differentiable` callees.
+      if (attrParameterIndices->isSupersetOf(parameterIndices->extendingCapacity(
+              original->getASTContext(), attrParameterIndices->getCapacity())) &&
+          // fewer parameters than before
+          (!minimalParameterIndices ||
+           attrParameterIndices->getNumIndices() <
+               minimalParameterIndices->getNumIndices())) {
+        minimalAttr = attr;
+        minimalParameterIndices = attrParameterIndices;
+        // TODO: `DerivativeAttrs` is not sufficient, doesn't store derivative generic signature
+        // derivativeGenericSignature = attr->getDerivativeGenericSignature();
+        derivativeGenericSignature = getAutoDiffDerivativeFunctionGenericSignature(original->getGenericSignature(), origDecl->getModuleContext());
+      }
+
     }
   }
-  llvm::errs() << "ctx.DerivativeAttrs: " << ctx.DerivativeAttrs.size() << "\n";
-  for (auto derivKind : {AutoDiffDerivativeFunctionKind::JVP, AutoDiffDerivativeFunctionKind::VJP}) {
+  for (auto derivKind : {AutoDiffDerivativeFunctionKind::JVP,
+                         AutoDiffDerivativeFunctionKind::VJP}) {
     auto *attr = ctx.DerivativeAttrs.lookup({original, parameterIndices, derivKind});
     if (!attr)
       continue;

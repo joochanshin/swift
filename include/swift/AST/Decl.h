@@ -42,6 +42,7 @@
 #include "swift/Basic/Range.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/Support/TrailingObjects.h"
 #include <type_traits>
 
@@ -5649,6 +5650,10 @@ public:
   }
 };
 
+class DerivativeFunctionLookupTable;
+
+using DerivativeFunctionConfiguration = std::pair<IndexSubset *, GenericSignature>;
+
 /// Base class for function-like declarations.
 class AbstractFunctionDecl : public GenericContext, public ValueDecl {
   friend class NeedsNewVTableEntryRequest;
@@ -5693,6 +5698,31 @@ public:
 
 private:
   ParameterList *Params;
+
+// SWIFT_ENABLE_TENSORFLOW
+#if 0
+private:
+  mutable DerivativeFunctionLookupTable *DerivativeConfigurations;
+
+public:
+  void prepareDerivativeFunctionConfigurations();
+  ArrayRef<DerivativeFunctionConfiguration>
+      getDerivativeFunctionConfigurations();
+  void addDerivativeFunctionConfiguration(
+      DerivativeFunctionConfiguration config);
+#endif
+
+private:
+  /// The generation at which we last loaded derivative function configurations.
+  unsigned DerivativeFunctionConfigurationGeneration = 0;
+  /// Prepare to traverse the list of derivative function configurations.
+  void prepareDerivativeFunctionConfigurations();
+public:
+  ArrayRef<DerivativeFunctionConfiguration>
+      getDerivativeFunctionConfigurations();
+  void addDerivativeFunctionConfiguration(
+      DerivativeFunctionConfiguration config);
+// SWIFT_ENABLE_TENSORFLOWE ND
 
 protected:
   // If a function has a body at all, we have either a parsed body AST node or

@@ -338,16 +338,6 @@ using ParameterConventionField = BCFixed<4>;
 // SWIFT_ENABLE_TENSORFLOW
 // These IDs must \em not be renumbered or reordered without incrementing the
 // module version.
-enum class DifferentiabilityKind : uint8_t {
-  NonDifferentiable = 0,
-  Normal = 1,
-  Linear = 2
-};
-using DifferentiabilityKindField = BCFixed<2>;
-
-// SWIFT_ENABLE_TENSORFLOW
-// These IDs must \em not be renumbered or reordered without incrementing the
-// module version.
 enum class AutoDiffDerivativeFunctionKind : uint8_t {
   JVP = 0,
   VJP = 1
@@ -1407,6 +1397,15 @@ namespace decls_block {
     // This record is trailed by its inlinable body text
   >;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  // TODO: Consider storing references to `@differentiable` and `@derivative` attributes?
+  using DerivativeFunctionConfigurationLayout = BCRecordLayout<
+    DERIVATIVE_FUNCTION_CONFIGURATION,
+    GenericSignatureIDField, // Derivative generic signature.
+    BCArray<BCFixed<1>> // Differentiation parameter indices' bitvector.
+  >;
+  // SWIFT_ENABLE_TENSORFLOW END
+
   using InlinableBodyTextLayout = BCRecordLayout<
     INLINABLE_BODY_TEXT,
     BCBlob // body text
@@ -1964,6 +1963,14 @@ namespace index_block {
     BCVBR<16>,  // table offset within the blob (see below)
     BCBlob  // map from member DeclBaseNames to offsets of DECL_MEMBERS records
   >;
+
+  // SWIFT_ENABLE_TENSORFLOW
+  using DerivativeFunctionConfigTableLayout = BCRecordLayout<
+    OBJC_METHODS,  // record ID
+    BCVBR<16>,     // table offset within the blob (see below)
+    BCBlob         // map from original declaration names to derivative configs
+  >;
+  // SWIFT_ENABLE_TENSORFLOW END
 
   using EntryPointLayout = BCRecordLayout<
     ENTRY_POINT,

@@ -166,6 +166,9 @@ public:
                  unsigned previousGeneration,
                  llvm::TinyPtrVector<AbstractFunctionDecl *> &methods) override;
 
+  virtual void loadDerivativeFunctions(AbstractFunctionDecl *originalAFD,
+                                       unsigned previousGeneration) override;
+
   virtual void verifyAllModules() override;
 };
 

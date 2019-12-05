@@ -2700,6 +2700,55 @@ class Serializer::DeclSerializer : public DeclVisitor<DeclSerializer> {
     InlinableBodyTextLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode, body);
   }
 
+#if 0
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Writes the body text of the provided funciton, if the function is
+  /// inlinable and has body text.
+  void writeDerivativeFunctions(const AbstractFunctionDecl *AFD) {
+    using namespace decls_block;
+    SmallString<128> scratch;
+    auto body = AFD->getInlinableBodyText(scratch);
+
+    auto paramIndices = attr->getParameterIndices();
+    assert(paramIndices && "Checked parameter indices must be resolved");
+    SmallVector<bool, 4> indices;
+    for (unsigned i : range(paramIndices->getCapacity()))
+      indices.push_back(paramIndices->contains(i));
+
+    DifferentiableDeclAttrLayout::emitRecord(
+                                             S.Out, S.ScratchRecord, abbrCode, attr->isImplicit(),
+                                             attr->isLinear(), jvpName, jvpRef, vjpName, vjpRef,
+                                             S.addGenericSignatureRef(attr->getDerivativeGenericSignature()),
+                                             indices);
+
+    unsigned abbrCode = S.DeclTypeAbbrCodes[DerivativeFunctionConfigurationLayout::Code];
+    DerivativeFunctionConfigurationLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode, body);
+  }
+
+  /// Writes the body text of the provided funciton, if the function is
+  /// inlinable and has body text.
+  void writeDerivativeFunction(const AbstractFunctionDecl *AFD) {
+    SmallString<128> scratch;
+    auto body = AFD->getInlinableBodyText(scratch);
+
+    auto paramIndices = attr->getParameterIndices();
+    assert(paramIndices && "Checked parameter indices must be resolved");
+    SmallVector<bool, 4> indices;
+    for (unsigned i : range(paramIndices->getCapacity()))
+      indices.push_back(paramIndices->contains(i));
+
+    DifferentiableDeclAttrLayout::emitRecord(
+        S.Out, S.ScratchRecord, abbrCode, attr->isImplicit(),
+        attr->isLinear(), jvpName, jvpRef, vjpName, vjpRef,
+        S.addGenericSignatureRef(attr->getDerivativeGenericSignature()),
+        indices);
+
+    unsigned abbrCode = S.DeclTypeAbbrCodes[DerivativeFunctionConfigurationLayout::Code];
+    DerivativeFunctionConfigurationLayout::emitRecord(S.Out, S.ScratchRecord, abbrCode, body);
+  }
+#endif
+  // SWIFT_ENABLE_TENSORFLOW END
+
   unsigned getNumberOfRequiredVTableEntries(
       const AbstractStorageDecl *storage) const {
     unsigned count = 0;
@@ -4608,6 +4657,87 @@ static void writeObjCMethodTable(const index_block::ObjCMethodTableLayout &out,
   out.emit(scratch, tableOffset, hashTableBlob);
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+namespace {
+  /// Used to serialize the on-disk Objective-C method hash table.
+  class DerivativeFunctionConfigTableInfo {
+  public:
+    using key_type = std::string;
+    using key_type_ref = StringRef;
+    using data_type = Serializer::DerivativeFunctionConfigTableData;
+    using data_type_ref = const data_type &;
+    using hash_value_type = uint32_t;
+    using offset_type = unsigned;
+
+    hash_value_type ComputeHash(key_type_ref key) {
+      assert(!key.empty());
+      return llvm::djbHash(key, SWIFTMODULE_HASH_SEED);
+    }
+
+    std::pair<unsigned, unsigned> EmitKeyDataLength(raw_ostream &out,
+                                                    key_type_ref key,
+                                                    data_type_ref data) {
+      uint32_t keyLength = key.str().size();
+      assert(keyLength == static_cast<uint16_t>(keyLength));
+      uint32_t dataLength = (sizeof(uint32_t) * 2) * data.size();
+      assert(dataLength == static_cast<uint16_t>(dataLength));
+      endian::Writer writer(out, little);
+      writer.write<uint16_t>(keyLength);
+      writer.write<uint16_t>(dataLength);
+      return { keyLength, dataLength };
+    }
+
+    void EmitKey(raw_ostream &out, key_type_ref key, unsigned len) {
+#ifndef NDEBUG
+      uint64_t start = out.tell();
+#endif
+      out << key;
+      assert((out.tell() - start == len) && "measured key length incorrectly");
+    }
+
+    void EmitData(raw_ostream &out, key_type_ref key, data_type_ref data,
+                  unsigned len) {
+      static_assert(declIDFitsIn32Bits(), "DeclID too large");
+      endian::Writer writer(out, little);
+      for (const auto &entry : data) {
+        writer.write<uint32_t>(std::get<0>(entry).size());
+        writer.write<uint8_t>(std::get<1>(entry));
+        out.write(std::get<0>(entry).c_str(), std::get<0>(entry).size());
+      }
+    }
+  };
+} // end anonymous namespace
+
+static void writeDerivativeFunctionConfigs(
+    const index_block::DerivativeFunctionConfigTableLayout &out,
+    Serializer::DerivativeFunctionConfigTable &derivativeConfigs) {
+  std::vector<Identifier> selectors;
+  for (const auto &entry : derivativeConfigs) {
+    selectors.push_back(entry.first);
+  }
+
+  // Sort the Objective-C selectors so we emit them in a stable order.
+  llvm::array_pod_sort(selectors.begin(), selectors.end());
+
+  // Create the on-disk hash table.
+  llvm::OnDiskChainedHashTableGenerator<DerivativeFunctionConfigTableInfo> generator;
+  llvm::SmallString<32> hashTableBlob;
+  uint32_t tableOffset;
+  {
+    llvm::raw_svector_ostream blobStream(hashTableBlob);
+    for (auto selector : selectors)
+      generator.insert(selector.get(), derivativeConfigs[selector]);
+
+    // Make sure that no bucket is at offset 0
+    endian::write<uint32_t>(blobStream, 0, little);
+    tableOffset = generator.Emit(blobStream);
+  }
+
+  SmallVector<uint64_t, 8> scratch;
+  out.emit(scratch, tableOffset, hashTableBlob);
+}
+// SWIFT_ENABLE_TENSORFLOW
+
 /// Recursively walks the members and derived global decls of any nominal types
 /// to build up global tables.
 template<typename Range>
@@ -4617,6 +4747,9 @@ static void collectInterestingNestedDeclarations(
     Serializer::DeclTable &operatorMethodDecls,
     Serializer::ObjCMethodTable &objcMethods,
     Serializer::NestedTypeDeclsTable &nestedTypeDecls,
+    // SWIFT_ENABLE_TENSORFLOW
+    Serializer::DerivativeFunctionConfigTable &derivativeConfigs,
+    // SWIFT_ENABLE_TENSORFLOW END
     bool isLocal = false) {
   const NominalTypeDecl *nominalParent = nullptr;
 
@@ -4640,6 +4773,26 @@ static void collectInterestingNestedDeclarations(
       }
     };
 
+    // SWIFT_ENABLE_TENSORFLOW
+    auto recordDerivativeFunctionConfig = [&](const AbstractFunctionDecl *AFD) {
+      auto &ctx = AFD->getASTContext();
+      Mangle::ASTMangler Mangler;
+      for (auto *attr : AFD->getAttrs().getAttributes<DifferentiableAttr>())
+        (void)attr->getParameterIndices();
+      for (auto *attr : AFD->getAttrs().getAttributes<DifferentiableAttr>()) {
+        auto mangledName = ctx.getIdentifier(Mangler.mangleDeclAsUSR(AFD, MANGLING_PREFIX_STR));
+        llvm::errs() << "recordDerivativeFunctionConfig! @diff " << AFD->getNameStr() << "\n";
+        derivativeConfigs[mangledName].push_back({attr->getParameterIndices()->getString(), S.addGenericSignatureRef(attr->getDerivativeGenericSignature())});
+      }
+      for (auto *attr : AFD->getAttrs().getAttributes<DerivativeAttr>()) {
+        auto *origAFD = attr->getOriginalFunction();
+        auto mangledName = ctx.getIdentifier(Mangler.mangleDeclAsUSR(origAFD, MANGLING_PREFIX_STR));
+        llvm::errs() << "recordDerivativeFunctionConfig! @deriv " << AFD->getNameStr() << "\n";
+        derivativeConfigs[mangledName].push_back({attr->getParameterIndices()->getString(), S.addGenericSignatureRef(AFD->getGenericSignature())});
+      }
+    };
+    // SWIFT_ENABLE_TENSORFLOW END
+
     if (auto memberValue = dyn_cast<ValueDecl>(member)) {
       if (memberValue->hasName() &&
           memberValue->isOperator()) {
@@ -4654,13 +4807,18 @@ static void collectInterestingNestedDeclarations(
     }
 
     // Record Objective-C methods.
-    if (auto *func = dyn_cast<AbstractFunctionDecl>(member))
+    // SWIFT_ENABLE_TENSORFLOW
+    if (auto *func = dyn_cast<AbstractFunctionDecl>(member)) {
       recordObjCMethod(func);
+      recordDerivativeFunctionConfig(func);
+    }
+    // SWIFT_ENABLE_TENSORFLOW END
 
     // Handle accessors.
     if (auto storage = dyn_cast<AbstractStorageDecl>(member)) {
       for (auto *accessor : storage->getAllAccessors()) {
         recordObjCMethod(accessor);
+        recordDerivativeFunctionConfig(accessor);
       }
     }
 
@@ -4683,6 +4841,9 @@ static void collectInterestingNestedDeclarations(
       collectInterestingNestedDeclarations(S, iterable->getMembers(),
                                            operatorMethodDecls,
                                            objcMethods, nestedTypeDecls,
+                                           // SWIFT_ENABLE_TENSORFLOW
+                                           derivativeConfigs,
+                                           // SWIFT_ENABLE_TENSORFLOW END
                                            isLocal);
     }
   }
@@ -4696,6 +4857,9 @@ void Serializer::writeAST(ModuleOrSourceFile DC,
   NestedTypeDeclsTable nestedTypeDecls;
   LocalTypeHashTableGenerator localTypeGenerator, opaqueReturnTypeGenerator;
   ExtensionTable extensionDecls;
+  // SWIFT_ENABLE_TENSORFLOW
+  DerivativeFunctionConfigTable derivativeConfigs;
+  // SWIFT_ENABLE_TENSORFLOW END
   bool hasLocalTypes = false;
   bool hasOpaqueReturnTypes = false;
 
@@ -4753,7 +4917,10 @@ void Serializer::writeAST(ModuleOrSourceFile DC,
       if (auto IDC = dyn_cast<IterableDeclContext>(D)) {
         collectInterestingNestedDeclarations(*this, IDC->getMembers(),
                                              operatorMethodDecls, objcMethods,
-                                             nestedTypeDecls);
+                                             // SWIFT_ENABLE_TENSORFLOW
+                                             nestedTypeDecls,
+                                             derivativeConfigs);
+                                             // SWIFT_ENABLE_TENSORFLOW END
       }
     }
 
@@ -4782,7 +4949,11 @@ void Serializer::writeAST(ModuleOrSourceFile DC,
       if (auto IDC = dyn_cast<IterableDeclContext>(TD)) {
         collectInterestingNestedDeclarations(*this, IDC->getMembers(),
                                              operatorMethodDecls, objcMethods,
-                                             nestedTypeDecls, /*isLocal=*/true);
+                                             // SWIFT_ENABLE_TENSORFLOW
+                                             nestedTypeDecls,
+                                             derivativeConfigs,
+                                             /*isLocal=*/true);
+                                             // SWIFT_ENABLE_TENSORFLOW END
       }
     }
     
@@ -4844,6 +5015,11 @@ void Serializer::writeAST(ModuleOrSourceFile DC,
       index_block::NestedTypeDeclsLayout NestedTypeDeclsTable(Out);
       writeNestedTypeDeclsTable(NestedTypeDeclsTable, nestedTypeDecls);
     }
+
+    // SWIFT_ENABLE_TENSORFLOW
+    index_block::DerivativeFunctionConfigTableLayout DerivativeConfigTable(Out);
+    writeDerivativeFunctionConfigs(DerivativeConfigTable, derivativeConfigs);
+    // SWIFT_ENABLE_TENSORFLOW END
 
     if (entryPointClassID.hasValue()) {
       index_block::EntryPointLayout EntryPoint(Out);

@@ -2230,6 +2230,14 @@ static void setOriginalDeclarationAndParameterIndicesInDifferentiableAttributes(
     diffAttr->setOriginalDeclaration(decl);
     diffAttr->setParameterIndices(diffAttrParamIndicesMap[diffAttr]);
   }
+  for (auto *attr : tempAttrs.getAttributes<DerivativeAttr>()) {
+    auto *derivAttr = const_cast<DerivativeAttr *>(attr);
+    auto insertion = decl->getASTContext().DerivativeAttrs.try_emplace(
+        {attr->getOriginalFunction(), attr->getParameterIndices(), attr->getDerivativeKind()},
+        derivAttr);
+    (void)insertion;
+    assert(insertion.second);
+  }
 }
 // SWIFT_ENABLE_TENSORFLOW END
 
@@ -2254,6 +2262,7 @@ class swift::DeclDeserializer {
   DeclAttribute *DAttrs = nullptr;
   DeclAttribute **AttrsNext = &DAttrs;
 
+  // SWIFT_ENABLE_TENSORFLOW
   llvm::DenseMap<DifferentiableAttr *, IndexSubset *> diffAttrParamIndicesMap;
 
   Identifier privateDiscriminator;
@@ -4190,6 +4199,7 @@ llvm::Error DeclDeserializer::deserializeDeclAttributes() {
           parametersBitVector[i] = parameters[i];
         auto *indices = IndexSubset::get(ctx, parametersBitVector);
 
+        llvm::errs() << "DESERIALIZING DERIVATIVE ATTR\n";
         auto *derivAttr = DerivativeAttr::create(
             ctx, isImplicit, SourceLoc(), SourceRange(), origName, indices);
         derivAttr->setOriginalFunction(origDecl);

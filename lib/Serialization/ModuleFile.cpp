@@ -910,6 +910,69 @@ ModuleFile::readObjCMethodTable(ArrayRef<uint64_t> fields, StringRef blobData) {
                                              base + sizeof(uint32_t), base));
 }
 
+/// Used to deserialize entries in the on-disk Objective-C method table.
+class ModuleFile::DerivativeFunctionConfigTableInfo {
+public:
+  using internal_key_type = StringRef;
+  using external_key_type = internal_key_type;
+  using data_type = SmallVector<std::tuple<std::string, GenericSignatureID>, 8>;
+  using hash_value_type = uint32_t;
+  using offset_type = unsigned;
+
+  internal_key_type GetInternalKey(external_key_type ID) {
+    return ID;
+  }
+
+  hash_value_type ComputeHash(internal_key_type key) {
+    return llvm::djbHash(key, SWIFTMODULE_HASH_SEED);
+  }
+
+  static bool EqualKey(internal_key_type lhs, internal_key_type rhs) {
+    return lhs == rhs;
+  }
+
+  static std::pair<unsigned, unsigned> ReadKeyDataLength(const uint8_t *&data) {
+    unsigned keyLength = endian::readNext<uint16_t, little, unaligned>(data);
+    unsigned dataLength = endian::readNext<uint32_t, little, unaligned>(data);
+    return { keyLength, dataLength };
+  }
+
+  static internal_key_type ReadKey(const uint8_t *data, unsigned length) {
+    return std::string(reinterpret_cast<const char *>(data), length);
+  }
+
+  static data_type ReadData(internal_key_type key, const uint8_t *data,
+                            unsigned length) {
+    const constexpr auto recordSize = sizeof(uint32_t) + 1 + sizeof(uint32_t);
+    data_type result;
+    while (length > 0) {
+      unsigned ownerLen = endian::readNext<uint32_t, little, unaligned>(data);
+      GenericSignatureID genSigID =
+          endian::readNext<uint32_t, little, unaligned>(data);
+      std::string ownerName((const char *)data, ownerLen);
+      result.push_back(
+        std::make_tuple(std::move(ownerName), genSigID));
+      data += ownerLen;
+      length -= (recordSize + ownerLen);
+    }
+
+    return result;
+  }
+};
+
+std::unique_ptr<ModuleFile::SerializedDerivativeFunctionConfigTable>
+ModuleFile::readDerivativeFunctionConfigTable(ArrayRef<uint64_t> fields,
+                                              StringRef blobData) {
+  uint32_t tableOffset;
+  index_block::ObjCMethodTableLayout::readRecord(fields, tableOffset);
+  auto base = reinterpret_cast<const uint8_t *>(blobData.data());
+
+  using OwnedTable = std::unique_ptr<SerializedDerivativeFunctionConfigTable>;
+  return OwnedTable(
+           SerializedDerivativeFunctionConfigTable::Create(base + tableOffset,
+                                             base + sizeof(uint32_t), base));
+}
+
 bool ModuleFile::readIndexBlock(llvm::BitstreamCursor &cursor) {
   if (llvm::Error Err = cursor.EnterSubBlock(INDEX_BLOCK_ID)) {
     // FIXME this drops the error on the floor.
@@ -2371,6 +2434,25 @@ void ModuleFile::loadObjCMethods(
     }
   }
 }
+
+// SWIFT_ENABLE_TENSORFLOW
+void ModuleFile::loadDerivativeFunctions(AbstractFunctionDecl *originalAFD) {
+  llvm::errs() << "ModuleFile::loadDerivativeFunctions, " << Name << ", " << originalAFD->getNameStr() << "\n";
+  SmallVector<Decl *, 100> results;
+  getTopLevelDecls(results);
+  if (auto *typeContext = originalAFD->getInnermostTypeContext()) {
+    auto *nominalDecl = typeContext->getSelfNominalTypeDecl();
+    llvm::errs() << "HAS TYPE CONTEXT! " << nominalDecl << ", " << nominalDecl->getNameStr() << "\n";
+    loadExtensions(nominalDecl);
+    return;
+  }
+  llvm::errs() << "Top level decls: " << results.size() << "\n";
+  for (auto *topLevelDecl : results) {
+    if (auto *valueDecl = dyn_cast<ValueDecl>(topLevelDecl))
+      llvm::errs() << valueDecl->getFullName() << "\n";
+  }
+}
+// SWIFT_ENABLE_TENSORFLOW END
 
 Optional<TinyPtrVector<ValueDecl *>>
 ModuleFile::loadNamedMembers(const IterableDeclContext *IDC, DeclBaseName N,

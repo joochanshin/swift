@@ -41,6 +41,9 @@ add_swift_host_library(swiftAST STATIC
   Decl.cpp
   DeclContext.cpp
   DeclNameLoc.cpp
+  # SWIFT_ENABLE_TENSORFLOW
+  DerivativeFunctionLookupTable.cpp
+  # SWIFT_ENABLE_TENSORFLOW END
   DiagnosticConsumer.cpp
   DiagnosticEngine.cpp
   DiagnosticList.cpp

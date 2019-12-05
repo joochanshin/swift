@@ -15,7 +15,6 @@
 #include "swift/AST/Decl.h"
 // SWIFT_ENABLE_TENSORFLOW
 #include "swift/AST/ASTMangler.h"
-#include "swift/SILGen/SILGen.h"
 using namespace swift;
 
 SILFunction *SILFunctionBuilder::getOrCreateFunction(

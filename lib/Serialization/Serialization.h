@@ -246,6 +246,15 @@ public:
       SmallVector<std::pair<const NominalTypeDecl *, DeclID>, 4>;
   using ExtensionTable = llvm::MapVector<Identifier, ExtensionTableData>;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  using DerivativeFunctionConfigTableData =
+    SmallVector<std::tuple<std::string, GenericSignatureID>, 4>;
+  // In-memory representation of what will eventually be an on-disk hash table
+  // of all derivative configurations
+  using DerivativeFunctionConfigTable =
+      llvm::MapVector<Identifier, DerivativeFunctionConfigTableData>;
+  // SWIFT_ENABLE_TENSORFLOW END
+
 private:
   /// A map from identifiers to methods and properties with the given name.
   ///

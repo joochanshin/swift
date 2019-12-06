@@ -788,7 +788,6 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
         }
         auto *origAFD = derivAttr->getOriginalFunction();
         auto *origFn = getFunction(SILDeclRef(origAFD), NotForDefinition);
-        auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
         GenericSignature derivativeGenericSignature;
         if (auto *derivGenEnv = F->getGenericEnvironment())
           derivativeGenericSignature = derivGenEnv->getGenericSignature();
@@ -808,7 +807,7 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
 
 void SILGenModule::emitDifferentiabilityWitness(
     AbstractFunctionDecl *originalAFD, SILFunction *originalFunction,
-    const AutoDiffConfig &config, SILFunction *jvp, SILFunction *vjp,
+    const ASTAutoDiffConfig &config, SILFunction *jvp, SILFunction *vjp,
     const DeclAttribute *attr) {
   assert(isa<DifferentiableAttr>(attr) || isa<DerivativeAttr>(attr));
   auto *origFnType = originalAFD->getInterfaceType()->castTo<AnyFunctionType>();
@@ -840,7 +839,8 @@ void SILGenModule::emitDifferentiabilityWitness(
 
   // Get or create new SIL differentiability witness.
   // Witness JVP and VJP are set below.
-  AutoDiffConfig loweredConfig(loweredParamIndices, config.resultIndices,
+  auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
+  AutoDiffConfig loweredConfig(loweredParamIndices, resultIndices,
                                config.derivativeGenericSignature);
   SILDifferentiabilityWitnessKey key{originalFunction->getName(),
                                      loweredConfig};
@@ -848,7 +848,7 @@ void SILGenModule::emitDifferentiabilityWitness(
   if (!diffWitness) {
     diffWitness = SILDifferentiabilityWitness::createDefinition(
         M, originalFunction->getLinkage(), originalFunction,
-        loweredParamIndices, config.resultIndices,
+        loweredParamIndices, loweredConfig.resultIndices,
         config.derivativeGenericSignature, /*jvp*/ nullptr, /*vjp*/ nullptr,
         /*isSerialized*/ hasPublicVisibility(originalFunction->getLinkage()),
         attr);

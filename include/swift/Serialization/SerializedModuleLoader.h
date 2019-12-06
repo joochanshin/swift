@@ -169,7 +169,7 @@ public:
   // SWIFT_ENABLE_TENSORFLOW
   virtual void loadDerivativeFunctionConfigurations(
       AbstractFunctionDecl *originalAFD, unsigned previousGeneration,
-      llvm::SetVector<AutoDiffConfig> &results)
+      llvm::SetVector<ASTAutoDiffConfig> &results)
       override;
   // SWIFT_ENABLE_TENSORFLOW
 

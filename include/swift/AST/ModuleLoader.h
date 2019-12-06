@@ -35,7 +35,7 @@ class DependencyCollector;
 namespace swift {
 
 // SWIFT_ENABLE_TENSORFLOW
-struct AutoDiffConfig;
+struct ASTAutoDiffConfig;
 // SWIFT_ENABLE_TENSORFLOW END
 class AbstractFunctionDecl;
 class ClangImporterOptions;
@@ -174,7 +174,7 @@ public:
   /// generations.
   virtual void loadDerivativeFunctionConfigurations(
       AbstractFunctionDecl *originalAFD, unsigned previousGeneration,
-      llvm::SetVector<AutoDiffConfig> &results) {};
+      llvm::SetVector<ASTAutoDiffConfig> &results) {};
   // SWIFT_ENABLE_TENSORFLOW END
 
   /// Verify all modules loaded by this loader.

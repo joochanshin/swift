@@ -7000,7 +7000,7 @@ StringRef AbstractFunctionDecl::getInlinableBodyText(
 
 /// A list of derivative function configurations.
 struct AbstractFunctionDecl::DerivativeFunctionConfigurationList
-    : public llvm::SetVector<AutoDiffConfig> {
+    : public llvm::SetVector<ASTAutoDiffConfig> {
   void *operator new(
       size_t Bytes, ASTContext &C,
       unsigned Alignment = alignof(DerivativeFunctionConfigurationList)) {
@@ -7024,7 +7024,7 @@ void AbstractFunctionDecl::prepareDerivativeFunctionConfigurations() {
   });
 }
 
-ArrayRef<AutoDiffConfig>
+ArrayRef<ASTAutoDiffConfig>
 AbstractFunctionDecl::getDerivativeFunctionConfigurations() {
   prepareDerivativeFunctionConfigurations();
   auto &ctx = getASTContext();
@@ -7038,7 +7038,7 @@ AbstractFunctionDecl::getDerivativeFunctionConfigurations() {
 }
 
 void AbstractFunctionDecl::addDerivativeFunctionConfiguration(
-    AutoDiffConfig config) {
+    ASTAutoDiffConfig config) {
   prepareDerivativeFunctionConfigurations();
   DerivativeFunctionConfigs->insert(config);
 }

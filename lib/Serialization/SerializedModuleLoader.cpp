@@ -957,7 +957,7 @@ void SerializedModuleLoaderBase::loadObjCMethods(
 // SWIFT_ENABLE_TENSORFLOW
 void SerializedModuleLoaderBase::loadDerivativeFunctionConfigurations(
     AbstractFunctionDecl *originalAFD, unsigned int previousGeneration,
-    llvm::SetVector<AutoDiffConfig> &results) {
+    llvm::SetVector<ASTAutoDiffConfig> &results) {
   for (auto &modulePair : LoadedModuleFiles) {
     if (modulePair.second <= previousGeneration)
       continue;

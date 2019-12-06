@@ -2446,7 +2446,7 @@ void ModuleFile::loadObjCMethods(
 // SWIFT_ENABLE_TENSORFLOW
 void ModuleFile::loadDerivativeFunctionConfigurations(
     AbstractFunctionDecl *originalAFD,
-    llvm::SetVector<AutoDiffConfig> &results) {
+    llvm::SetVector<ASTAutoDiffConfig> &results) {
   llvm::errs() << "ModuleFile::loadDerivativeFunctionConfigurations, " << Name
                << ", " << originalAFD->getEffectiveFullName() << "\n";
 

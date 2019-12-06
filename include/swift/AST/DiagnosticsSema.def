@@ -2948,12 +2948,6 @@ ERROR(differentiable_attr_overload_not_found,none,
       "%0 does not have expected type %1", (DeclName, Type))
 ERROR(differentiable_attr_no_currying,none,
       "'@differentiable' cannot be defined on functions that return functions", ())
-// TODO(TF-482): Change duplicate `@differentiable` attribute diagnostic to also
-// mention "same generic requirements".
-ERROR(differentiable_attr_duplicate,none,
-      "duplicate '@differentiable' attribute with same parameters", ())
-NOTE(differentiable_attr_duplicate_note,none,
-     "other attribute declared here", ())
 ERROR(differentiable_attr_function_not_same_type_context,none,
       "%0 is not defined in the current type context", (DeclName))
 ERROR(differentiable_attr_derivative_not_function,none,
@@ -2996,6 +2990,13 @@ ERROR(overriding_decl_missing_differentiable_attr,none,
       "overriding declaration is missing attribute '%0'", (StringRef))
 NOTE(protocol_witness_missing_differentiable_attr,none,
      "candidate is missing attribute '%0'", (StringRef))
+// TODO(TF-482): Change duplicate `@differentiable` attribute diagnostic to also
+// mention "same generic requirements".
+ERROR(duplicate_derivative_registration_attr,none,
+      "duplicate '@differentiable' or '@derivative' attribute for the same "
+      "original declaration %0 and same 'wrt' parameters", (DeclName))
+NOTE(duplicate_derivative_registration_attr_note,none,
+     "other attribute declared here", ())
 
 // @derivative
 ERROR(derivative_attr_expected_result_tuple,none,

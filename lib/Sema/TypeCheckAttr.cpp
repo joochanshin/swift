@@ -3624,9 +3624,10 @@ DifferentiableAttributeParameterIndicesRequest::evaluate(
     // indices pair.
     if (!insertion.second) {
       diagnoseAndRemoveAttr(diags, D, attr,
-                            diag::differentiable_attr_duplicate);
+                            diag::duplicate_derivative_registration_attr,
+                            original->getFullName());
       diags.diagnose(insertion.first->getSecond()->getLocation(),
-                     diag::differentiable_attr_duplicate_note);
+                     diag::duplicate_derivative_registration_attr_note);
       return nullptr;
     }
     getterDecl->getAttrs().add(newAttr);
@@ -3639,9 +3640,11 @@ DifferentiableAttributeParameterIndicesRequest::evaluate(
   // `@differentiable` attributes are uniqued by their parameter indices.
   // Reject duplicate attributes for the same decl and parameter indices pair.
   if (!insertion.second && insertion.first->getSecond() != attr) {
-    diagnoseAndRemoveAttr(diags, D, attr, diag::differentiable_attr_duplicate);
+    diagnoseAndRemoveAttr(diags, D, attr,
+                          diag::duplicate_derivative_registration_attr,
+                          original->getFullName());
     diags.diagnose(insertion.first->getSecond()->getLocation(),
-                   diag::differentiable_attr_duplicate_note);
+                   diag::duplicate_derivative_registration_attr_note);
     return nullptr;
   }
   return checkedWrtParamIndices;
@@ -3916,7 +3919,7 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
     return;
   }
 
-  // Valid `@differentiable` attributes are uniqued by original function and
+  // Valid `@derivative` attributes are uniqued by original function and
   // parameter indices. Reject duplicate attributes.
   auto insertion = Ctx.DerivativeAttrs.try_emplace(
       {originalAFD, checkedWrtParamIndices, kind}, attr);
@@ -3924,10 +3927,10 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
       {checkedWrtParamIndices, derivative->getGenericSignature()});
   if (!insertion.second) {
     diagnoseAndRemoveAttr(attr,
-                          diag::derivative_attr_original_already_has_derivative,
+                          diag::duplicate_derivative_registration_attr,
                           originalAFD->getFullName());
     diagnose(insertion.first->getSecond()->getLocation(),
-             diag::differentiable_attr_duplicate_note);
+             diag::duplicate_derivative_registration_attr_note);
     return;
   }
   // Try to find a `@differentiable` attribute on the original function with the
@@ -3936,54 +3939,17 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
       Ctx.DifferentiableAttrs.lookup({originalAFD, checkedWrtParamIndices});
   if (da) {
     // Diagnose if there exists a `@differentiable` attribute with the same
-    // parameter indices as the `@derivative` function but a different
-    // derivative generic signature. This avoids SIL name collision issues for
-    // SIL derivative functions with the same parameter indices but different
-    // derivative generic signatures: TF-1037.
-    // The robust fix is derivative generic signature mangling (TF-680), which
-    // will enable lifting this restriction, among other things.
-    auto hasSameDerivativeGenericSignatures = [&] {
-      auto first = derivative->getGenericSignature();
-      auto second = da->getDerivativeGenericSignature();
-      if (first && second)
-        return first->isEqual(second);
-      return first.isNull() == second.isNull();
-    };
-    if (!hasSameDerivativeGenericSignatures()) {
-      diagnoseAndRemoveAttr(
-          attr, diag::derivative_attr_original_already_has_derivative,
-          originalAFD->getFullName());
-      return;
-    }
-    // If the original function has a `@differentiable` attribute with the same
-    // differentiation parameters, check if the `@differentiable` attribute
-    // already has a different registered derivative. If so, emit an error on
-    // the `@derivative` attribute. Otherwise, register the derivative in the
-    // `@differentiable` attribute.
-    switch (kind) {
-    case AutoDiffDerivativeFunctionKind::JVP:
-      // If there's a different registered derivative, emit an error.
-      if ((da->getJVP() &&
-           da->getJVP()->Name.getBaseName() != derivative->getBaseName()) ||
-          (da->getJVPFunction() && da->getJVPFunction() != derivative)) {
-        diagnoseAndRemoveAttr(
-            attr, diag::derivative_attr_original_already_has_derivative,
-            originalAFD->getFullName());
-        return;
-      }
-      break;
-    case AutoDiffDerivativeFunctionKind::VJP:
-      // If there's a different registered derivative, emit an error.
-      if ((da->getVJP() &&
-           da->getVJP()->Name.getBaseName() != derivative->getBaseName()) ||
-          (da->getVJPFunction() && da->getVJPFunction() != derivative)) {
-        diagnoseAndRemoveAttr(
-            attr, diag::derivative_attr_original_already_has_derivative,
-            originalAFD->getFullName());
-        return;
-      }
-      break;
-    }
+    // parameter indices as the `@derivative` function.
+    // Note: this uniqueness condition can be relaxed to allow attributes with
+    // the same parameter indices but different derivative generic signatures.
+    // Derivative generic signature mangling (TF-680) enables this, avoiding
+    // name collisions for SIL derivative functions with the same parameter
+    // indices but different derivative generic signatures.
+    diagnoseAndRemoveAttr(
+        attr, diag::duplicate_derivative_registration_attr,
+        originalAFD->getFullName());
+    diagnose(insertion.first->getSecond()->getLocation(),
+             diag::duplicate_derivative_registration_attr_note);
   }
 }
 

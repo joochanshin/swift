@@ -2238,6 +2238,7 @@ class swift::DeclDeserializer {
   DeclAttribute *DAttrs = nullptr;
   DeclAttribute **AttrsNext = &DAttrs;
 
+  // SWIFT_ENABLE_TENSORFLOW
   llvm::DenseMap<DifferentiableAttr *, IndexSubset *> diffAttrParamIndicesMap;
 
   Identifier privateDiscriminator;

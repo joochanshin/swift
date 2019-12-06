@@ -1611,6 +1611,18 @@ void ASTContext::loadObjCMethods(
   }
 }
 
+// SWIFT_ENABLE_TENSORFLOW
+void ASTContext::loadDerivativeFunctionConfigurations(
+    AbstractFunctionDecl *originalAFD, unsigned previousGeneration,
+    llvm::SetVector<AutoDiffConfig> &results) {
+  PrettyStackTraceDecl stackTraceDecl(
+      "loading derivative function configurations for", originalAFD);
+  for (auto &loader : getImpl().ModuleLoaders) {
+    loader->loadDerivativeFunctionConfigurations(originalAFD,
+                                                 previousGeneration, results);
+  }
+}
+
 void ASTContext::verifyAllLoadedModules() const {
 #ifndef NDEBUG
   FrontendStatsTracer tracer(Stats, "verify-all-loaded-modules");

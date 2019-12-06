@@ -41,12 +41,20 @@ getExactDifferentiabilityWitness(SILModule &module, SILFunction *original,
 /// if no such attribute exists.
 ///
 /// \param parameterIndices must be lowered to SIL.
-/// \param minimalParameterIndices is an output parameter that is set to the SIL
-/// indices of the minimal attribute, or to `nullptr` if no attribute exists.
-const DifferentiableAttr *
-getMinimalASTDifferentiableAttr(AbstractFunctionDecl *original,
-                                IndexSubset *parameterIndices,
-                                IndexSubset *&minimalParameterIndices);
+/// \param minimalASTParameterIndices is an output parameter that is set to the
+/// AST indices of the minimal configuration, or to `nullptr` if no such
+/// configuration exists.
+/// \param minimalSILParameterIndices is an output parameter that is set to the
+/// SIL indices of the minimal configuration, or to `nullptr` if no such
+/// configuration exists.
+/// \param derivativeGenericSignature is an output parameter that is set to the
+/// derivative generic signature of the minimal configuration, or the `nullptr`
+/// if no such configuration exists.
+bool findMinimalDerivativeConfiguration(
+    AbstractFunctionDecl *original, IndexSubset *parameterIndices,
+    IndexSubset *&minimalASTParameterIndices,
+    IndexSubset *&minimalSILParameterIndices,
+    GenericSignature &derivativeGenericSignature);
 
 /// Returns a differentiability witness for `original` whose parameter indices
 /// are a minimal superset of the specified parameter indices and whose result

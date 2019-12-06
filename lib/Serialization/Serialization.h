@@ -246,6 +246,25 @@ public:
       SmallVector<std::pair<const NominalTypeDecl *, DeclID>, 4>;
   using ExtensionTable = llvm::MapVector<Identifier, ExtensionTableData>;
 
+  // SWIFT_ENABLE_TENSORFLOW
+  using DerivativeFunctionConfigTableData =
+      llvm::SmallVector<std::tuple<std::string, std::string, GenericSignatureID>, 4>;
+  // In-memory representation of what will eventually be an on-disk hash table
+  // mapping original declaration USRs to derivative function configurations.
+  using DerivativeFunctionConfigTable =
+      llvm::MapVector<Identifier, DerivativeFunctionConfigTableData>;
+  // Uniqued mapping from original declarations USRs to derivative function
+  // configurations.
+  // Note: this exists because `GenericSignature` can be used as a `DenseMap`
+  // key, while `GenericSignatureID` cannot
+  // (`DenseMapInfo<GenericSignatureID>::getEmptyKey()` crashes). A uniqued
+  // `UniquedDerivativeFunctionConfigTable` is initially constructed, then
+  // used to form a `DerivativeFunctionConfigTableData`.
+  using UniquedDerivativeFunctionConfigTable =
+      llvm::MapVector<Identifier,
+      llvm::SmallSetVector<std::tuple<Identifier, Identifier, GenericSignature>, 4>>;
+  // SWIFT_ENABLE_TENSORFLOW END
+
 private:
   /// A map from identifiers to methods and properties with the given name.
   ///

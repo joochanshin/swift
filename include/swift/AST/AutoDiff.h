@@ -273,6 +273,9 @@ inline llvm::raw_ostream &operator<<(llvm::raw_ostream &s,
   return s;
 }
 
+using DerivativeFunctionConfiguration =
+    std::pair<IndexSubset *, GenericSignature>;
+
 /// Identifies an autodiff derivative function configuration:
 /// - Parameter indices.
 /// - Result indices.
@@ -505,6 +508,27 @@ template<> struct DenseMapInfo<AutoDiffConfig> {
         LHS.resultIndices == RHS.resultIndices &&
         DenseMapInfo<GenericSignature>::isEqual(LHS.derivativeGenericSignature,
                                                 RHS.derivativeGenericSignature);
+  }
+};
+
+template<> struct DenseMapInfo<AutoDiffDerivativeFunctionKind> {
+  static AutoDiffDerivativeFunctionKind getEmptyKey() {
+    return static_cast<AutoDiffDerivativeFunctionKind::innerty>(
+        DenseMapInfo<unsigned>::getEmptyKey());
+  }
+
+  static AutoDiffDerivativeFunctionKind getTombstoneKey() {
+    return static_cast<AutoDiffDerivativeFunctionKind::innerty>(
+        DenseMapInfo<unsigned>::getTombstoneKey());
+  }
+
+  static unsigned getHashValue(const AutoDiffDerivativeFunctionKind &Val) {
+    return DenseMapInfo<unsigned>::getHashValue(Val);
+  }
+
+  static bool isEqual(const AutoDiffDerivativeFunctionKind &LHS,
+                      const AutoDiffDerivativeFunctionKind &RHS) {
+    return LHS == RHS;
   }
 };
 

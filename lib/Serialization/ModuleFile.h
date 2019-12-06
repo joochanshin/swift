@@ -785,7 +785,7 @@ public:
   /// AbstractFunctionDecl.
   void loadDerivativeFunctionConfigurations(
       AbstractFunctionDecl *originalAFD,
-      llvm::SetVector<std::pair<IndexSubset *, GenericSignature>> &results);
+      llvm::SetVector<AutoDiffConfig> &results);
   // SWIFT_ENABLE_TENSORFLOW END
 
   /// Reports all class members in the module to the given consumer.

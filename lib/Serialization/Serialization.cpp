@@ -4619,10 +4619,13 @@ namespace {
       endian::Writer writer(out, little);
       for (auto &entry : data) {
         // Write `GenericSignatureID`.
-        writer.write<uint32_t>(entry.second);
-        // Write string size, followed by data.
-        writer.write<int32_t>(entry.first.size());
-        out << entry.first;
+        writer.write<uint32_t>(std::get<2>(entry));
+        // Write parameter indices string size, followed by data.
+        writer.write<int32_t>(std::get<0>(entry).size());
+        out << std::get<0>(entry);
+        // Write result indices string size, followed by data.
+        writer.write<int32_t>(std::get<1>(entry).size());
+        out << std::get<1>(entry);
       }
     }
   };

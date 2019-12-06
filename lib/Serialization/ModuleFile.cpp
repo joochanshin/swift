@@ -919,7 +919,7 @@ class ModuleFile::DerivativeFunctionConfigTableInfo {
 public:
   using internal_key_type = StringRef;
   using external_key_type = internal_key_type;
-  using data_type = SmallVector<std::pair<std::string, GenericSignatureID>, 8>;
+  using data_type = SmallVector<AutoDiffConfig, 8>;
   using hash_value_type = uint32_t;
   using offset_type = unsigned;
 

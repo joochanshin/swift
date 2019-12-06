@@ -3617,9 +3617,8 @@ DifferentiableAttributeParameterIndicesRequest::evaluate(
     newAttr->setVJPFunction(attr->getVJPFunction());
     auto insertion = ctx.DifferentiableAttrs.try_emplace(
         {getterDecl, checkedWrtParamIndices}, newAttr);
-    auto *resultIndices = IndexSubset::get(ctx, 1, {0});
     getterDecl->addDerivativeFunctionConfiguration(
-        {checkedWrtParamIndices, resultIndices, whereClauseGenSig});
+        {checkedWrtParamIndices, whereClauseGenSig});
     // Valid `@differentiable` attributes are uniqued by their parameter
     // indices. Reject duplicate attributes for the same decl and parameter
     // indices pair.
@@ -3635,9 +3634,8 @@ DifferentiableAttributeParameterIndicesRequest::evaluate(
   }
   auto insertion = ctx.DifferentiableAttrs.try_emplace(
       {D, checkedWrtParamIndices}, attr);
-    auto *resultIndices = IndexSubset::get(ctx, 1, {0});
   original->addDerivativeFunctionConfiguration(
-      {checkedWrtParamIndices, resultIndices, whereClauseGenSig});
+      {checkedWrtParamIndices, whereClauseGenSig});
   // `@differentiable` attributes are uniqued by their parameter indices.
   // Reject duplicate attributes for the same decl and parameter indices pair.
   if (!insertion.second && insertion.first->getSecond() != attr) {
@@ -3922,10 +3920,8 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
   // parameter indices. Reject duplicate attributes.
   auto insertion = Ctx.DerivativeAttrs.try_emplace(
       {originalAFD, checkedWrtParamIndices, kind}, attr);
-  auto *resultIndices = IndexSubset::get(Ctx, 1, {0});
   originalAFD->addDerivativeFunctionConfiguration(
-      {checkedWrtParamIndices, resultIndices,
-       derivative->getGenericSignature()});
+      {checkedWrtParamIndices, derivative->getGenericSignature()});
   if (!insertion.second) {
     diagnoseAndRemoveAttr(attr,
                           diag::derivative_attr_original_already_has_derivative,

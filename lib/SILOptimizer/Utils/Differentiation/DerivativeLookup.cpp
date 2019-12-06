@@ -120,9 +120,9 @@ bool findMinimalDerivativeConfiguration(AbstractFunctionDecl *original,
   auto results = original->getDerivativeFunctionConfigurations();
   llvm::errs() << "results: " << results.size() << "\n";
   // assert(results.size() == 0 && "Negative assertion to detect when things start working");
-  for (auto entry : results) {
-    auto *paramIndices = entry.first;
-    auto derivativeGenSig = entry.second;
+  for (auto config : results) {
+    auto *paramIndices = config.parameterIndices;
+    auto derivativeGenSig = config.derivativeGenericSignature;
     auto *silParameterIndices = autodiff::getLoweredParameterIndices(
         paramIndices, original->getInterfaceType()->castTo<AnyFunctionType>());
     // If all indices in `parameterIndices` are in `daParameterIndices`, and

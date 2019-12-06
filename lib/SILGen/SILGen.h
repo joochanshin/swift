@@ -365,7 +365,7 @@ public:
   /// functions (null if undefined).
   void emitDifferentiabilityWitness(AbstractFunctionDecl *originalAFD,
                                     SILFunction *originalFunction,
-                                    const AutoDiffConfig &config,
+                                    const ASTAutoDiffConfig &config,
                                     SILFunction *jvp, SILFunction *vjp,
                                     const DeclAttribute *diffAttr);
   // SWIFT_ENABLE_TENSORFLOW END

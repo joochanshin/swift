@@ -248,7 +248,7 @@ public:
 
   // SWIFT_ENABLE_TENSORFLOW
   using DerivativeFunctionConfigTableData =
-      llvm::SmallVector<std::tuple<std::string, std::string, GenericSignatureID>, 4>;
+      llvm::SmallVector<std::pair<std::string, GenericSignatureID>, 4>;
   // In-memory representation of what will eventually be an on-disk hash table
   // mapping original declaration USRs to derivative function configurations.
   using DerivativeFunctionConfigTable =
@@ -262,7 +262,7 @@ public:
   // used to form a `DerivativeFunctionConfigTableData`.
   using UniquedDerivativeFunctionConfigTable =
       llvm::MapVector<Identifier,
-      llvm::SmallSetVector<std::tuple<Identifier, Identifier, GenericSignature>, 4>>;
+      llvm::SmallSetVector<std::pair<Identifier, GenericSignature>, 4>>;
   // SWIFT_ENABLE_TENSORFLOW END
 
 private:

@@ -770,9 +770,15 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
           jvp = getFunction(SILDeclRef(jvpDecl), NotForDefinition);
         if (auto *vjpDecl = diffAttr->getVJPFunction())
           vjp = getFunction(SILDeclRef(vjpDecl), NotForDefinition);
-        auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
-        AutoDiffConfig config(diffAttr->getParameterIndices(), resultIndices,
-                              diffAttr->getDerivativeGenericSignature());
+#if 0
+        auto derivativeGenSig = diffAttr->getDerivativeGenericSignature();
+        if (!derivativeGenSig)
+          derivativeGenSig = AFD->getGenericSignature();
+        ASTAutoDiffConfig config(diffAttr->getParameterIndices(),
+                                 derivativeGenSig);
+#endif
+        ASTAutoDiffConfig config(diffAttr->getParameterIndices(),
+                                 diffAttr->getDerivativeGenericSignature());
         emitDifferentiabilityWitness(AFD, F, config, jvp, vjp, diffAttr);
       }
       for (auto *derivAttr : Attrs.getAttributes<DerivativeAttr>()) {
@@ -788,12 +794,11 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
         }
         auto *origAFD = derivAttr->getOriginalFunction();
         auto *origFn = getFunction(SILDeclRef(origAFD), NotForDefinition);
-        auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
-        GenericSignature derivativeGenericSignature;
-        if (auto *derivGenEnv = F->getGenericEnvironment())
-          derivativeGenericSignature = derivGenEnv->getGenericSignature();
-        AutoDiffConfig config(derivAttr->getParameterIndices(), resultIndices,
-                              derivativeGenericSignature);
+        GenericSignature derivativeGenSig;
+        if (auto *derivativeGenEnv = F->getGenericEnvironment())
+          derivativeGenSig = derivativeGenEnv->getGenericSignature();
+        ASTAutoDiffConfig config(derivAttr->getParameterIndices(),
+                                 derivativeGenSig);
         emitDifferentiabilityWitness(origAFD, origFn, config, jvp, vjp,
                                      derivAttr);
       }
@@ -808,7 +813,7 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
 
 void SILGenModule::emitDifferentiabilityWitness(
     AbstractFunctionDecl *originalAFD, SILFunction *originalFunction,
-    const AutoDiffConfig &config, SILFunction *jvp, SILFunction *vjp,
+    const ASTAutoDiffConfig &config, SILFunction *jvp, SILFunction *vjp,
     const DeclAttribute *attr) {
   assert(isa<DifferentiableAttr>(attr) || isa<DerivativeAttr>(attr));
   auto *origFnType = originalAFD->getInterfaceType()->castTo<AnyFunctionType>();
@@ -840,7 +845,8 @@ void SILGenModule::emitDifferentiabilityWitness(
 
   // Get or create new SIL differentiability witness.
   // Witness JVP and VJP are set below.
-  AutoDiffConfig loweredConfig(loweredParamIndices, config.resultIndices,
+  auto *resultIndices = IndexSubset::get(getASTContext(), 1, {0});
+  AutoDiffConfig loweredConfig(loweredParamIndices, resultIndices,
                                config.derivativeGenericSignature);
   SILDifferentiabilityWitnessKey key{originalFunction->getName(),
                                      loweredConfig};
@@ -848,7 +854,7 @@ void SILGenModule::emitDifferentiabilityWitness(
   if (!diffWitness) {
     diffWitness = SILDifferentiabilityWitness::createDefinition(
         M, originalFunction->getLinkage(), originalFunction,
-        loweredParamIndices, config.resultIndices,
+        loweredParamIndices, loweredConfig.resultIndices,
         config.derivativeGenericSignature, /*jvp*/ nullptr, /*vjp*/ nullptr,
         /*isSerialized*/ hasPublicVisibility(originalFunction->getLinkage()),
         attr);

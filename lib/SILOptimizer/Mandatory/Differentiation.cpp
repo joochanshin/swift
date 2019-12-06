@@ -731,8 +731,9 @@ emitDerivativeFunctionReference(
     IndexSubset *minimalASTParamIndices = nullptr;
     IndexSubset *minimalSILParamIndices = nullptr;
     GenericSignature derivativeGenericSignature;
-    if (!findMinimalDerivativeConfiguration(requirementDecl, desiredIndices.parameters, minimalASTParamIndices, minimalSILParamIndices,
-                                           derivativeGenericSignature)) {
+    if (!findMinimalDerivativeConfiguration(
+            requirementDecl, desiredIndices.parameters, minimalASTParamIndices,
+            minimalSILParamIndices, derivativeGenericSignature)) {
       context.emitNondifferentiabilityError(
           original, invoker,
           diag::autodiff_member_subset_indices_not_differentiable);
@@ -776,8 +777,9 @@ emitDerivativeFunctionReference(
     IndexSubset *minimalASTParamIndices = nullptr;
     IndexSubset *minimalSILParamIndices = nullptr;
     GenericSignature derivativeGenericSignature;
-    if (!findMinimalDerivativeConfiguration(methodDecl, desiredIndices.parameters, minimalASTParamIndices, minimalSILParamIndices,
-                                           derivativeGenericSignature)) {
+    if (!findMinimalDerivativeConfiguration(
+            methodDecl, desiredIndices.parameters, minimalASTParamIndices,
+            minimalSILParamIndices, derivativeGenericSignature)) {
       context.emitNondifferentiabilityError(
           original, invoker,
           diag::autodiff_member_subset_indices_not_differentiable);

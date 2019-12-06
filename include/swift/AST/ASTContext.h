@@ -111,7 +111,7 @@ namespace swift {
   class UnifiedStatsReporter;
   class IndexSubset;
   // SWIFT_ENABLE_TENSORFLOW
-  struct AutoDiffConfig;
+  struct ASTAutoDiffConfig;
   class VectorSpace;
   class DifferentiableAttr;
   class DerivativeAttr;
@@ -726,7 +726,7 @@ public:
   /// including this one.
   void loadDerivativeFunctionConfigurations(
       AbstractFunctionDecl *originalAFD, unsigned previousGeneration,
-      llvm::SetVector<AutoDiffConfig> &results);
+      llvm::SetVector<ASTAutoDiffConfig> &results);
 
   // SWIFT_ENABLE_TENSORFLOW END
 

@@ -1614,7 +1614,7 @@ void ASTContext::loadObjCMethods(
 // SWIFT_ENABLE_TENSORFLOW
 void ASTContext::loadDerivativeFunctionConfigurations(
     AbstractFunctionDecl *originalAFD, unsigned previousGeneration,
-    llvm::SetVector<AutoDiffConfig> &results) {
+    llvm::SetVector<ASTAutoDiffConfig> &results) {
   PrettyStackTraceDecl stackTraceDecl(
       "loading derivative function configurations for", originalAFD);
   for (auto &loader : getImpl().ModuleLoaders) {

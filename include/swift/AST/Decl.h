@@ -5707,10 +5707,10 @@ private:
 
 public:
   /// Get all derivative function configurations.
-  ArrayRef<AutoDiffConfig> getDerivativeFunctionConfigurations();
+  ArrayRef<ASTAutoDiffConfig> getDerivativeFunctionConfigurations();
 
   /// Add the given derivative function configuration.
-  void addDerivativeFunctionConfiguration(AutoDiffConfig config);
+  void addDerivativeFunctionConfiguration(ASTAutoDiffConfig config);
   // SWIFT_ENABLE_TENSORFLOWE END
 
 protected:

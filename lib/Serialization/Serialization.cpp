@@ -4598,10 +4598,8 @@ namespace {
       uint32_t keyLength = key.str().size();
       assert(keyLength == static_cast<uint16_t>(keyLength));
       uint32_t dataLength = (sizeof(uint32_t) * 2) * data.size();
-      for (auto entry : data) {
-        dataLength += std::get<0>(entry).size();
-        dataLength += std::get<1>(entry).size();
-      }
+      for (auto entry : data)
+        dataLength += entry.first.size();
       assert(dataLength == static_cast<uint16_t>(dataLength));
       endian::Writer writer(out, little);
       writer.write<uint16_t>(keyLength);

@@ -5771,20 +5771,34 @@ static SILFunction *createEmptyVJP(ADContext &context, SILFunction *original,
   Lowering::GenericContextScope genericContextScope(
       module.Types, vjpGenericSig);
 
-  auto *vjpGenericEnv = vjpGenericSig
-      ? vjpGenericSig->getGenericEnvironment()
-      : nullptr;
   auto vjpType = originalTy->getAutoDiffDerivativeFunctionType(
       indices.parameters, indices.source, AutoDiffDerivativeFunctionKind::VJP,
       module.Types, LookUpConformanceInModule(module.getSwiftModule()),
       vjpGenericSig);
 
   SILOptFunctionBuilder fb(context.getTransform());
+#if 0
   auto *vjp = fb.createFunction(
       witness->getLinkage(), vjpName, vjpType, vjpGenericEnv,
       original->getLocation(), original->isBare(), IsNotTransparent,
       isSerialized, original->isDynamicallyReplaceable());
+#endif
+  auto *vjp = fb.getOrCreateFunction(
+      original->getLocation(), vjpName, witness->getLinkage(), vjpType,
+      original->isBare(), IsNotTransparent, isSerialized,
+      original->isDynamicallyReplaceable());
+  if (!vjp->empty())
+    return vjp;
+  if (vjpGenericSig)
+    vjp->setGenericEnvironment(vjpGenericSig->getGenericEnvironment());
+#if 0
+  auto *fatalErrrorJvpFunc = fnBuilder.getOrCreateFunction(
+      loc, "_printJVPErrorAndExit", SILLinkage::PublicExternal,
+      fatalErrorJVPType, IsNotBare, IsNotTransparent, IsNotSerialized,
+      IsNotDynamic, ProfileCounter(), IsNotThunk);
+#endif
   vjp->setDebugScope(new (module) SILDebugScope(original->getLocation(), vjp));
+  context.recordGeneratedFunction(vjp);
 
   LLVM_DEBUG(llvm::dbgs() << "VJP type: " << vjp->getLoweredFunctionType()
                           << "\n");
@@ -5832,6 +5846,7 @@ static SILFunction *createEmptyJVP(ADContext &context, SILFunction *original,
       original->getLocation(), original->isBare(), IsNotTransparent,
       isSerialized, original->isDynamicallyReplaceable());
   jvp->setDebugScope(new (module) SILDebugScope(original->getLocation(), jvp));
+  context.recordGeneratedFunction(jvp);
 
   LLVM_DEBUG(llvm::dbgs() << "JVP type: " << jvp->getLoweredFunctionType()
              << "\n");
@@ -5864,63 +5879,64 @@ bool DifferentiationTransformer::canonicalizeDifferentiabilityWitness(
 
     witness->setJVP(
         createEmptyJVP(context, original, witness, serializeFunctions));
-    context.recordGeneratedFunction(witness->getJVP());
 
-    // For now, only do JVP generation if the flag is enabled and if custom VJP
-    // does not exist. If custom VJP exists but custom JVP does not, skip JVP
-    // generation because generated JVP may not match semantics of custom VJP.
-    // Instead, create an empty JVP.
-    if (context.getASTContext().LangOpts.EnableExperimentalForwardModeDifferentiation &&
-        !witness->getVJP()) {
-      // JVP and differential generation do not currently support functions with
-      // multiple basic blocks.
-      if (original->getBlocks().size() > 1) {
-        context.emitNondifferentiabilityError(
-            original->getLocation().getSourceLoc(), invoker,
-            diag::autodiff_jvp_control_flow_not_supported);
-        return true;
+    if (witness->getJVP()->empty()) {
+      // For now, only do JVP generation if the flag is enabled and if custom VJP
+      // does not exist. If custom VJP exists but custom JVP does not, skip JVP
+      // generation because generated JVP may not match semantics of custom VJP.
+      // Instead, create an empty JVP.
+      if (context.getASTContext().LangOpts.EnableExperimentalForwardModeDifferentiation &&
+          !witness->getVJP()) {
+        // JVP and differential generation do not currently support functions with
+        // multiple basic blocks.
+        if (original->getBlocks().size() > 1) {
+          context.emitNondifferentiabilityError(
+              original->getLocation().getSourceLoc(), invoker,
+              diag::autodiff_jvp_control_flow_not_supported);
+          return true;
+        }
+
+        JVPEmitter emitter(context, original, witness, witness->getJVP(), invoker);
+        if (emitter.run())
+          return true;
+      } else {
+        LLVM_DEBUG(getADDebugStream()
+                   << "Generating empty JVP for original @"
+                   << original->getName() << '\n');
+        // Create empty JVP body since custom VJP exists.
+        auto *entry = witness->getJVP()->createBasicBlock();
+        createEntryArguments(witness->getJVP());
+        SILBuilder builder(entry);
+        auto loc = witness->getJVP()->getLocation();
+
+        // Destroy all owned arguments.
+        for (auto *arg : entry->getArguments())
+          if (arg->getOwnershipKind() == ValueOwnershipKind::Owned)
+            builder.emitDestroyOperation(loc, arg);
+
+        // Fatal error in case this JVP is called by the user.
+        auto neverResultInfo = SILResultInfo(
+          context.getModule().getASTContext().getNeverType(), ResultConvention::Unowned);
+        auto fatalErrorJVPType = SILFunctionType::get(
+            /*genericSig*/ nullptr,
+            SILFunctionType::ExtInfo().withRepresentation(
+                SILFunctionTypeRepresentation::Thin),
+            SILCoroutineKind::None, ParameterConvention::Direct_Unowned, {},
+            /*interfaceYields*/ {}, neverResultInfo,
+            /*interfaceErrorResults*/ None, {}, false, context.getASTContext());
+        auto fnBuilder = SILOptFunctionBuilder(context.getTransform());
+        auto *fatalErrrorJvpFunc = fnBuilder.getOrCreateFunction(
+            loc, "_printJVPErrorAndExit", SILLinkage::PublicExternal,
+            fatalErrorJVPType, IsNotBare, IsNotTransparent, IsNotSerialized,
+            IsNotDynamic, ProfileCounter(), IsNotThunk);
+        auto *jvpErrorFuncRef =
+            builder.createFunctionRef(loc, fatalErrrorJvpFunc);
+        builder.createApply(loc, jvpErrorFuncRef, SubstitutionMap(), {});
+        builder.createUnreachable(loc);
+        LLVM_DEBUG(getADDebugStream()
+                   << "Generated empty JVP for " << original->getName() << ":\n"
+                   << *witness->getJVP());
       }
-
-      JVPEmitter emitter(context, original, witness, witness->getJVP(), invoker);
-      if (emitter.run())
-        return true;
-    } else {
-      LLVM_DEBUG(getADDebugStream()
-                 << "Generating empty JVP for original @"
-                 << original->getName() << '\n');
-      // Create empty JVP body since custom VJP exists.
-      auto *entry = witness->getJVP()->createBasicBlock();
-      createEntryArguments(witness->getJVP());
-      SILBuilder builder(entry);
-      auto loc = witness->getJVP()->getLocation();
-
-      // Destroy all owned arguments.
-      for (auto *arg : entry->getArguments())
-        if (arg->getOwnershipKind() == ValueOwnershipKind::Owned)
-          builder.emitDestroyOperation(loc, arg);
-
-      // Fatal error in case this JVP is called by the user.
-      auto neverResultInfo = SILResultInfo(
-        context.getModule().getASTContext().getNeverType(), ResultConvention::Unowned);
-      auto fatalErrorJVPType = SILFunctionType::get(
-          /*genericSig*/ nullptr,
-          SILFunctionType::ExtInfo().withRepresentation(
-              SILFunctionTypeRepresentation::Thin),
-          SILCoroutineKind::None, ParameterConvention::Direct_Unowned, {},
-          /*interfaceYields*/ {}, neverResultInfo,
-          /*interfaceErrorResults*/ None, {}, false, context.getASTContext());
-      auto fnBuilder = SILOptFunctionBuilder(context.getTransform());
-      auto *fatalErrrorJvpFunc = fnBuilder.getOrCreateFunction(
-          loc, "_printJVPErrorAndExit", SILLinkage::PublicExternal,
-          fatalErrorJVPType, IsNotBare, IsNotTransparent, IsNotSerialized,
-          IsNotDynamic, ProfileCounter(), IsNotThunk);
-      auto *jvpErrorFuncRef =
-          builder.createFunctionRef(loc, fatalErrrorJvpFunc);
-      builder.createApply(loc, jvpErrorFuncRef, SubstitutionMap(), {});
-      builder.createUnreachable(loc);
-      LLVM_DEBUG(getADDebugStream()
-                 << "Generated empty JVP for " << original->getName() << ":\n"
-                 << *witness->getJVP());
     }
   }
 
@@ -5935,9 +5951,10 @@ bool DifferentiationTransformer::canonicalizeDifferentiabilityWitness(
 
     witness->setVJP(
         createEmptyVJP(context, original, witness, serializeFunctions));
-    context.recordGeneratedFunction(witness->getVJP());
-    VJPEmitter emitter(context, original, witness, witness->getVJP(), invoker);
-    return emitter.run();
+    if (witness->getVJP()->empty()) {
+      VJPEmitter emitter(context, original, witness, witness->getVJP(), invoker);
+      return emitter.run();
+    }
   }
 
   return false;

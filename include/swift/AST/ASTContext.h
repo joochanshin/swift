@@ -110,8 +110,13 @@ namespace swift {
   class VarDecl;
   class UnifiedStatsReporter;
   class IndexSubset;
-  class VectorSpace;
+  // SWIFT_ENABLE_TENSORFLOW
+  struct AutoDiffConfig;
+  struct AutoDiffDerivativeFunctionKind;
+  class DerivativeAttr;
   class DifferentiableAttr;
+  class VectorSpace;
+  // SWIFT_ENABLE_TENSORFLOW END
 
   enum class KnownProtocolKind : uint8_t;
 
@@ -287,11 +292,18 @@ public:
   /// Cache of autodiff-associated vector spaces.
   llvm::DenseMap<Type, Optional<VectorSpace>> AutoDiffVectorSpaces;
 
-  /// Cache of `@differentiable` attributes keyed by parameter indices. This
-  /// helps us diagnose multiple `@differentiable`s that are with respect to the
-  /// same set of parameters.
+  /// Cache of `@differentiable` attributes keyed by parameter indices. Used to
+  /// diagnose duplicate `@differentiable` attributes for the same key.
   llvm::DenseMap<std::pair<Decl *, IndexSubset *>, DifferentiableAttr *>
       DifferentiableAttrs;
+
+  /// Cache of `@derivative` attributes keyed by parameter indices and
+  /// derivative function kind. Used to diagnose duplicate `@derivative`
+  /// attributes for the same key.
+  llvm::DenseMap<
+      std::tuple<Decl *, IndexSubset *, AutoDiffDerivativeFunctionKind>,
+      DerivativeAttr *>
+      DerivativeAttrs;
   // SWIFT_ENABLE_TENSORFLOW END
 
 private:
@@ -701,6 +713,21 @@ public:
                        bool isInstanceMethod,
                        unsigned previousGeneration,
                        llvm::TinyPtrVector<AbstractFunctionDecl *> &methods);
+
+  // SWIFT_ENABLE_TENSORFLOW
+  /// Load derivative function configurations for the given
+  /// AbstractFunctionDecl.
+  ///
+  /// \param originalAFD The declaration whose derivative function
+  /// configurations should be loaded.
+  ///
+  /// \param previousGeneration The previous generation number. The AST already
+  /// contains derivative function configurations loaded from any generation up
+  /// to and including this one.
+  void loadDerivativeFunctionConfigurations(
+      AbstractFunctionDecl *originalAFD, unsigned previousGeneration,
+      llvm::SetVector<AutoDiffConfig> &results);
+  // SWIFT_ENABLE_TENSORFLOW END
 
   /// Retrieve the Clang module loader for this ASTContext.
   ///

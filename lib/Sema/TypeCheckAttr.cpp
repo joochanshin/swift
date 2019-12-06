@@ -3926,6 +3926,8 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
     diagnoseAndRemoveAttr(attr,
                           diag::derivative_attr_original_already_has_derivative,
                           originalAFD->getFullName());
+    diagnose(insertion.first->getSecond()->getLocation(),
+             diag::differentiable_attr_duplicate_note);
     return;
   }
   // Try to find a `@differentiable` attribute on the original function with the
@@ -3933,6 +3935,26 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
   auto *da =
       Ctx.DifferentiableAttrs.lookup({originalAFD, checkedWrtParamIndices});
   if (da) {
+    // Diagnose if there exists a `@differentiable` attribute with the same
+    // parameter indices as the `@derivative` function but a different
+    // derivative generic signature. This avoids SIL name collision issues for
+    // SIL derivative functions with the same parameter indices but different
+    // derivative generic signatures: TF-1037.
+    // The robust fix is derivative generic signature mangling (TF-680), which
+    // will enable lifting this restriction, among other things.
+    auto hasSameDerivativeGenericSignatures = [&] {
+      auto first = derivative->getGenericSignature();
+      auto second = da->getDerivativeGenericSignature();
+      if (first && second)
+        return first->isEqual(second);
+      return first.isNull() == second.isNull();
+    };
+    if (!hasSameDerivativeGenericSignatures()) {
+      diagnoseAndRemoveAttr(
+          attr, diag::derivative_attr_original_already_has_derivative,
+          originalAFD->getFullName());
+      return;
+    }
     // If the original function has a `@differentiable` attribute with the same
     // differentiation parameters, check if the `@differentiable` attribute
     // already has a different registered derivative. If so, emit an error on

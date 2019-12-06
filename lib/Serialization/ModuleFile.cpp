@@ -963,11 +963,9 @@ public:
 std::unique_ptr<ModuleFile::SerializedDerivativeFunctionConfigTable>
 ModuleFile::readDerivativeFunctionConfigTable(ArrayRef<uint64_t> fields,
                                               StringRef blobData) {
-  llvm::errs() << "ModuleFile::readDerivativeFunctionConfigTable " << Name << " WOW!!!\n";
   uint32_t tableOffset;
   index_block::DerivativeFunctionConfigTableLayout::readRecord(fields,
                                                                tableOffset);
-  llvm::errs() << "TABLE OFFSET: " << tableOffset << "\n";
   auto base = reinterpret_cast<const uint8_t *>(blobData.data());
 
   using OwnedTable = std::unique_ptr<SerializedDerivativeFunctionConfigTable>;
@@ -2447,9 +2445,6 @@ void ModuleFile::loadObjCMethods(
 void ModuleFile::loadDerivativeFunctionConfigurations(
     AbstractFunctionDecl *originalAFD,
     llvm::SetVector<ASTAutoDiffConfig> &results) {
-  llvm::errs() << "ModuleFile::loadDerivativeFunctionConfigurations, " << Name
-               << ", " << originalAFD->getEffectiveFullName() << "\n";
-
   if (!DerivativeFunctionConfigurations)
     return;
   auto &ctx = originalAFD->getASTContext();
@@ -2469,7 +2464,6 @@ void ModuleFile::loadDerivativeFunctionConfigurations(
     auto derivativeGenSig = derivativeGenSigOrError.get();
     results.insert({parameterIndices, derivativeGenSig});
   }
-  llvm::errs() << "FOUND CONFIGS: " << results.size() << "!\n";
 }
 // SWIFT_ENABLE_TENSORFLOW END
 

@@ -565,7 +565,10 @@ swift::matchWitness(
               reqDiffAttr->getParameterIndices(), /*jvp*/ None,
               /*vjp*/ None, reqDiffAttr->getDerivativeGenericSignature());
           auto insertion = ctx.DifferentiableAttrs.try_emplace(
-              {witness, newAttr->getParameterIndices()}, newAttr);
+              {witnessAFD, newAttr->getParameterIndices()}, newAttr);
+          witnessAFD->addDerivativeFunctionConfiguration(
+              {newAttr->getParameterIndices(),
+               newAttr->getDerivativeGenericSignature()});
           // Valid `@differentiable` attributes are uniqued by their parameter
           // indices. Reject duplicate attributes for the same decl and parameter
           // indices pair.

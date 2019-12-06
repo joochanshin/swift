@@ -320,6 +320,7 @@ struct AutoDiffConfig {
 class AutoDiffDerivativeFunctionIdentifier : public llvm::FoldingSetNode {
   const AutoDiffDerivativeFunctionKind kind;
   IndexSubset *const parameterIndices;
+  // TODO(TF-680): Mangle derivative generic signature requirements as well.
 
   AutoDiffDerivativeFunctionIdentifier(
       AutoDiffDerivativeFunctionKind kind, IndexSubset *parameterIndices) :

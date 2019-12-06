@@ -794,9 +794,23 @@ void SILGenModule::postEmitFunction(SILDeclRef constant,
         }
         auto *origAFD = derivAttr->getOriginalFunction();
         auto *origFn = getFunction(SILDeclRef(origAFD), NotForDefinition);
-        GenericSignature derivativeGenSig;
+        auto derivativeGenSig = AFD->getGenericSignature();
+#if 0
+        if (!AFD->getGenericSignature()->isEqual(origAFD->getGenericSignature()))
+          derivativeGenSig = AFD->getGenericSignature();
+#endif
+#if 0
         if (auto *derivativeGenEnv = F->getGenericEnvironment())
           derivativeGenSig = derivativeGenEnv->getGenericSignature();
+#endif
+        if (derivativeGenSig) {
+          llvm::errs() << "F->getGenericEnvironment()\n";
+          derivativeGenSig->dump();
+          llvm::errs() << "AFD->getGenericSignature()\n";
+          AFD->getGenericSignature()->dump();
+          llvm::errs() << "origAFD->getGenericSignature()\n";
+          origAFD->getGenericSignature()->dump();
+        }
         ASTAutoDiffConfig config(derivAttr->getParameterIndices(),
                                  derivativeGenSig);
         emitDifferentiabilityWitness(origAFD, origFn, config, jvp, vjp,

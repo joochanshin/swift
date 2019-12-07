@@ -7034,10 +7034,16 @@ AbstractFunctionDecl::getDerivativeFunctionConfigurations() {
   return DerivativeFunctionConfigs->getArrayRef();
 }
 
-void AbstractFunctionDecl::addDerivativeFunctionConfiguration(
+bool AbstractFunctionDecl::hasDerivativeFunctionConfiguration(
     AutoDiffConfig config) {
   prepareDerivativeFunctionConfigurations();
-  DerivativeFunctionConfigs->insert(config);
+  return DerivativeFunctionConfigs->count(config);
+}
+
+bool AbstractFunctionDecl::addDerivativeFunctionConfiguration(
+    AutoDiffConfig config) {
+  prepareDerivativeFunctionConfigurations();
+  return DerivativeFunctionConfigs->insert(config);
 }
 // SWIFT_ENABLE_TENSORFLOW END
 

@@ -5711,11 +5711,17 @@ private:
   DerivativeFunctionConfigurationList *DerivativeFunctionConfigs = nullptr;
 
 public:
-  /// Get all derivative function configurations.
+  /// Get all derivative function configurations for this declaration.
   ArrayRef<AutoDiffConfig> getDerivativeFunctionConfigurations();
 
-  /// Add the given derivative function configuration.
-  void addDerivativeFunctionConfiguration(AutoDiffConfig config);
+  /// Returns true if this declaration has the given derivative function
+  /// configuration.
+  bool hasDerivativeFunctionConfiguration(AutoDiffConfig config);
+
+  /// Add the given derivative function configuration for this declaration.
+  /// Returns true if the configuration was not already contained in the
+  /// configuration list.
+  bool addDerivativeFunctionConfiguration(AutoDiffConfig config);
 // SWIFT_ENABLE_TENSORFLOW END
 
 protected:

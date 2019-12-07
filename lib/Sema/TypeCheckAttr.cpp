@@ -3915,6 +3915,7 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
     return;
   }
 
+#if 0
   // Valid `@derivative` attributes are uniqued by original function and
   // parameter indices. Reject duplicate attributes.
   auto insertion = Ctx.DerivativeAttrs.try_emplace(
@@ -3927,12 +3928,18 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
              diag::differentiable_attr_duplicate_note);
     return;
   }
+#endif
 
-  // Register derivative function configuration.
   auto *resultIndices = IndexSubset::get(Ctx, 1, {0});
-  originalAFD->addDerivativeFunctionConfiguration(
-      {checkedWrtParamIndices, resultIndices,
-       derivative->getGenericSignature()});
+  // Register derivative function configuration.
+  if (!originalAFD->addDerivativeFunctionConfiguration(
+          {checkedWrtParamIndices, resultIndices,
+           derivative->getGenericSignature()})) {
+    diagnoseAndRemoveAttr(attr,
+                          diag::derivative_attr_original_already_has_derivative,
+                          originalAFD->getFullName());
+    return;
+  }
 }
 
 void AttributeChecker::visitTransposeAttr(TransposeAttr *attr) {

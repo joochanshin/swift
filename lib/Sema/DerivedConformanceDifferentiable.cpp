@@ -59,6 +59,10 @@ getStoredPropertiesForDifferentiation(NominalTypeDecl *nominal,
       continue;
     if (vd->isLet())
       continue;
+    if (vd->isRecursiveValidation()) {
+      llvm::errs() << "RECURSIVE VALIDATION FOUND\n";
+      continue;
+    }
     if (vd->getInterfaceType()->hasError())
       continue;
     auto varType = DC->mapTypeIntoContext(vd->getValueInterfaceType());
@@ -181,6 +185,11 @@ bool DerivedConformance::canDeriveDifferentiable(NominalTypeDecl *nominal,
   SmallVector<VarDecl *, 16> diffProperties;
   getStoredPropertiesForDifferentiation(nominal, DC, diffProperties);
   return llvm::all_of(diffProperties, [&](VarDecl *v) {
+    // TODO
+    if (v->isRecursiveValidation()) {
+      llvm::errs() << "HELLO!\n";
+      return true;
+    }
     if (v->getInterfaceType()->hasError())
       return false;
     auto varType = DC->mapTypeIntoContext(v->getValueInterfaceType());
@@ -689,6 +698,8 @@ static void checkAndDiagnoseImplicitNoDerivative(ASTContext &Context,
   bool nominalCanDeriveAdditiveArithmetic =
       DerivedConformance::canDeriveAdditiveArithmetic(nominal, DC);
   for (auto *vd : nominal->getStoredProperties()) {
+    if (vd->isRecursiveValidation())
+      continue;
     if (vd->getInterfaceType()->hasError())
       continue;
     auto varType = DC->mapTypeIntoContext(vd->getValueInterfaceType());

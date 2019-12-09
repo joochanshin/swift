@@ -4804,9 +4804,11 @@ AnyFunctionType *AnyFunctionType::getAutoDiffDerivativeFunctionType(
                   ->getType()));
     } else {
       assert(resultIndex == 0 && "resultIndex out of bounds");
+      auto originalResultTan = originalResult->getAutoDiffAssociatedTangentSpace(lookupConformance);
+      if (!originalResultTan)
+        return nullptr;
       pullbackParams.push_back(
-          AnyFunctionType::Param(originalResult
-              ->getAutoDiffAssociatedTangentSpace(lookupConformance)
+          AnyFunctionType::Param(originalResultTan
                   ->getType()));
     }
 

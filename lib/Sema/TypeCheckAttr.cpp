@@ -3906,6 +3906,7 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
     return;
   }
 
+#if 0
   // Reject different-file retroactive derivatives.
   // TODO(TF-136): Lift this restriction now that SIL differentiability witness
   // infrastructure is ready.
@@ -3914,6 +3915,7 @@ void AttributeChecker::visitDerivativeAttr(DerivativeAttr *attr) {
                           diag::derivative_attr_not_in_same_file_as_original);
     return;
   }
+#endif
 
   // Valid `@derivative` attributes are uniqued by original function and
   // parameter indices. Reject duplicate attributes.

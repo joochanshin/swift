@@ -1546,6 +1546,7 @@ bool SILParser::parseSILDeclRef(SILDeclRef &Result,
       } else if (Id.str() == "jvp" || Id.str() == "vjp") {
         AutoDiffDerivativeFunctionKind kind;
         IndexSubset *parameterIndices = nullptr;
+        GenericSignature derivativeGenericSignature;
 
         if (Id.str() == "jvp")
           kind = AutoDiffDerivativeFunctionKind::JVP;
@@ -1567,8 +1568,34 @@ bool SILParser::parseSILDeclRef(SILDeclRef &Result,
         }
         P.consumeToken();
 
+        // TODO: Parse derivative generic signature.
+        llvm::errs() << "CURRENT TOKEN!: '" << P.Tok.getText() << "', kind: " << (unsigned) P.Tok.getKind() << "\n";
+        if (P.Tok.getKind() == tok::oper_prefix)
+          llvm::errs() << "tok::oper_prefix\n";
+        if (P.Tok.getKind() == tok::oper_postfix)
+          llvm::errs() << "tok::oper_postfix\n";
+        if (P.Tok.getKind() == tok::oper_binary_spaced)
+          llvm::errs() << "tok::oper_binary_spaced\n";
+        if (P.Tok.getKind() == tok::oper_binary_unspaced)
+          llvm::errs() << "tok::oper_binary_unspaced\n";
+        if (P.Tok.getKind() == tok::oper_binary_unspaced && P.Tok.getText() == ".<") {
+          P.consumeStartingCharacterOfCurrentToken(tok::period);
+          llvm::errs() << "CURRENT TOKEN 2!: '" << P.Tok.getText() << "', kind: " << (unsigned) P.Tok.getKind() << "\n";
+          if (P.Tok.getKind() == tok::oper_prefix)
+          assert(P.Tok.getKind() == tok::l_angle);
+          llvm::errs() << "HELLO!\n";
+          // Create a new scope to avoid type redefinition errors.
+          Scope genericsScope(&P, ScopeKind::Generics);
+          auto *genericParams = P.maybeParseGenericParams().getPtrOrNull();
+          if (genericParams) {
+            auto *witnessGenEnv = handleSILGenericParams(genericParams, &P.SF);
+            derivativeGenericSignature = witnessGenEnv->getGenericSignature();
+          }
+        }
+
         autoDiffFuncId = AutoDiffDerivativeFunctionIdentifier::get(
-            kind, parameterIndices, SILMod.getASTContext());
+            kind, parameterIndices, derivativeGenericSignature,
+            SILMod.getASTContext());
 
         break;
       } else

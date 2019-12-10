@@ -697,7 +697,8 @@ emitDerivativeFunctionReference(
         kind, context.getTypeConverter(),
         LookUpConformanceInModule(builder.getModule().getSwiftModule()));
     auto *autoDiffFuncId = AutoDiffDerivativeFunctionIdentifier::get(
-        kind, minimalASTParamIndices, context.getASTContext());
+        kind, minimalASTParamIndices, minimalConfig->derivativeGenericSignature,
+        context.getASTContext());
     auto *ref = builder.createWitnessMethod(
         loc, witnessMethod->getLookupType(), witnessMethod->getConformance(),
         requirementDeclRef.asAutoDiffDerivativeFunction(autoDiffFuncId),
@@ -741,7 +742,8 @@ emitDerivativeFunctionReference(
         context.getTypeConverter(),
         LookUpConformanceInModule(builder.getModule().getSwiftModule()));
     auto *autoDiffFuncId = AutoDiffDerivativeFunctionIdentifier::get(
-        kind, minimalASTParamIndices, context.getASTContext());
+        kind, minimalASTParamIndices, minimalConfig->derivativeGenericSignature,
+        context.getASTContext());
     auto *ref = builder.createClassMethod(
         loc, classMethodInst->getOperand(),
         methodDeclRef.asAutoDiffDerivativeFunction(autoDiffFuncId),
@@ -777,10 +779,12 @@ static SILFunction *createEmptyVJP(ADContext &context, SILFunction *original,
 
   // === Create an empty VJP. ===
   Mangle::ASTMangler mangler;
-  auto vjpName = original->getASTContext().getIdentifier(
-      mangler.mangleAutoDiffDerivativeFunctionHelper(
-          original->getName(), AutoDiffDerivativeFunctionKind::VJP, indices))
-              .str();
+  auto vjpName =
+      original->getASTContext()
+          .getIdentifier(mangler.mangleAutoDiffDerivativeFunctionHelper(
+              original->getName(), AutoDiffDerivativeFunctionKind::VJP,
+              witness->getConfig()))
+          .str();
   auto vjpGenericSig = getDerivativeGenericSignature(witness, original);
 
   // RAII that pushes the original function's generic signature to
@@ -825,10 +829,12 @@ static SILFunction *createEmptyJVP(ADContext &context, SILFunction *original,
 
   // === Create an empty JVP. ===
   Mangle::ASTMangler mangler;
-  auto jvpName = original->getASTContext().getIdentifier(
-      mangler.mangleAutoDiffDerivativeFunctionHelper(
-          original->getName(), AutoDiffDerivativeFunctionKind::JVP, indices))
-              .str();
+  auto jvpName =
+      original->getASTContext()
+          .getIdentifier(mangler.mangleAutoDiffDerivativeFunctionHelper(
+              original->getName(), AutoDiffDerivativeFunctionKind::JVP,
+              witness->getConfig()))
+          .str();
   auto jvpGenericSig = getDerivativeGenericSignature(witness, original);
 
   // RAII that pushes the original function's generic signature to

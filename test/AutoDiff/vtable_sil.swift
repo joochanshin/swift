@@ -37,6 +37,11 @@ class Super : Differentiable {
     return (f(x, y), { v in v * y })
   }
 
+  @differentiable(wrt: x where T: Differentiable)
+  func generic<T>(_ x: T, _ y: T) -> T {
+    return x
+  }
+
   @differentiable(wrt: x, jvp: jvpf, vjp: vjpf)
   subscript(_ x: Float, _ y: Float) -> Float {
     return x * y
@@ -96,6 +101,7 @@ class SubSub : Sub {}
 // CHECK-NEXT:   #Super.f!1: (Super) -> (Float, Float) -> Float : @$s10vtable_sil5SuperC1fyS2f_SftF
 // CHECK-NEXT:   #Super.f!1.jvp.SUU: (Super) -> (Float, Float) -> Float : @AD__$s10vtable_sil5SuperC1fyS2f_SftF__jvp_src_0_wrt_0_vtable_entry_thunk
 // CHECK-NEXT:   #Super.f!1.vjp.SUU: (Super) -> (Float, Float) -> Float : @AD__$s10vtable_sil5SuperC1fyS2f_SftF__vjp_src_0_wrt_0_vtable_entry_thunk
+// CHECK-NEXT:   #Super.generic!1: <T> (Super) -> (T, T) -> T : @$s10vtable_sil5SuperC7genericyxx_xtlF
 // CHECK-NEXT:   #Super.subscript!getter.1: (Super) -> (Float, Float) -> Float : @$s10vtable_sil5SuperCyS2f_Sftcig
 // CHECK-NEXT:   #Super.subscript!getter.1.jvp.SUU: (Super) -> (Float, Float) -> Float : @AD__$s10vtable_sil5SuperCyS2f_Sftcig__jvp_src_0_wrt_0_vtable_entry_thunk
 // CHECK-NEXT:   #Super.subscript!getter.1.vjp.SUU: (Super) -> (Float, Float) -> Float : @AD__$s10vtable_sil5SuperCyS2f_Sftcig__vjp_src_0_wrt_0_vtable_entry_thunk

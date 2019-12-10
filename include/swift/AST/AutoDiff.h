@@ -306,25 +306,32 @@ struct AutoDiffConfig {
 class AutoDiffDerivativeFunctionIdentifier : public llvm::FoldingSetNode {
   const AutoDiffDerivativeFunctionKind kind;
   IndexSubset *const parameterIndices;
+  GenericSignature derivativeGenericSignature;
   // TODO(TF-680): Mangle derivative generic signature requirements as well.
 
   AutoDiffDerivativeFunctionIdentifier(
-      AutoDiffDerivativeFunctionKind kind, IndexSubset *parameterIndices) :
-    kind(kind), parameterIndices(parameterIndices) {}
+      AutoDiffDerivativeFunctionKind kind, IndexSubset *parameterIndices,
+      GenericSignature derivativeGenericSignature)
+      : kind(kind), parameterIndices(parameterIndices),
+        derivativeGenericSignature(derivativeGenericSignature) {}
 
 public:
   AutoDiffDerivativeFunctionKind getKind() const { return kind; }
   IndexSubset *getParameterIndices() const {
     return parameterIndices;
   }
+  GenericSignature getDerivativeGenericSignature() const {
+    return derivativeGenericSignature;
+  }
 
-  static AutoDiffDerivativeFunctionIdentifier *get(
-      AutoDiffDerivativeFunctionKind kind,
-      IndexSubset *parameterIndices, ASTContext &C);
+  static AutoDiffDerivativeFunctionIdentifier *
+  get(AutoDiffDerivativeFunctionKind kind, IndexSubset *parameterIndices,
+      GenericSignature derivativeGenericSignature, ASTContext &C);
 
   void Profile(llvm::FoldingSetNodeID &ID) {
     ID.AddInteger(kind);
     ID.AddPointer(parameterIndices);
+    ID.AddPointer(derivativeGenericSignature.getPointer());
   }
 };
 

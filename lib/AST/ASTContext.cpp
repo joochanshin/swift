@@ -4830,16 +4830,16 @@ IndexSubset::get(ASTContext &ctx, const SmallBitVector &indices) {
   foldingSet.InsertNode(newNode, insertPos);
   return newNode;
 }
-// TODO(saeta): CHECK IF CAN BE REMOVED!
-AutoDiffDerivativeFunctionIdentifier *
-AutoDiffDerivativeFunctionIdentifier::get(
+
+AutoDiffDerivativeFunctionIdentifier *AutoDiffDerivativeFunctionIdentifier::get(
     AutoDiffDerivativeFunctionKind kind, IndexSubset *parameterIndices,
-    ASTContext &C) {
+    GenericSignature derivativeGenericSignature, ASTContext &C) {
   assert(parameterIndices);
   auto &foldingSet = C.getImpl().AutoDiffDerivativeFunctionIdentifiers;
   llvm::FoldingSetNodeID id;
   id.AddInteger((unsigned)kind);
   id.AddPointer(parameterIndices);
+  id.AddPointer(derivativeGenericSignature.getPointer());
 
   void *insertPos;
   auto *existing = foldingSet.FindNodeOrInsertPos(id, insertPos);
@@ -4849,7 +4849,7 @@ AutoDiffDerivativeFunctionIdentifier::get(
   void *mem = C.Allocate(sizeof(AutoDiffDerivativeFunctionIdentifier),
                          alignof(AutoDiffDerivativeFunctionIdentifier));
   auto *newNode = ::new (mem) AutoDiffDerivativeFunctionIdentifier(
-      kind, parameterIndices);
+      kind, parameterIndices, derivativeGenericSignature);
   foldingSet.InsertNode(newNode, insertPos);
 
   return newNode;

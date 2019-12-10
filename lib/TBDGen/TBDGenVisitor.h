@@ -76,16 +76,18 @@ private:
 
   // SWIFT_ENABLE_TENSORFLOW
   /// Adds the symbol for the linear map function of the given kind associated
-  /// with the given original function and parameter indices.
+  /// with the given original function and derivative function configuration.
   void addAutoDiffLinearMapFunction(AbstractFunctionDecl *original,
-                                    IndexSubset *parameterIndices,
+                                    AutoDiffConfig config,
                                     AutoDiffLinearMapKind kind);
 
   /// Adds the symbol for the autodiff function of the given kind associated
   /// with the given original function and parameter indices.
-  void addAutoDiffDerivativeFunction(AbstractFunctionDecl *original,
-                                     IndexSubset *parameterIndices,
-                                     AutoDiffDerivativeFunctionKind kind);
+  void
+  addAutoDiffDerivativeFunction(AbstractFunctionDecl *original,
+                                IndexSubset *parameterIndices,
+                                GenericSignature derivativeGenericSignature,
+                                AutoDiffDerivativeFunctionKind kind);
 
   /// Adds the symbol for the differentiability witness associated with the
   /// given original function, parameter indices, result indices, and derivative

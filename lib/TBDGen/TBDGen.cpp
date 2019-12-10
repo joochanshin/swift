@@ -179,34 +179,36 @@ void TBDGenVisitor::addConformances(DeclContext *DC) {
 
 // SWIFT_ENABLE_TENSORFLOW
 void TBDGenVisitor::addAutoDiffLinearMapFunction(AbstractFunctionDecl *original,
-                                                 IndexSubset *parameterIndices,
+                                                 AutoDiffConfig config,
                                                  AutoDiffLinearMapKind kind) {
+  auto &ctx = original->getASTContext();
   auto declRef = SILDeclRef(original);
-
-  // Linear maps are only public when the original function is serialized.
+  // Linear maps are public only when the original function is serialized.
   if (!declRef.isSerialized())
     return;
-
-  // Differentials are only emitted when forward mode is turned on.
+  // Linear maps are emitted only when forward mode is turned on.
   if (kind == AutoDiffLinearMapKind::Differential &&
-      !original->getASTContext()
-           .LangOpts.EnableExperimentalForwardModeDifferentiation)
+      !ctx.LangOpts.EnableExperimentalForwardModeDifferentiation)
     return;
-
   auto *loweredParamIndices = autodiff::getLoweredParameterIndices(
-      parameterIndices,
+      config.parameterIndices,
       original->getInterfaceType()->castTo<AnyFunctionType>());
   Mangle::ASTMangler mangler;
-  std::string linearMapName = mangler.mangleAutoDiffLinearMapHelper(
-      declRef.mangle(), kind, SILAutoDiffIndices(0, loweredParamIndices));
+  auto *resultIndices = IndexSubset::get(ctx, 1, {0});
+  AutoDiffConfig silConfig{loweredParamIndices, resultIndices,
+                           config.derivativeGenericSignature};
+  std::string linearMapName =
+      mangler.mangleAutoDiffLinearMapHelper(declRef.mangle(), kind, silConfig);
   addSymbol(linearMapName);
 }
 
 void TBDGenVisitor::addAutoDiffDerivativeFunction(
     AbstractFunctionDecl *original, IndexSubset *parameterIndices,
+    GenericSignature derivativeGenericSignature,
     AutoDiffDerivativeFunctionKind kind) {
   auto *assocFnId = AutoDiffDerivativeFunctionIdentifier::get(
-      kind, parameterIndices, original->getASTContext());
+      kind, parameterIndices, derivativeGenericSignature,
+      original->getASTContext());
   addSymbol(SILDeclRef(original).asAutoDiffDerivativeFunction(assocFnId));
 }
 
@@ -232,13 +234,15 @@ void TBDGenVisitor::addDifferentiabilityWitness(
 
 void TBDGenVisitor::addDerivativeConfiguration(AbstractFunctionDecl *original,
                                                AutoDiffConfig config) {
-  addAutoDiffLinearMapFunction(original, config.parameterIndices,
+  addAutoDiffLinearMapFunction(original, config,
                                AutoDiffLinearMapKind::Differential);
-  addAutoDiffLinearMapFunction(original, config.parameterIndices,
+  addAutoDiffLinearMapFunction(original, config,
                                AutoDiffLinearMapKind::Pullback);
   addAutoDiffDerivativeFunction(original, config.parameterIndices,
+                                config.derivativeGenericSignature,
                                 AutoDiffDerivativeFunctionKind::JVP);
   addAutoDiffDerivativeFunction(original, config.parameterIndices,
+                                config.derivativeGenericSignature,
                                 AutoDiffDerivativeFunctionKind::VJP);
   addDifferentiabilityWitness(original, config.parameterIndices,
                               config.resultIndices,

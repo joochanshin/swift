@@ -362,6 +362,9 @@ void SILDeclRef::print(raw_ostream &OS) const {
       break;
     }
     OS << autoDiffFuncId->getParameterIndices()->getString();
+    if (auto derivativeGenSig = autoDiffFuncId->getDerivativeGenericSignature()) {
+      OS << "." << derivativeGenSig;
+    }
   }
 }
 

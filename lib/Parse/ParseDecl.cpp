@@ -1215,9 +1215,9 @@ ParserResult<DerivativeAttr> Parser::parseDerivativeAttribute(SourceLoc atLoc,
           /*afterDot*/ true, original.Loc,
           diag::attr_derivative_expected_original_name, /*allowOperators*/ true,
           /*allowZeroArgCompoundNames*/ true, /*allowDeinitAndSubscript*/ true);
-      if (consumeIfTrailingComma())
-        return makeParserError();
     }
+    if (consumeIfTrailingComma())
+      return makeParserError();
     // Parse the optional 'wrt' differentiation parameters clause.
     if (isIdentifier(Tok, "wrt") &&
         parseDifferentiationParametersClause(params, AttrName))
@@ -1278,9 +1278,9 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
           /*afterDot*/ true, original.Loc,
           diag::attr_derivative_expected_original_name, /*allowOperators*/ true,
           /*allowZeroArgCompoundNames*/ true, /*allowDeinitAndSubscript*/ true);
-      if (consumeIfTrailingComma())
-        return makeParserError();
     }
+    if (consumeIfTrailingComma())
+      return makeParserError();
     // Parse the optional 'wrt' differentiation parameters clause.
     if (isIdentifier(Tok, "wrt") &&
         parseDifferentiationParametersClause(params, AttrName))
@@ -1402,15 +1402,18 @@ ParserResult<TransposeAttr> Parser::parseTransposeAttribute(SourceLoc atLoc,
       // TODO(TF-1009): Fix syntax support for dot-separated qualified names.
       // Currently, `SyntaxKind::FunctionDeclName` only supports unqualified
       // names.
-      SyntaxParsingContext FuncDeclNameContext(SyntaxContext,
-                                               SyntaxKind::FunctionDeclName);
+      // SyntaxParsingContext FuncDeclNameContext(SyntaxContext,
+      //                                          SyntaxKind::FunctionDeclName);
+      SyntaxParsingContext ContentContext(SyntaxContext,
+                                          SyntaxKind::QualifiedDeclName);
+      llvm::errs() << "QUALIFIED DECL NAME\n";
       if (parseQualifiedDeclName(*this,
                                  diag::attr_transpose_expected_original_name,
                                  baseType, original))
         return makeParserError();
-      if (consumeIfTrailingComma())
-        return makeParserError();
     }
+    if (consumeIfTrailingComma())
+      return makeParserError();
     // Parse the optional 'wrt' transposed parameters clause.
     if (Tok.is(tok::identifier) && Tok.getText() == "wrt" &&
         parseTransposedParametersClause(params, AttrName))

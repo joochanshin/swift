@@ -267,11 +267,11 @@ ATTRIBUTE_NODES = [
     Node('DifferentiationParamList', kind='SyntaxCollection',
          element='DifferentiationParam'),
 
-    # differentiation-param -> ('self' | identifer) ','?
+    # differentiation-param -> ('self' | identifer | integer-literal) ','?
     Node('DifferentiationParam', kind='Syntax',
          description='''
-         A differentiation parameter: either the "self" identifier or a
-         function parameter name.
+         A differentiation parameter: either the "self" identifier, a
+         function parameter name, or a function parameter index.
          ''',
          traits=['WithTrailingComma'],
          children=[
@@ -279,6 +279,7 @@ ATTRIBUTE_NODES = [
                    node_choices=[
                        Child('Self', kind='SelfToken'),
                        Child('Name', kind='IdentifierToken'),
+                       Child('Index', kind='IntegerLiteralToken'),
                    ]),
              Child('TrailingComma', kind='CommaToken', is_optional=True),
          ]),
@@ -298,6 +299,38 @@ ATTRIBUTE_NODES = [
              Child('FunctionDeclName', kind='FunctionDeclName',
                    description='The referenced function name.'),
              Child('TrailingComma', kind='CommaToken', is_optional=True),
+         ]),
+
+#     Node('QualifiedDeclNameList', kind='SyntaxCollection',
+#          element='QualifiedDeclNameComponent'),
+
+    # qualified-func-decl-name -> (identifier | operator) decl-name-arguments?
+    # NOTE: This is duplicated with `DeclName` above. Change `DeclName`
+    # description and use it if possible.
+    Node('QualifiedDeclName', kind='Syntax',
+         description='A qualified declaration name component.',
+         children=[
+#              Child('Name', kind='Syntax', description='''
+#                    The base name of the referenced function.
+#                    ''',
+#                    node_choices=[
+#                        Child('Identifier', kind='IdentifierToken'),
+#                        Child('PrefixOperator', kind='PrefixOperatorToken'),
+#                        Child('SpacedBinaryOperator',
+#                              kind='SpacedBinaryOperatorToken'),
+#                    ]),
+#              Child("Dot", kind='Token',
+#                    token_choices=[
+#                        'PeriodToken', 'PrefixPeriodToken'
+#                    ]),
+             Child("BaseType", kind='MemberTypeIdentifier', is_optional=True),
+             Child("Dot", kind='Token',
+                   token_choices=[
+                       'PeriodToken', 'PrefixPeriodToken'
+                   ], is_optional=True),
+             Child('DeclName', kind='FunctionDeclName',
+                   is_optional=True, description='''
+                   '''),
          ]),
 
     # func-decl-name -> (identifier | operator) decl-name-arguments?
@@ -343,7 +376,8 @@ ATTRIBUTE_NODES = [
                    The colon separating the "of" label and the original
                    declaration name.
                    '''),
-             Child('Original', kind='FunctionDeclName',
+             # Child('Original', kind='FunctionDeclName',
+             Child('Original', kind='QualifiedDeclName',
                    description='The referenced original declaration.'),
              Child('Comma', kind='CommaToken', is_optional=True),
              Child('DiffParams', kind='DifferentiationParamsClause',

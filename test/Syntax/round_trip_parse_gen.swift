@@ -607,9 +607,9 @@ func negateDerivative(_ x: Float)
   return (-x, { v in -v })
 }
 
-@derivative(of: baz(label:_:))
+@derivative(of: baz(label:_:), wrt: (x))
 func bazDerivative(_ x: Float, y: Float)
-    -> (value: Float, pullback: (Float) -> (Float, Float)) {
+    -> (value: Float, pullback: (Float) -> Float) {
   return (x, { v in v })
 }
 
@@ -618,10 +618,17 @@ func addTranspose(_ v: Float) -> (Float, Float) {
   return (v, v)
 }
 
-@differentiating(baz(label:_:))
+@differentiating(baz(label:_:), wrt: (x))
 func bazDerivative(_ x: Float, y: Float)
-    -> (value: Float, pullback: (Float) -> (Float, Float)) {
+    -> (value: Float, pullback: (Float) -> Float) {
   return (x, { v in v })
+}
+
+// TODO(TF-1009): Add syntax support for integer "wrt" parameters in
+// `@transpose(of:)` attributes.
+@transpose(of: -, wrt: 0)
+func subtractTranspose(_ v: Float) -> (Float, Float) {
+  return (v, -v)
 }
 
 // TODO(TF-1009): Add syntax support for dot-separated qualified names in

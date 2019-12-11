@@ -1,5 +1,3 @@
-// SWIFT_ENABLE_TENSORFLOW
-
 // RUN: %empty-directory(%t)
 // RUN: %target-swift-frontend %s -emit-module -parse-as-library -o %t
 // RUN: llvm-bcanalyzer %t/differentiable_attr.swiftmodule | %FileCheck %s -check-prefix=BCANALYZER

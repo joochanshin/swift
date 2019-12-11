@@ -1331,9 +1331,8 @@ SpecializeAttr *SpecializeAttr::create(ASTContext &Ctx, SourceLoc atLoc,
                                   specializedSignature);
 }
 
-DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
-                                       SourceLoc atLoc, SourceRange baseRange,
-                                       bool linear,
+DifferentiableAttr::DifferentiableAttr(bool implicit, SourceLoc atLoc,
+                                       SourceRange baseRange, bool linear,
                                        ArrayRef<ParsedAutoDiffParameter> params,
                                        Optional<DeclNameWithLoc> jvp,
                                        Optional<DeclNameWithLoc> vjp,
@@ -1345,9 +1344,8 @@ DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
             getTrailingObjects<ParsedAutoDiffParameter>());
 }
 
-DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
-                                       SourceLoc atLoc, SourceRange baseRange,
-                                       bool linear,
+DifferentiableAttr::DifferentiableAttr(bool implicit, SourceLoc atLoc,
+                                       SourceRange baseRange, bool linear,
                                        IndexSubset *indices,
                                        Optional<DeclNameWithLoc> jvp,
                                        Optional<DeclNameWithLoc> vjp,
@@ -1355,7 +1353,7 @@ DifferentiableAttr::DifferentiableAttr(ASTContext &context, bool implicit,
     : DeclAttribute(DAK_Differentiable, atLoc, baseRange, implicit),
       linear(linear), JVP(std::move(jvp)), VJP(std::move(vjp)),
       ParameterIndices(indices) {
-  setDerivativeGenericSignature(context, derivativeGenSig);
+  setDerivativeGenericSignature(derivativeGenSig);
 }
 
 DifferentiableAttr *
@@ -1368,8 +1366,8 @@ DifferentiableAttr::create(ASTContext &context, bool implicit,
                            TrailingWhereClause *clause) {
   unsigned size = totalSizeToAlloc<ParsedAutoDiffParameter>(parameters.size());
   void *mem = context.Allocate(size, alignof(DifferentiableAttr));
-  return new (mem) DifferentiableAttr(context, implicit, atLoc, baseRange,
-                                      linear, parameters, std::move(jvp),
+  return new (mem) DifferentiableAttr(implicit, atLoc, baseRange, linear,
+                                      parameters, std::move(jvp),
                                       std::move(vjp), clause);
 }
 
@@ -1382,9 +1380,9 @@ DifferentiableAttr::create(ASTContext &context, bool implicit,
                            GenericSignature derivativeGenSig) {
   void *mem = context.Allocate(sizeof(DifferentiableAttr),
                                alignof(DifferentiableAttr));
-  return new (mem) DifferentiableAttr(context, implicit, atLoc, baseRange,
-                                      linear, indices, std::move(jvp),
-                                      std::move(vjp), derivativeGenSig);
+  return new (mem) DifferentiableAttr(implicit, atLoc, baseRange, linear,
+                                      indices, std::move(jvp), std::move(vjp),
+                                      derivativeGenSig);
 }
 
 void DifferentiableAttr::setJVPFunction(FuncDecl *decl) {

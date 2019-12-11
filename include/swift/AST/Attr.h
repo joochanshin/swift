@@ -1767,17 +1767,16 @@ class DifferentiableAttr final
   /// has a where clause.
   GenericSignature DerivativeGenericSignature;
 
-  explicit DifferentiableAttr(ASTContext &context, bool implicit,
-                              SourceLoc atLoc, SourceRange baseRange,
-                              bool linear,
+  explicit DifferentiableAttr(bool implicit, SourceLoc atLoc,
+                              SourceRange baseRange, bool linear,
                               ArrayRef<ParsedAutoDiffParameter> parameters,
                               Optional<DeclNameWithLoc> jvp,
                               Optional<DeclNameWithLoc> vjp,
                               TrailingWhereClause *clause);
 
-  explicit DifferentiableAttr(ASTContext &context, bool implicit,
-                              SourceLoc atLoc, SourceRange baseRange,
-                              bool linear, IndexSubset *indices,
+  explicit DifferentiableAttr(bool implicit, SourceLoc atLoc,
+                              SourceRange baseRange, bool linear,
+                              IndexSubset *indices,
                               Optional<DeclNameWithLoc> jvp,
                               Optional<DeclNameWithLoc> vjp,
                               GenericSignature derivativeGenericSignature);
@@ -1834,8 +1833,7 @@ public:
   GenericSignature getDerivativeGenericSignature() const {
     return DerivativeGenericSignature;
   }
-  void setDerivativeGenericSignature(ASTContext &context,
-                                     GenericSignature derivativeGenSig) {
+  void setDerivativeGenericSignature(GenericSignature derivativeGenSig) {
     DerivativeGenericSignature = derivativeGenSig;
   }
 

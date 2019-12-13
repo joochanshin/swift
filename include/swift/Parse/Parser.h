@@ -1395,11 +1395,9 @@ public:
   bool canParseTypedPattern();
 
   // SWIFT_ENABLE_TENSORFLOW
-  /// Determines whether a type qualifier for a decl name can be parsed. e.g.:
-  ///   'Foo.f' -> true
-  ///   'Foo.Bar.f' -> true
-  ///   'f' -> false
-  bool canParseTypeQualifierForDeclName();
+  /// Returns true if a base type for a qualified declaration name can be
+  /// parsed.
+  bool canParseBaseTypeForQualifiedDeclName();
 
   //===--------------------------------------------------------------------===//
   // Expression Parsing

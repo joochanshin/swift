@@ -1309,7 +1309,7 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
 static bool parseBaseTypeForQualifiedDeclName(Parser &P, TypeRepr *&baseType) {
   baseType = nullptr;
 
-  if (!P.canParseTypeQualifierForDeclName())
+  if (!P.canParseBaseTypeForQualifiedDeclName()))
     return false;
 
   auto result = P.parseTypeIdentifier(/*isParsingQualifiedDeclName*/ true);

@@ -598,18 +598,23 @@ ParserStatus Parser::parseGenericArguments(SmallVectorImpl<TypeRepr *> &Args,
 }
 
 /// SWIFT_ENABLE_TENSORFLOW
-bool Parser::canParseTypeQualifierForDeclName() {
+/// Returns true if a base type for a qualified declaration name can be
+/// parsed.
+///
+/// Examples:
+///   'Foo.f' -> true
+///   'Foo.Bar.f' -> true
+///   'f' -> false, no base type
+bool Parser::canParseBaseTypeForQualifiedDeclName() {
   BacktrackingScope backtrack(*this);
 
   // First, parse a single type identifier component.
   if (!Tok.isAny(tok::identifier, tok::kw_Self, tok::kw_Any))
     return false;
   consumeToken();
-
-  if (startsWithLess(Tok)) {
+  if (startsWithLess(Tok))
     if (!canParseGenericArguments())
       return false;
-  }
 
   // If the next token is a period or starts with a period, then this can be
   // parsed as a type qualifier.
@@ -623,7 +628,9 @@ bool Parser::canParseTypeQualifierForDeclName() {
 ///
 // SWIFT_ENABLE_TENSORFLOW: Added `isParsingQualifiedDeclName` flag.
 ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclName) {
-  if (isParsingQualifiedDeclName && !canParseTypeQualifierForDeclName())
+  // If parsing a qualified declaration name, return error if base type cannot
+  // be parsed.
+  if (isParsingQualifiedDeclName && !canParseBaseTypeForQualifiedDeclName())
     return makeParserError();
 
   // SWIFT_ENABLE_TENSORFLOW: Condition body intentionally not indented, to
@@ -701,9 +708,10 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclNa
       if (!peekToken().isContextualKeyword("Type")
           && !peekToken().isContextualKeyword("Protocol")) {
 
+        // SWIFT_ENABLE_TENSORFLOW
         if (isParsingQualifiedDeclName) {
-          // If we're parsing a qualified decl name, break out before parsing the
-          // last period.
+          // If parsing a qualified declaration name, break out before parsing
+          // the last period.
 
           BacktrackingScope backtrack(*this);
 
@@ -712,15 +720,18 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclNa
           else if (startsWithSymbol(Tok, '.'))
             consumeStartingCharacterOfCurrentToken(tok::period);
 
-          if (!canParseTypeQualifierForDeclName())
+          if (!canParseBaseTypeForQualifiedDeclName())
             break;
         }
+        // SWIFT_ENABLE_TENSORFLOW END
         consumeToken();
 
+        // SWIFT_ENABLE_TENSORFLOW
         if (isParsingQualifiedDeclName && Tok.isAnyOperator()) {
           // If an operator is encountered, break and do not backtrack later.
           break;
         }
+        // SWIFT_ENABLE_TENSORFLOW END
         continue;
       }
     } else if (Tok.is(tok::code_complete)) {

@@ -280,6 +280,8 @@ struct A : Differentiable & AdditiveArithmetic {
   }
 }
 
+infix operator ++
+
 extension Float {
   static func myMultiply(lhs: Float, rhs: Float) -> Float {
     return lhs * rhs
@@ -293,6 +295,16 @@ extension Float {
 
   static func threeParamsStatic(_ x: Float, _ y: Double, _ z: Float) -> Double {
     return Double(x + z) + y
+  }
+
+  static func ++ (lhs: Float, rhs: Float) -> Float {
+    return lhs + rhs
+  }
+
+  @transpose(of: Float.++, wrt: 0)
+  @transpose(of: Float.++, wrt: 1)
+  func myMultiplyTranspose(selfType: Float.Type, param: Float) -> Float {
+    return self + param
   }
 }
 

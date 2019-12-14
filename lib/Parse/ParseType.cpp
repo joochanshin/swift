@@ -633,9 +633,6 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclNa
   if (isParsingQualifiedDeclName && !canParseBaseTypeForQualifiedDeclName())
     return makeParserError();
 
-  // SWIFT_ENABLE_TENSORFLOW: Condition body intentionally not indented, to
-  // reduce merge conflicts.
-  if (!isParsingQualifiedDeclName || Tok.isNotAnyOperator()) {
   if (Tok.isNot(tok::identifier) && Tok.isNot(tok::kw_Self)) {
     // is this the 'Any' type
     if (Tok.is(tok::kw_Any)) {
@@ -656,7 +653,6 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclNa
       consumeToken();
 
     return nullptr;
-  }
   }
   SyntaxParsingContext IdentTypeCtxt(SyntaxContext, SyntaxContextKind::Type);
 
@@ -700,36 +696,23 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclNa
 
     // Treat 'Foo.<anything>' as an attempt to write a dotted type
     // unless <anything> is 'Type'.
-    if ((Tok.is(tok::period) || Tok.is(tok::period_prefix))) {
+    // if ((Tok.is(tok::period) || Tok.is(tok::period_prefix))) {
+    if (startsWithSymbol(Tok, '.')) {
       if (peekToken().is(tok::code_complete)) {
         Status.setHasCodeCompletion();
         break;
       }
       if (!peekToken().isContextualKeyword("Type")
           && !peekToken().isContextualKeyword("Protocol")) {
-
         // SWIFT_ENABLE_TENSORFLOW
+        // If parsing a qualified declaration name, break before parsing the
+        // final period in the qualified name.
+        // consumeToken();
+        consumeStartingCharacterOfCurrentToken(tok::period);
         if (isParsingQualifiedDeclName) {
-          // If parsing a qualified declaration name, break out before parsing
-          // the last period.
-
           BacktrackingScope backtrack(*this);
-
-          if (Tok.is(tok::period) || Tok.is(tok::period_prefix))
-            consumeToken();
-          else if (startsWithSymbol(Tok, '.'))
-            consumeStartingCharacterOfCurrentToken(tok::period);
-
           if (!canParseBaseTypeForQualifiedDeclName())
             break;
-        }
-        // SWIFT_ENABLE_TENSORFLOW END
-        consumeToken();
-
-        // SWIFT_ENABLE_TENSORFLOW
-        if (isParsingQualifiedDeclName && Tok.isAnyOperator()) {
-          // If an operator is encountered, break and do not backtrack later.
-          break;
         }
         // SWIFT_ENABLE_TENSORFLOW END
         continue;

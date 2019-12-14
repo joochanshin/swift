@@ -1309,18 +1309,18 @@ Parser::parseDifferentiatingAttribute(SourceLoc atLoc, SourceLoc loc) {
 static bool parseBaseTypeForQualifiedDeclName(Parser &P, TypeRepr *&baseType) {
   baseType = nullptr;
 
-  if (!P.canParseBaseTypeForQualifiedDeclName()))
+  if (!P.canParseBaseTypeForQualifiedDeclName())
     return false;
 
   auto result = P.parseTypeIdentifier(/*isParsingQualifiedDeclName*/ true);
   if (result.isNull())
     return true;
 
+#if 0
   // Consume the period.
-  if (P.Tok.is(tok::period) || P.Tok.is(tok::period_prefix))
-    P.consumeToken();
-  else if (P.startsWithSymbol(P.Tok, '.'))
+  if (P.startsWithSymbol(P.Tok, '.'))
     P.consumeStartingCharacterOfCurrentToken(tok::period);
+#endif
 
   baseType = result.getPtrOrNull();
   return false;

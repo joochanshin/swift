@@ -1599,6 +1599,9 @@ ERROR(diff_params_clause_expected_parameter_unnamed,PointsToFirstBadToken,
 // Automatic differentiation attributes
 ERROR(autodiff_attr_expected_original_decl_name,PointsToFirstBadToken,
       "expected an original function name", ())
+ERROR(autodiff_attr_invalid_qualified_operator_name,PointsToFirstBadToken,
+      "operators cannot be referenced by qualified name; use unqualified name "
+      "%0 instead", (DeclName))
 
 // SIL autodiff
 ERROR(sil_autodiff_expected_lsquare,PointsToFirstBadToken,

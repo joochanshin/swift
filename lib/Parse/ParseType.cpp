@@ -696,15 +696,16 @@ ParserResult<TypeRepr> Parser::parseTypeIdentifier(bool isParsingQualifiedDeclNa
 
     // Treat 'Foo.<anything>' as an attempt to write a dotted type
     // unless <anything> is 'Type'.
-    if ((Tok.is(tok::period) || Tok.is(tok::period_prefix))) {
+    // SWIFT_ENABLE_TENSORFLOW
+    if (startsWithSymbol(Tok, '.')) {
       if (peekToken().is(tok::code_complete)) {
         Status.setHasCodeCompletion();
         break;
       }
       if (!peekToken().isContextualKeyword("Type")
           && !peekToken().isContextualKeyword("Protocol")) {
-        consumeToken();
         // SWIFT_ENABLE_TENSORFLOW
+        consumeStartingCharacterOfCurrentToken(tok::period);
         // If parsing a qualified declaration name, break before parsing the
         // final declaration name component.
         if (isParsingQualifiedDeclName) {

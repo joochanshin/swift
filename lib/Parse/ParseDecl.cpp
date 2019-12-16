@@ -1244,15 +1244,6 @@ static bool parseBaseTypeForQualifiedDeclName(Parser &P, TypeRepr *&baseType) {
   if (result.isNull())
     return true;
 
-  // Optionally consume a leading period. This is relevant for
-  // qualified operator names.
-  // TODO(TF-1065): Consider disallowing qualified operator names.
-  if (P.startsWithSymbol(P.Tok, '.')) {
-    assert(P.Tok.isAnyOperator() &&
-           "Only operators should have leading period here");
-    P.consumeStartingCharacterOfCurrentToken(tok::period);
-  }
-
   baseType = result.getPtrOrNull();
   return false;
 }
@@ -1283,7 +1274,14 @@ bool parseQualifiedDeclName(Parser &P, Diag<> nameParseError,
                                  /*allowZeroArgCompoundNames*/ true,
                                  /*allowDeinitAndSubscript*/ true);
 
-  // The base type is optional, but the final unqualified decl name is not.
+  if (baseType && original.Name.isOperator()) {
+    P.diagnose(original.Loc.getBaseNameLoc(),
+               diag::autodiff_attr_invalid_qualified_operator_name,
+               original.Name);
+    return true;
+  }
+
+  // The base type is optional, but the final unqualified declaration name is not.
   // If name could not be parsed, return true for error.
   return !original.Name;
 }
